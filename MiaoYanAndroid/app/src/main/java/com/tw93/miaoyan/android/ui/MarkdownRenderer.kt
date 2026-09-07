@@ -1,5 +1,7 @@
 package com.tw93.miaoyan.android.ui
 
+import com.tw93.miaoyan.android.data.LocalImagePolicy
+
 /** GitHub cmark-gfm backed renderer with a deliberately inert WebView document contract. */
 object MarkdownRenderer {
     fun renderDocument(markdown: String, darkMode: Boolean): String =
@@ -20,7 +22,7 @@ object MarkdownRenderer {
             <!doctype html>
             <html><head>
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; media-src 'none'; frame-src 'none'; connect-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src ${LocalImagePolicy.AssetOrigin}; media-src 'none'; frame-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'">
             <style>
               :root { color-scheme: ${if (darkMode) "dark" else "light"}; }
               * { box-sizing: border-box; }
@@ -33,11 +35,12 @@ object MarkdownRenderer {
               pre { max-width: 100%; overflow-x: auto; background: $code; border-radius: 10px; padding: 14px; }
               pre code { padding: 0; } blockquote { margin-left: 0; padding-left: 14px; border-left: 3px solid #e59a56; color: $muted; }
               img,video,audio,iframe,table { max-width: 100%; }
+              img { height: auto; display: block; margin: 1em auto; }
               hr { border: 0; border-top: 1px solid $muted; opacity: .35; margin: 2em 0; }
               ul { padding-left: 1.4em; }
               table { border-collapse: collapse; table-layout: fixed; width: 100%; }
               th,td { border: 1px solid $muted; overflow-wrap: anywhere; padding: .35em .65em; }
-              .media-placeholder { display: inline-block; max-width: 100%; color: $muted; font-style: italic; }
+              .media-placeholder { display: inline-block; max-width: 100%; color: $muted; font-style: italic; overflow-wrap: anywhere; }
             </style></head><body>$body</body></html>
         """.trimIndent()
     }
@@ -68,31 +71,73 @@ internal object CmarkGfmNative {
     private external fun nativeRender(markdownUtf8: ByteArray): ByteArray
 }
 
-/**
- * The single policy boundary between trusted cmark output and the WebView.
- *
- * Raw HTML is omitted by cmark's safe mode. Remote images emitted by Markdown
- * syntax are replaced before the document reaches WebView. The active-media
- * rule is defense in depth and is also the future home of an explicit
- * click-to-load or open-externally decision.
- */
+/** The single resource-policy boundary between trusted cmark output and WebView. */
 internal object PreviewContentPolicy {
-    fun rewrite(fragment: String): String = ActiveMedia.replace(RemoteImage.replace(fragment) { match ->
-        "<span class=\"media-placeholder\">Remote image: ${match.groupValues[2]}</span>"
-    }) { match ->
-        "<span class=\"media-placeholder\">${match.groupValues[1].lowercase()} blocked</span>"
+    fun rewrite(fragment: String): String {
+        val imagesRewritten = Image.replace(fragment) { match ->
+            val rawSource = decodeHtmlAttribute(match.groupValues[1])
+            val escapedAlt = match.groupValues[2].ifBlank { "image" }
+            when (val source = LocalImagePolicy.classifyMarkdownSource(rawSource)) {
+                is LocalImagePolicy.MarkdownSource.Local ->
+                    "<img src=\"${source.assetUrl}\" alt=\"$escapedAlt\" loading=\"lazy\" />"
+                is LocalImagePolicy.MarkdownSource.External ->
+                    "<a class=\"media-placeholder\" href=\"${escapeHtmlAttribute(source.url)}\" " +
+                        "rel=\"noreferrer noopener\">[external image: $escapedAlt — tap to open]</a>"
+                LocalImagePolicy.MarkdownSource.Unsupported ->
+                    "<span class=\"media-placeholder\">[unavailable image: $escapedAlt]</span>"
+            }
+        }
+        return ActiveMedia.replace(imagesRewritten) { match ->
+            "<span class=\"media-placeholder\">${match.groupValues[1].lowercase()} blocked</span>"
+        }
     }
 
-    private val RemoteImage = Regex(
-        """<img src="((?:https?:)?//)[^"]*" alt="([^"]*)"(?: title="[^"]*")? />""",
+    private fun decodeHtmlAttribute(value: String): String = HtmlEntity.replace(value) { match ->
+        when (val entity = match.groupValues[1]) {
+            "amp" -> "&"
+            "quot" -> "\""
+            "apos" -> "'"
+            "lt" -> "<"
+            "gt" -> ">"
+            else -> {
+                val codePoint = if (entity.startsWith("#x", ignoreCase = true)) {
+                    entity.drop(2).toIntOrNull(16)
+                } else {
+                    entity.drop(1).toIntOrNull()
+                }
+                codePoint?.takeIf(Character::isValidCodePoint)?.let(Character::toChars)?.concatToString()
+                    ?: match.value
+            }
+        }
+    }
+
+    private fun escapeHtmlAttribute(value: String): String = buildString(value.length) {
+        value.forEach { character ->
+            append(
+                when (character) {
+                    '&' -> "&amp;"
+                    '<' -> "&lt;"
+                    '>' -> "&gt;"
+                    '"' -> "&quot;"
+                    '\'' -> "&#39;"
+                    else -> character
+                },
+            )
+        }
+    }
+
+    private val Image = Regex(
+        """<img src="([^"]*)" alt="([^"]*)"(?: title="[^"]*")? />""",
         RegexOption.IGNORE_CASE,
     )
     private val ActiveMedia = Regex(
         """<\s*(iframe|video|audio)\b[^>]*(?:>.*?<\s*/\s*\1\s*>|/\s*>)""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
     )
+    private val HtmlEntity = Regex("&(#x[0-9a-fA-F]+|#[0-9]+|amp|quot|apos|lt|gt);")
 }
 
 internal object PreviewNavigationPolicy {
-    fun opensExternally(scheme: String?): Boolean = scheme?.lowercase() in setOf("https", "http", "mailto")
+    fun opensExternally(rawUrl: String, userActivated: Boolean): Boolean =
+        userActivated && LocalImagePolicy.isAllowedExternalNavigation(rawUrl)
 }

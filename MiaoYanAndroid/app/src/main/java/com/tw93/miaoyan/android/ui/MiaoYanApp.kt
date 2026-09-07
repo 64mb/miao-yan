@@ -7,6 +7,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.inputmethod.BaseInputConnection
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -45,6 +46,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,7 +63,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tw93.miaoyan.android.R
+import com.tw93.miaoyan.android.data.LocalFileImageLoader
+import com.tw93.miaoyan.android.data.LocalImagePolicy
 import com.tw93.miaoyan.android.model.LibraryNote
+import java.io.File
 import java.text.DateFormat
 import java.util.Date
 
@@ -246,7 +251,11 @@ private fun EditorScreen(
         }
         ModeSwitcher(preview = state.preview, onPreviewChanged = onPreviewChanged)
         if (state.preview) {
-            MarkdownPreview(state.draft, Modifier.fillMaxSize())
+            MarkdownPreview(
+                markdown = state.draft,
+                noteRelativePath = state.selected?.note?.relativePath,
+                modifier = Modifier.fillMaxSize(),
+            )
         } else {
             PlatformMarkdownEditor(
                 text = state.draft,
@@ -352,42 +361,82 @@ private fun PlatformMarkdownEditor(text: String, onTextChanged: (String) -> Unit
 }
 
 @Composable
-private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
+private fun MarkdownPreview(
+    markdown: String,
+    noteRelativePath: String?,
+    modifier: Modifier = Modifier,
+) {
     if (LocalInspectionMode.current) return
     val context = LocalContext.current
     val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
     val html = remember(markdown, darkMode) { MarkdownRenderer.renderDocument(markdown, darkMode) }
-    AndroidView(
-        modifier = modifier,
-        factory = {
-            WebView(context).apply {
-                settings.javaScriptEnabled = false
-                settings.allowFileAccess = false
-                settings.allowContentAccess = false
-                settings.blockNetworkLoads = true
-                settings.domStorageEnabled = false
-                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                settings.setSupportMultipleWindows(false)
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        val uri = request.url
-                        if (PreviewNavigationPolicy.opensExternally(uri.scheme)) {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+    val canonicalRoot = remember(context) { File(context.filesDir, "libraries/default") }
+    val imageScope = remember(canonicalRoot, noteRelativePath) {
+        noteRelativePath?.let { LocalImagePolicy.resolveNoteAssetScope(canonicalRoot, it) }
+    }
+    key(imageScope) {
+        val imageLoader = remember(imageScope) { imageScope?.let(::LocalFileImageLoader) }
+        AndroidView(
+            modifier = modifier,
+            factory = {
+                WebView(context).apply {
+                    settings.javaScriptEnabled = false
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.blockNetworkLoads = true
+                    settings.domStorageEnabled = false
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    settings.setSupportMultipleWindows(false)
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView,
+                            request: WebResourceRequest,
+                        ): WebResourceResponse? {
+                            val url = request.url.toString()
+                            if (request.method != "GET" || request.url.host != LocalImagePolicy.AssetHost) {
+                                return blockedWebResourceResponse()
+                            }
+                            return imageLoader?.load(url) ?: blockedWebResourceResponse()
                         }
-                        return true
+
+                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                            val uri = request.url
+                            val userActivated = request.isForMainFrame && request.hasGesture()
+                            if (uri.host != LocalImagePolicy.AssetHost &&
+                                PreviewNavigationPolicy.opensExternally(uri.toString(), userActivated)
+                            ) {
+                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                            }
+                            return true
+                        }
                     }
                 }
-            }
-        },
-        update = { webView ->
-            if (webView.tag != html) {
-                webView.tag = html
-                webView.loadDataWithBaseURL("https://appassets.androidplatform.net/", html, "text/html", "utf-8", null)
-            }
-        },
-        onRelease = { it.destroy() },
-    )
+            },
+            update = { webView ->
+                if (webView.tag != html) {
+                    webView.tag = html
+                    webView.loadDataWithBaseURL(
+                        "https://appassets.androidplatform.net/",
+                        html,
+                        "text/html",
+                        "utf-8",
+                        null,
+                    )
+                }
+            },
+            onRelease = { it.destroy() },
+        )
+    }
 }
+
+private fun blockedWebResourceResponse(): WebResourceResponse = WebResourceResponse(
+    "text/plain",
+    "utf-8",
+    403,
+    "Forbidden",
+    mapOf("Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff"),
+    java.io.ByteArrayInputStream(ByteArray(0)),
+)
 
 @Composable
 private fun LoadingOverlay(label: String) {

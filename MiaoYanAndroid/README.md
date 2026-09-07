@@ -1,15 +1,23 @@
 # MiaoYan Android prototype
 
-Native Android 15+ prototype for validating the first local-library flow:
+Native Android 15+ prototype for validating the first local-library flow. The canonical library
+contract is `context.filesDir/libraries/default`; SAF is reserved for explicit Import/Export:
 
-1. Select exactly one library root through Storage Access Framework.
-2. Persist access to that tree and recursively list `.md`, `.markdown`, and `.txt` notes.
+1. Recursively list `.md`, `.markdown`, and `.txt` notes from one app-private library.
+2. Keep everyday preview and editing independent from `ContentResolver` and persisted SAF grants.
 3. Search and open a note.
 4. Edit through a platform `EditText` that does not replace text during IME composition.
-5. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript, raw HTML, frames, and network loads disabled.
+5. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript,
+   raw HTML, frames, and network loads disabled.
+   Local `/i/<name>` images are streamed from the `i` directory next to the selected note through a
+   restricted synthetic origin. Canonical-path checks keep the loader inside both the selected
+   note's parent and the app-private root, rejecting traversal and symlink escape. External images
+   remain explicit tap-to-open links and are never loaded automatically. External video and iframe
+   markup stays inert; the shared policy requires user activation and a sandbox for future iframe
+   embedding.
 6. Save only if the document hash still matches the opened version, then verify the written bytes.
 
-The user-selected SAF tree remains canonical. There is no broad storage permission and no network permission.
+There is no broad storage permission and no network permission.
 
 ## Build
 
@@ -22,10 +30,10 @@ The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compos
 
 cmark-gfm 0.29.0.gfm.13 is vendored from GitHub at commit `587a12bb54d95ac37241377e6ddc93ea0e45439b`; its source archive checksum and update procedure are recorded in `app/src/main/cpp/third_party/cmark-gfm/README.miaoyan.md`. Builds do not fetch native source from the network.
 
-The renderer enables the table, strikethrough, autolink, tagfilter, and task-list extensions. It does not pass `CMARK_OPT_UNSAFE`: raw HTML (including iframes) is omitted by cmark before reaching WebView. Remote Markdown images are changed to inert placeholders by the single post-render content-policy boundary. CSP and `blockNetworkLoads` independently prevent automatic remote media loading. The boundary intentionally does not yet decide between click-to-load and opening media externally.
+The renderer enables the table, strikethrough, autolink, tagfilter, and task-list extensions. It does not pass `CMARK_OPT_UNSAFE`: raw HTML (including iframes) is omitted by cmark before reaching WebView. The single post-render content-policy boundary maps valid local images to the synthetic origin and changes remote images to explicit external links. CSP and `blockNetworkLoads` independently prevent automatic remote media loading.
 
 ## Deliberate prototype limits
 
-- Local inline images, note creation/rename/Trash, Room indexing, and Git sync are not included in this first executable slice. Android AI is explicitly out of scope.
+- Note creation/rename/Trash, Room indexing, Git sync, and SAF Import/Export are not included in this first executable slice. Android AI is explicitly out of scope.
 - Native APKs are currently produced for `arm64-v8a` devices and `x86_64` emulators only.
-- SAF save recovery is best effort. The production journal and crash recovery state machine remain Phase 0 work.
+- The production atomic-write and crash-recovery state machine remains Phase 0 work.

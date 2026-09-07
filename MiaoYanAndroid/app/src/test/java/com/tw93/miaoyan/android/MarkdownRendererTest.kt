@@ -38,20 +38,53 @@ class MarkdownRendererTest {
         val html = MarkdownRenderer.renderDocument("text", darkMode = true) { "<p>text</p>" }
 
         assertTrue(html.contains("default-src 'none'"))
-        assertTrue(html.contains("img-src data:"))
+        assertTrue(html.contains("img-src https://appassets.androidplatform.net"))
         assertTrue(html.contains("media-src 'none'"))
         assertTrue(html.contains("frame-src 'none'"))
+        assertTrue(html.contains("connect-src 'none'"))
         assertTrue(html.contains("img,video,audio,iframe,table { max-width: 100%; }"))
     }
 
     @Test
-    fun rewritesRemoteImagesWithoutCreatingANavigationDecision() {
-        val fragment = "<p><img src=\"https://example.com/image.png\" alt=\"diagram\" /></p>"
+    fun rewritesCmarkLocalImageToSyntheticOrigin() {
+        val fragment = "<p><img src=\"/i/my%20photo.png\" alt=\"diagram\" /></p>"
         val rewritten = PreviewContentPolicy.rewrite(fragment)
 
-        assertTrue(rewritten.contains("Remote image: diagram"))
-        assertFalse(rewritten.contains("example.com"))
-        assertFalse(rewritten.contains("<a "))
+        assertTrue(
+            rewritten.contains(
+                "<img src=\"https://appassets.androidplatform.net/i/my%20photo.png\"",
+            ),
+        )
+        assertTrue(rewritten.contains("loading=\"lazy\""))
+    }
+
+    @Test
+    fun decodesCmarkHtmlAttributeBeforeApplyingLocalPolicy() {
+        val fragment = "<img src=\"/i/a&amp;b.png\" alt=\"A &amp; B\" />"
+        val rewritten = PreviewContentPolicy.rewrite(fragment)
+
+        assertTrue(rewritten.contains("/i/a%26b.png"))
+        assertTrue(rewritten.contains("alt=\"A &amp; B\""))
+    }
+
+    @Test
+    fun rewritesRemoteImageAsExplicitExternalLinkWithoutLoadingIt() {
+        val fragment = "<p><img src=\"https://example.com/image.png?a=1&amp;b=2\" alt=\"diagram\" /></p>"
+        val rewritten = PreviewContentPolicy.rewrite(fragment)
+
+        assertTrue(rewritten.contains("[external image: diagram — tap to open]"))
+        assertTrue(rewritten.contains("href=\"https://example.com/image.png?a=1&amp;b=2\""))
+        assertFalse(rewritten.contains("<img src=\"https://example.com"))
+    }
+
+    @Test
+    fun rejectsTraversalFromCmarkOutput() {
+        val rewritten = PreviewContentPolicy.rewrite(
+            "<img src=\"/i/%2e%2e%2fsecret.png\" alt=\"secret\" />",
+        )
+
+        assertTrue(rewritten.contains("[unavailable image: secret]"))
+        assertFalse(rewritten.contains("<img"))
     }
 
     @Test
@@ -68,11 +101,11 @@ class MarkdownRendererTest {
     }
 
     @Test
-    fun onlyExplicitNavigationSchemesCanLeaveTheWebView() {
-        assertTrue(PreviewNavigationPolicy.opensExternally("HTTPS"))
-        assertTrue(PreviewNavigationPolicy.opensExternally("mailto"))
-        assertFalse(PreviewNavigationPolicy.opensExternally("javascript"))
-        assertFalse(PreviewNavigationPolicy.opensExternally("file"))
-        assertFalse(PreviewNavigationPolicy.opensExternally(null))
+    fun externalNavigationRequiresExplicitUserActivation() {
+        assertTrue(PreviewNavigationPolicy.opensExternally("https://example.com/image.png", userActivated = true))
+        assertTrue(PreviewNavigationPolicy.opensExternally("mailto:hello@example.com", userActivated = true))
+        assertFalse(PreviewNavigationPolicy.opensExternally("https://example.com/image.png", userActivated = false))
+        assertFalse(PreviewNavigationPolicy.opensExternally("javascript:alert(1)", userActivated = true))
+        assertFalse(PreviewNavigationPolicy.opensExternally("file:///secret", userActivated = true))
     }
 }
