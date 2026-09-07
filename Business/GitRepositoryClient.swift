@@ -60,7 +60,11 @@ actor GitRepositoryClient {
     ) throws {
         try Self.validate(remoteURL: remoteURL, allowFile: allowFileRemotesForTesting)
 
-        let context = GitRemoteOperationContext(authentication: authentication, remoteURL: remoteURL)
+        let context = try GitRemoteOperationContext(
+            authentication: authentication,
+            configuredRemoteURL: remoteURL,
+            allowFileRemote: allowFileRemotesForTesting
+        )
         var options = git_clone_options()
         try Self.check(
             git_clone_options_init(&options, UInt32(GIT_CLONE_OPTIONS_VERSION)),
@@ -138,32 +142,15 @@ actor GitRepositoryClient {
         let lookup = git_remote_lookup(&existingRemote, repository, "origin")
         if lookup == 0 {
             defer { git_remote_free(existingRemote) }
-            guard let configuredURL = git_remote_url(existingRemote),
-                let existingURL = URL(string: String(cString: configuredURL))
-            else {
-                throw GitRepositoryError.invalidRemoteURL
-            }
-            let remoteMatches: Bool
-            if allowFileRemotesForTesting, existingURL.isFileURL, remoteURL.isFileURL {
-                remoteMatches = existingURL.standardizedFileURL == remoteURL.standardizedFileURL
-            } else {
-                remoteMatches =
-                    try GitCredentialStore.normalizedRemoteURL(existingURL)
-                    == GitCredentialStore.normalizedRemoteURL(remoteURL)
-            }
-            guard remoteMatches else {
-                throw GitRepositoryError.operationFailed(
-                    operation: "remote setup",
-                    message: "origin already points to another repository"
-                )
-            }
+            _ = try validatedOriginURLs(existingRemote, configuredRemoteURL: remoteURL)
         } else if lookup == GIT_ENOTFOUND.rawValue {
             var createdRemote: OpaquePointer?
             try Self.check(
                 git_remote_create(&createdRemote, repository, "origin", remoteURL.absoluteString),
                 operation: "remote setup"
             )
-            git_remote_free(createdRemote)
+            defer { git_remote_free(createdRemote) }
+            _ = try validatedOriginURLs(createdRemote, configuredRemoteURL: remoteURL)
         } else {
             try Self.check(lookup, operation: "remote lookup")
         }
@@ -491,15 +478,25 @@ actor GitRepositoryClient {
 
     func fetchOrigin(
         in repositoryURL: URL,
+        configuredRemoteURL: URL,
         authentication: GitHTTPAuthentication
     ) throws {
         let repository = try Self.openRepository(at: repositoryURL)
         defer { git_repository_free(repository) }
-        let remote = try openOrigin(in: repository)
+        let configuredOrigin = try openOrigin(in: repository, configuredRemoteURL: configuredRemoteURL)
+        defer { git_remote_free(configuredOrigin) }
+        let fetchURL = try validatedOriginURLs(configuredOrigin, configuredRemoteURL: configuredRemoteURL).fetch
+
+        // The operation remote is anonymous, skips all insteadOf rewriting,
+        // and has no repository-controlled refspecs.
+        let remote = try Self.createOperationRemote(in: repository, url: fetchURL, operation: "fetch remote setup")
         defer { git_remote_free(remote) }
 
-        let remoteURL = try validatedOriginURL(remote)
-        let context = GitRemoteOperationContext(authentication: authentication, remoteURL: remoteURL)
+        let context = try GitRemoteOperationContext(
+            authentication: authentication,
+            configuredRemoteURL: configuredRemoteURL,
+            allowFileRemote: allowFileRemotesForTesting
+        )
         var options = git_fetch_options()
         try Self.check(
             git_fetch_options_init(&options, UInt32(GIT_FETCH_OPTIONS_VERSION)),
@@ -521,15 +518,22 @@ actor GitRepositoryClient {
 
     func pushMain(
         in repositoryURL: URL,
+        configuredRemoteURL: URL,
         authentication: GitHTTPAuthentication
     ) throws {
         let repository = try Self.openRepository(at: repositoryURL)
         defer { git_repository_free(repository) }
-        let remote = try openOrigin(in: repository)
+        let configuredOrigin = try openOrigin(in: repository, configuredRemoteURL: configuredRemoteURL)
+        defer { git_remote_free(configuredOrigin) }
+        let pushURL = try validatedOriginURLs(configuredOrigin, configuredRemoteURL: configuredRemoteURL).push
+        let remote = try Self.createOperationRemote(in: repository, url: pushURL, operation: "push remote setup")
         defer { git_remote_free(remote) }
 
-        let remoteURL = try validatedOriginURL(remote)
-        let context = GitRemoteOperationContext(authentication: authentication, remoteURL: remoteURL)
+        let context = try GitRemoteOperationContext(
+            authentication: authentication,
+            configuredRemoteURL: configuredRemoteURL,
+            allowFileRemote: allowFileRemotesForTesting
+        )
         var options = git_push_options()
         try Self.check(
             git_push_options_init(&options, UInt32(GIT_PUSH_OPTIONS_VERSION)),
@@ -885,14 +889,14 @@ actor GitRepositoryClient {
         return repository
     }
 
-    private func openOrigin(in repository: OpaquePointer) throws -> OpaquePointer {
+    private func openOrigin(in repository: OpaquePointer, configuredRemoteURL: URL) throws -> OpaquePointer {
         var remote: OpaquePointer?
         try Self.check(git_remote_lookup(&remote, repository, "origin"), operation: "origin lookup")
         guard let remote else {
             throw GitRepositoryError.operationFailed(operation: "origin lookup", message: "No remote returned")
         }
         do {
-            _ = try validatedOriginURL(remote)
+            _ = try validatedOriginURLs(remote, configuredRemoteURL: configuredRemoteURL)
         } catch {
             git_remote_free(remote)
             throw error
@@ -900,36 +904,76 @@ actor GitRepositoryClient {
         return remote
     }
 
-    private func validatedOriginURL(_ remote: OpaquePointer?) throws -> URL {
+    private struct ValidatedRemoteURLs {
+        let fetch: URL
+        let push: URL
+    }
+
+    private func validatedOriginURLs(_ remote: OpaquePointer?, configuredRemoteURL: URL) throws -> ValidatedRemoteURLs {
+        try Self.validate(remoteURL: configuredRemoteURL, allowFile: allowFileRemotesForTesting)
         guard let urlPointer = git_remote_url(remote),
             let url = URL(string: String(cString: urlPointer))
         else {
             throw GitRepositoryError.invalidRemoteURL
         }
         try Self.validate(remoteURL: url, allowFile: allowFileRemotesForTesting)
+        let configuredKey = try Self.remoteIdentity(configuredRemoteURL, allowFile: allowFileRemotesForTesting)
+        let fetchKey = try Self.remoteIdentity(url, allowFile: allowFileRemotesForTesting)
+        guard fetchKey == configuredKey else {
+            throw GitRepositoryError.operationFailed(
+                operation: "remote validation",
+                message: "origin fetch URL does not match the configured repository"
+            )
+        }
 
+        let pushURL: URL
         if let pushURLPointer = git_remote_pushurl(remote) {
-            guard let pushURL = URL(string: String(cString: pushURLPointer)) else {
+            guard let parsedPushURL = URL(string: String(cString: pushURLPointer)) else {
                 throw GitRepositoryError.invalidRemoteURL
             }
-            try Self.validate(remoteURL: pushURL, allowFile: allowFileRemotesForTesting)
-            let originKey = try Self.remoteIdentity(url, allowFile: allowFileRemotesForTesting)
-            let pushKey = try Self.remoteIdentity(pushURL, allowFile: allowFileRemotesForTesting)
-            guard originKey == pushKey else {
-                throw GitRepositoryError.operationFailed(
-                    operation: "remote validation",
-                    message: "origin push URL must match its fetch URL"
-                )
-            }
+            pushURL = parsedPushURL
+        } else {
+            pushURL = url
         }
-        return url
+        try Self.validate(remoteURL: pushURL, allowFile: allowFileRemotesForTesting)
+        let pushKey = try Self.remoteIdentity(pushURL, allowFile: allowFileRemotesForTesting)
+        guard pushKey == configuredKey else {
+            throw GitRepositoryError.operationFailed(
+                operation: "remote validation",
+                message: "origin push URL does not match the configured repository"
+            )
+        }
+        return ValidatedRemoteURLs(fetch: url, push: pushURL)
     }
 
     private static func remoteIdentity(_ url: URL, allowFile: Bool) throws -> String {
         if allowFile, url.isFileURL {
-            return url.standardizedFileURL.resolvingSymlinksInPath().absoluteString
+            return url.standardizedFileURL.resolvingSymlinksInPath().path
         }
         return try GitCredentialStore.normalizedRemoteURL(url)
+    }
+
+    private static func createOperationRemote(
+        in repository: OpaquePointer,
+        url: URL,
+        operation: String
+    ) throws -> OpaquePointer {
+        var options = git_remote_create_options()
+        try check(
+            git_remote_create_options_init(&options, UInt32(GIT_REMOTE_CREATE_OPTIONS_VERSION)),
+            operation: operation
+        )
+        options.repository = repository
+        options.flags =
+            UInt32(GIT_REMOTE_CREATE_SKIP_INSTEADOF.rawValue)
+            | UInt32(GIT_REMOTE_CREATE_SKIP_DEFAULT_FETCHSPEC.rawValue)
+
+        var remote: OpaquePointer?
+        try check(git_remote_create_with_opts(&remote, url.absoluteString, &options), operation: operation)
+        guard let remote else {
+            throw GitRepositoryError.operationFailed(operation: operation, message: "No remote returned")
+        }
+        return remote
     }
 
     private static func optionalOID(named referenceName: String, in repository: OpaquePointer) throws -> GitOID? {
@@ -1285,11 +1329,32 @@ private struct GitOID {
     var value: git_oid
 }
 
+struct GitRemoteCredentialScope: Equatable, Sendable {
+    private let host: String
+    private let port: Int
+
+    init(configuredRemoteURL: URL) throws {
+        let normalized = try GitCredentialStore.normalizedRemoteURL(configuredRemoteURL)
+        guard let url = URL(string: normalized), let host = url.host?.lowercased() else {
+            throw GitRepositoryError.invalidRemoteURL
+        }
+        self.host = host
+        port = url.port ?? 443
+    }
+
+    func allowsCredentials(for challengedURL: String) -> Bool {
+        guard let url = URL(string: challengedURL) else { return false }
+        return url.scheme?.lowercased() == "https"
+            && url.host?.lowercased() == host
+            && (url.port ?? 443) == port
+            && url.user == nil
+            && url.password == nil
+    }
+}
+
 private final class GitRemoteOperationContext: @unchecked Sendable {
     let authentication: GitHTTPAuthentication
-    private let remoteScheme: String?
-    private let remoteHost: String?
-    private let remotePort: Int?
+    private let credentialScope: GitRemoteCredentialScope?
     private let lock = NSLock()
     private var storedPushRejection: String?
 
@@ -1299,22 +1364,21 @@ private final class GitRemoteOperationContext: @unchecked Sendable {
         return storedPushRejection
     }
 
-    init(authentication: GitHTTPAuthentication, remoteURL: URL) {
+    init(
+        authentication: GitHTTPAuthentication,
+        configuredRemoteURL: URL,
+        allowFileRemote: Bool
+    ) throws {
         self.authentication = authentication
-        remoteScheme = remoteURL.scheme?.lowercased()
-        remoteHost = remoteURL.host?.lowercased()
-        remotePort = Self.effectivePort(for: remoteURL)
+        if configuredRemoteURL.isFileURL && allowFileRemote {
+            credentialScope = nil
+        } else {
+            credentialScope = try GitRemoteCredentialScope(configuredRemoteURL: configuredRemoteURL)
+        }
     }
 
     func allowsCredentials(for challengedURL: String) -> Bool {
-        guard let url = URL(string: challengedURL) else { return false }
-        return url.scheme?.lowercased() == remoteScheme
-            && url.host?.lowercased() == remoteHost
-            && Self.effectivePort(for: url) == remotePort
-    }
-
-    private static func effectivePort(for url: URL) -> Int? {
-        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : nil)
+        credentialScope?.allowsCredentials(for: challengedURL) == true
     }
 
     func recordPushRejection(_ message: String) {

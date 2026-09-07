@@ -318,6 +318,11 @@
 "Author name" = "作成者名";
 "Author email" = "作成者メール";
 "Automatically sync every 15 minutes" = "15分ごとに自動同期";
+"Git sync is unavailable in single-file mode." = "単一ファイルモードではGit同期を使用できません。";
+"Restore Local Revision" = "ローカルリビジョンを復元";
+"Restore the preserved local Git revision? Current post-failure working tree changes will be replaced." = "保存されたローカルGitリビジョンを復元しますか？失敗後の現在の作業ツリーの変更は置き換えられます。";
+"Restoring Git recovery revision…" = "Git復旧リビジョンを復元中…";
+"Git recovery revision restored~" = "Git復旧リビジョンを復元しました~";
 "Git sync configured~" = "Git同期を設定しました~";
 "Git sync configuration is invalid." = "Git同期の設定が無効です。";
 "Git credentials are unavailable." = "Git認証情報を利用できません。";

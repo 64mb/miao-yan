@@ -377,19 +377,15 @@ extension ViewController {
         guard let vc = ViewController.shared() else { return }
         guard let note = vc.notesTableView.getSelectedNote() else { return }
 
-        // Ensure content is loaded before comparison
-        note.ensureContentLoaded()
-
-        // Check if editor has unsaved changes
-        let editorContent = vc.editArea.string
-        let noteContent = note.content.string
-
-        if editorContent != noteContent {
-            vc.showReloadConfirmation(note: note)
-            return
+        Task { @MainActor [weak vc] in
+            await note.ensureContentLoadedAsync()
+            guard let vc, vc.notesTableView.getSelectedNote() === note else { return }
+            if vc.editArea.string != note.content.string {
+                vc.showReloadConfirmation(note: note)
+            } else {
+                await vc.reloadNoteFromDisk(note)
+            }
         }
-
-        vc.reloadNoteFromDisk(note)
     }
 
     private func showReloadConfirmation(note: Note) {
@@ -400,16 +396,19 @@ extension ViewController {
             for: view.window
         ) { [weak self] confirmed in
             if confirmed {
-                self?.reloadNoteFromDisk(note)
+                Task { @MainActor [weak self] in
+                    await self?.reloadNoteFromDisk(note)
+                }
             }
         }
     }
 
-    private func reloadNoteFromDisk(_ note: Note) {
+    private func reloadNoteFromDisk(_ note: Note) async {
         let oldContent = editArea.string
 
         // Force reload from disk
-        note.forceReload()
+        await note.forceReloadAsync()
+        guard notesTableView.getSelectedNote() === note else { return }
         note.loadModifiedLocalAt()
 
         let newContent = note.content.string
@@ -1295,12 +1294,60 @@ extension ViewController {
                 for: view.window
             )
         case .failed(let failure):
-            MiaoYanAlert.show(
-                message: I18n.str("Git sync failed."),
-                informativeText: gitSyncFailureDescription(failure),
-                style: .warning,
-                for: view.window
-            )
+            if case .restoreRevision(let revision) = failure.recovery {
+                presentGitRecoveryChoice(failure: failure, revision: revision, root: root)
+            } else {
+                MiaoYanAlert.show(
+                    message: I18n.str("Git sync failed."),
+                    informativeText: gitSyncFailureDescription(failure),
+                    style: .warning,
+                    for: view.window
+                )
+            }
+        }
+    }
+
+    private func presentGitRecoveryChoice(failure: GitSyncFailure, revision: String, root: Project) {
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Git sync failed."),
+            informativeText: gitSyncFailureDescription(failure)
+                + "\n\n"
+                + I18n.str("Restore the preserved local Git revision? Current post-failure working tree changes will be replaced."),
+            style: .critical,
+            buttons: [I18n.str("Cancel"), I18n.str("Restore Local Revision")]
+        )
+        alert.buttons.last?.keyEquivalent = ""
+        alert.buttons.last?.hasDestructiveAction = true
+        MiaoYanAlert.present(alert, for: view.window) { [weak self] response in
+            guard response == .alertSecondButtonReturn, let self else { return }
+            toastPersistent(message: I18n.str("Restoring Git recovery revision…"))
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let result = await gitSyncCoordinator.restoreRecoveryRevision(
+                    root: root,
+                    revision: revision,
+                    viewController: self
+                )
+                toastDismiss()
+                switch result {
+                case .updated, .upToDate, .published:
+                    toast(message: I18n.str("Git recovery revision restored~"), style: .success)
+                case .blocked(let reason):
+                    MiaoYanAlert.show(
+                        message: I18n.str("Git sync was blocked for safety."),
+                        informativeText: gitSyncBlockDescription(reason),
+                        style: .warning,
+                        for: view.window
+                    )
+                case .failed(let recoveryFailure):
+                    MiaoYanAlert.show(
+                        message: I18n.str("Git sync could not complete safety recovery. Review diagnostics before retrying."),
+                        informativeText: recoveryFailure.description,
+                        style: .warning,
+                        for: view.window
+                    )
+                }
+            }
         }
     }
 
@@ -1493,6 +1540,8 @@ extension ViewController {
             return I18n.str("The selected project cannot be used as a Git repository.")
         case .cloudBackedRepository:
             return I18n.str("Choose a local folder so only one sync engine owns the working copy.")
+        case .singleFileMode:
+            return I18n.str("Git sync is unavailable in single-file mode.")
         }
     }
 

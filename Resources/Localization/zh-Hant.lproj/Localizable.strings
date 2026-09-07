@@ -295,6 +295,11 @@
 "Author name" = "作者姓名";
 "Author email" = "作者電子郵件";
 "Automatically sync every 15 minutes" = "每 15 分鐘自動同步";
+"Git sync is unavailable in single-file mode." = "單一檔案模式下無法使用 Git 同步。";
+"Restore Local Revision" = "還原本機版本";
+"Restore the preserved local Git revision? Current post-failure working tree changes will be replaced." = "要還原保留的本機 Git 版本嗎？失敗後工作區中的目前變更將被取代。";
+"Restoring Git recovery revision…" = "正在還原 Git 復原版本…";
+"Git recovery revision restored~" = "Git 復原版本已還原~";
 "Git sync configured~" = "Git 同步已設定~";
 "Git sync configuration is invalid." = "Git 同步設定無效。";
 "Git credentials are unavailable." = "Git 憑證無法使用。";

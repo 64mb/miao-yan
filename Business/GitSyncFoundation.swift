@@ -41,6 +41,48 @@ struct GitSyncChange: Equatable, Sendable {
     }
 }
 
+enum GitEditorReconciliationMutation: Equatable, Sendable {
+    case updated
+    case deleted
+    case renamed(to: URL)
+}
+
+struct GitEditorReconciliationPlan: Equatable, Sendable {
+    let ownerURL: URL
+    let mutation: GitEditorReconciliationMutation
+
+    static func make(changes: [GitSyncChange], rootURL: URL, ownerURL: URL?) -> Self? {
+        guard let ownerURL else { return nil }
+        let resolvedOwner = ownerURL.standardizedFileURL.resolvingSymlinksInPath()
+        for change in changes {
+            let currentURL = rootURL.appendingPathComponent(change.path).standardizedFileURL.resolvingSymlinksInPath()
+            switch change.kind {
+            case .added, .modified:
+                if currentURL == resolvedOwner {
+                    return Self(ownerURL: resolvedOwner, mutation: .updated)
+                }
+            case .deleted:
+                if currentURL == resolvedOwner {
+                    return Self(ownerURL: resolvedOwner, mutation: .deleted)
+                }
+            case .renamed:
+                guard let previousPath = change.previousPath else { continue }
+                let previousURL = rootURL.appendingPathComponent(previousPath)
+                    .standardizedFileURL.resolvingSymlinksInPath()
+                if previousURL == resolvedOwner {
+                    return Self(ownerURL: resolvedOwner, mutation: .renamed(to: currentURL))
+                }
+                if currentURL == resolvedOwner {
+                    return Self(ownerURL: resolvedOwner, mutation: .updated)
+                }
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+}
+
 enum GitSyncManagedPathKind: String, Equatable, Sendable {
     case note
     case attachment
@@ -624,6 +666,7 @@ enum GitSyncBlockReason: Equatable, Sendable {
     case missingAuthorIdentity
     case repositoryUnavailable
     case cloudBackedRepository
+    case singleFileMode
 }
 
 enum GitSyncRecoveryAction: Equatable, Sendable {

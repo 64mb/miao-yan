@@ -66,6 +66,16 @@ Scheduler принадлежит `AppDelegate`, работает на main actor
 
 Failure и timeout никогда не удерживают приложение открытым: локальные файлы и recovery state не заменяются принудительно, причина попадает в diagnostics, блокирующий conflict UI при quit не показывается. `applicationWillTerminate` сохраняет повторный идемпотентный flush и cleanup временных preview-файлов. Отдельный reply gate защищает от гонки completion/timeout и двойного ответа AppKit.
 
+### Security и recovery hardening
+
+- Existing repository перед каждой network operation обязан иметь effective fetch URL и effective push URL, совпадающие с normalized configured HTTPS remote. Foreign `pushurl` и изменение `origin` блокируются до передачи credentials или данных.
+- PAT callback ограничен HTTPS origin сохранённой конфигурации: exact normalized host и effective port. Redirects запрещены transport options; challenge другого host/port не получает credentials.
+- Fetch выполняется через validated anonymous libgit2 remote и единственный refspec `+refs/heads/main:refs/remotes/origin/main`, поэтому repository-controlled `remote.origin.fetch` не расширяет sync surface.
+- Single-file mode не допускается на UI entry point и повторно блокируется coordinator preflight, включая conflict recovery.
+- Remote delete/rename текущей `storageNote` сначала отсоединяет editor buffer, затем retires старый `Note` и детерминированно выбирает существующую/renamed note. Поздний lifecycle save не может воскресить удалённый путь.
+- Post-checkout reconciliation failure очищает потенциально stale editor, автоматически откатывает worktree к recovery revision и повторно reconciles модели. Если automatic rollback не завершился, ручной flow предлагает явное **Restore Local Revision**; повторная ошибка остаётся в diagnostics и не разрешает stale buffer overwrite.
+- Disk reload для Git reconciliation, FSEvents import/reload и ручного Reload Note использует detached async read; большие note-файлы не читаются синхронно на AppKit main actor в этих paths.
+
 ### Несвязанные истории
 
 `--allow-unrelated-histories` не используется. Пользователь получает только два решения:
@@ -225,7 +235,7 @@ Git sync нельзя включить в каталоге, которым од�
 
 ## Локальная верификация 2026-09-07
 
-- macOS Debug build (`CODE_SIGNING_ALLOWED=NO`) и полный unit/integration suite: 204 tests, 1 live-HTTPS test skipped без внешнего test remote, 0 failures;
+- macOS Debug build (`CODE_SIGNING_ALLOWED=NO`) и полный unit/integration suite: 212 tests, 1 live-HTTPS test skipped без внешнего test remote, 0 failures;
 - Git conflict и unrelated-history integration scenarios: passed;
 - `xcrun swift-format lint --recursive . --strict`: passed;
 - `git diff --check` и plist/strings validation: passed;

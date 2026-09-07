@@ -6,6 +6,7 @@ class FileSystemEventManager {
     private weak var delegate: ViewController?
     private var watcher: FileWatcher?
     private var gitMutationDepth = 0
+    private var noteReloadGenerations = [URL: UInt]()
     private var observedFolders: [String] {
         storage.getProjectPaths()
     }
@@ -49,36 +50,34 @@ class FileSystemEventManager {
         flushedEditorText: String?
     ) async throws {
         let noteExtensions = Set(storage.allowedExtensions)
-        let resolvedEditorOwnerURL = editorOwnerURL?.resolvingSymlinksInPath()
-        let activeOwnerChange = changes.first { change in
-            switch change.kind {
-            case .deleted:
-                return root.url.appendingPathComponent(change.path).resolvingSymlinksInPath() == resolvedEditorOwnerURL
-            case .renamed:
-                guard let previousPath = change.previousPath else { return false }
-                return root.url.appendingPathComponent(previousPath).resolvingSymlinksInPath() == resolvedEditorOwnerURL
-            case .added, .modified:
-                return false
+        let resolvedSnapshotOwnerURL = editorOwnerURL?.standardizedFileURL.resolvingSymlinksInPath()
+        let activeEditorNote = delegate?.editArea.storageNote
+        let activeEditorPlan = GitEditorReconciliationPlan.make(
+            changes: changes,
+            rootURL: root.url,
+            ownerURL: activeEditorNote?.url
+        )
+        if let activeEditorPlan, let activeEditorNote, let editArea = delegate?.editArea {
+            guard activeEditorPlan.ownerURL == resolvedSnapshotOwnerURL,
+                let flushedEditorText,
+                editArea.string == flushedEditorText
+            else {
+                writeConflictBackup(for: activeEditorNote, editorContent: editArea.string)
+                throw FileSystemError.updateFailed(activeEditorPlan.ownerURL)
+            }
+            switch activeEditorPlan.mutation {
+            case .deleted, .renamed:
+                // Detach the buffer synchronously before retiring the old Note.
+                // No lifecycle flush can now write through the removed object.
+                editArea.clear()
+            case .updated:
+                break
             }
         }
         let renamedEditorURL: URL? = {
-            guard let activeOwnerChange, activeOwnerChange.kind == .renamed else { return nil }
-            return root.url.appendingPathComponent(activeOwnerChange.path).resolvingSymlinksInPath()
+            guard case .renamed(let destination)? = activeEditorPlan?.mutation else { return nil }
+            return destination
         }()
-
-        if activeOwnerChange != nil,
-            let resolvedEditorOwnerURL,
-            let activeNote = storage.getBy(url: resolvedEditorOwnerURL),
-            let editArea = delegate?.editArea,
-            let flushedEditorText,
-            editArea.string != flushedEditorText
-        {
-            writeConflictBackup(for: activeNote, editorContent: editArea.string)
-            throw FileSystemError.updateFailed(resolvedEditorOwnerURL)
-        }
-        if activeOwnerChange != nil {
-            delegate?.editArea.clear()
-        }
 
         let removedPaths = changes.flatMap { change -> [String] in
             switch change.kind {
@@ -121,19 +120,23 @@ class FileSystemEventManager {
                 throw FileSystemError.updateFailed(url)
             }
 
-            if resolvedEditorOwnerURL == url,
-                let editArea = delegate?.editArea,
-                let flushedEditorText,
-                editArea.string != flushedEditorText
+            if let currentOwner = delegate?.editArea.storageNote,
+                currentOwner.url.standardizedFileURL.resolvingSymlinksInPath() == url,
+                let editArea = delegate?.editArea
             {
-                writeConflictBackup(for: note, editorContent: editArea.string)
-                throw FileSystemError.updateFailed(url)
+                guard resolvedSnapshotOwnerURL == url,
+                    let flushedEditorText,
+                    editArea.string == flushedEditorText
+                else {
+                    writeConflictBackup(for: currentOwner, editorContent: editArea.string)
+                    throw FileSystemError.updateFailed(url)
+                }
             }
 
             note.content = NSMutableAttributedString(attributedString: diskContent)
             note.undoManager.removeAllActions()
             delegate?.notesTableView.reloadRow(note: note)
-            if resolvedEditorOwnerURL == url {
+            if delegate?.editArea.storageNote?.url.standardizedFileURL.resolvingSymlinksInPath() == url {
                 delegate?.refillEditArea(suppressSave: true)
             }
         }
@@ -158,7 +161,7 @@ class FileSystemEventManager {
         await withCheckedContinuation { continuation in
             delegate.updateTable {
                 delegate.reloadSideBar()
-                if activeOwnerChange != nil {
+                if activeEditorPlan != nil {
                     if let renamedEditorURL,
                         let renamedNote = self.storage.getBy(url: renamedEditorURL)
                     {
@@ -168,12 +171,15 @@ class FileSystemEventManager {
                             suppressSideEffects: false
                         )
                     }
-                    DispatchQueue.main.async {
-                        if delegate.notesTableView.getSelectedNote() != nil {
-                            delegate.refillEditArea(force: true, suppressSave: true)
-                        } else {
-                            delegate.editArea.clear()
-                        }
+                    let selected = delegate.notesTableView.getSelectedNote()
+                    let safeSelection =
+                        selected.flatMap { self.storage.getBy(url: $0.url) }
+                        ?? delegate.notesTableView.noteList.first.flatMap { self.storage.getBy(url: $0.url) }
+                    if let safeSelection {
+                        delegate.notesTableView.setSelected(note: safeSelection, ensureVisible: true)
+                        delegate.refillEditArea(force: true, suppressSave: true)
+                    } else {
+                        delegate.editArea.clear()
                     }
                 }
                 continuation.resume()
@@ -276,7 +282,7 @@ class FileSystemEventManager {
         }
 
         Task { @MainActor [weak self] in
-            self?.reloadNote(note: note)
+            await self?.reloadNote(note: note)
         }
     }
 
@@ -292,7 +298,7 @@ class FileSystemEventManager {
 
         if fileExistsInFS {
             Task { @MainActor [weak self] in
-                self?.renameNote(note: note)
+                await self?.renameNote(note: note)
             }
         } else {
             removeNote(note: note)
@@ -321,17 +327,15 @@ class FileSystemEventManager {
         guard storage.getProjectBy(url: processedURL) != nil else { return }
 
         guard let note = storage.initNote(url: processedURL) else { return }
-        note.load()
         note.loadModifiedLocalAt()
         storage.add(note)
 
         Task { @MainActor [weak self] in
-            self?.updateUIForNewNote(note)
-        }
-
-        if note.name == "MiaoYan - Readme.md" {
-            Task { @MainActor [weak self] in
-                self?.handleReadmeFile(note)
+            await note.loadAsync()
+            guard let self, self.storage.getBy(url: note.url) === note else { return }
+            self.updateUIForNewNote(note)
+            if note.name == "MiaoYan - Readme.md" {
+                self.handleReadmeFile(note)
             }
         }
     }
@@ -374,14 +378,14 @@ class FileSystemEventManager {
     }
 
     @MainActor
-    private func renameNote(note: Note) {
+    private func renameNote(note: Note) async {
         if note.url == UserDataService.instance.focusOnImport {
             delegate?.updateTable {
                 self.delegate?.notesTableView.setSelected(note: note)
                 UserDataService.instance.focusOnImport = nil
             }
         } else {
-            reloadNote(note: note)
+            await reloadNote(note: note)
         }
     }
 
@@ -400,20 +404,29 @@ class FileSystemEventManager {
     }
 
     @MainActor
-    private func reloadNote(note: Note) {
+    private func reloadNote(note: Note) async {
+        let noteURL = note.url.standardizedFileURL.resolvingSymlinksInPath()
+        let generation = (noteReloadGenerations[noteURL] ?? 0) &+ 1
+        noteReloadGenerations[noteURL] = generation
+
         // Skip reload while a debounced save is pending: the disk content
         // we'd read might be from before our save lands. Re-check shortly
         // after the save fires so a real external change is not lost.
         if note.hasPendingSave {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
                 Task { @MainActor [weak self] in
-                    self?.recheckNote(note)
+                    await self?.recheckNote(note)
                 }
             }
             return
         }
 
-        guard let fsContent = note.getContent() else { return }
+        guard let fsContent = await note.getContentAsync(),
+            noteReloadGenerations[noteURL] == generation,
+            storage.getBy(url: noteURL) === note,
+            !note.hasPendingSave
+        else { return }
+        noteReloadGenerations.removeValue(forKey: noteURL)
 
         let memoryContent = note.content.attributedSubstring(from: NSRange(0..<note.content.length))
         let contentChanged = fsContent.string != memoryContent.string
@@ -543,8 +556,8 @@ class FileSystemEventManager {
     }
 
     @MainActor
-    public func recheckNote(_ note: Note) {
-        reloadNote(note: note)
+    public func recheckNote(_ note: Note) async {
+        await reloadNote(note: note)
     }
 
     public func restart() {

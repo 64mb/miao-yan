@@ -81,6 +81,38 @@ final class GitSyncFoundationTests: XCTestCase {
         XCTAssertFalse(rootPolicy.allows(URL(string: "https://example.com/notes")!))
     }
 
+    func testEditorReconciliationPlanDetectsActiveDeleteAndRename() {
+        let root = URL(fileURLWithPath: "/tmp/notes", isDirectory: true)
+        let owner = root.appendingPathComponent("active.md")
+
+        XCTAssertEqual(
+            GitEditorReconciliationPlan.make(
+                changes: [.init(kind: .deleted, path: "active.md")],
+                rootURL: root,
+                ownerURL: owner
+            ),
+            GitEditorReconciliationPlan(
+                ownerURL: owner.standardizedFileURL.resolvingSymlinksInPath(),
+                mutation: .deleted
+            )
+        )
+        XCTAssertEqual(
+            GitEditorReconciliationPlan.make(
+                changes: [.init(kind: .renamed, path: "renamed.md", previousPath: "active.md")],
+                rootURL: root,
+                ownerURL: owner
+            )?.mutation,
+            .renamed(to: root.appendingPathComponent("renamed.md").standardizedFileURL.resolvingSymlinksInPath())
+        )
+        XCTAssertNil(
+            GitEditorReconciliationPlan.make(
+                changes: [.init(kind: .deleted, path: "other.md")],
+                rootURL: root,
+                ownerURL: owner
+            )
+        )
+    }
+
     func testRenameValidatesBothPaths() {
         let change = GitSyncChange(kind: .renamed, path: "safe.md", previousPath: "../outside.md")
         XCTAssertEqual(
@@ -261,6 +293,28 @@ final class GitSyncFoundationTests: XCTestCase {
     func testPreQuitGitSyncTimeoutIsShortAndBounded() {
         XCTAssertGreaterThan(AppDelegate.preQuitGitSyncTimeout, 0)
         XCTAssertLessThanOrEqual(AppDelegate.preQuitGitSyncTimeout, 10)
+    }
+
+    @MainActor
+    func testCoordinatorRejectsSingleFileModeBeforeRepositoryAccess() async {
+        let previousSingleMode = UserDefaultsManagement.isSingleMode
+        UserDefaultsManagement.isSingleMode = true
+        defer { UserDefaultsManagement.isSingleMode = previousSingleMode }
+
+        let root = Project(url: URL(fileURLWithPath: "/tmp/single-file-parent"), label: "test", isRoot: true)
+        let configuration = GitSyncConfiguration(
+            remoteURL: URL(string: "https://example.com/notes.git")!,
+            authorName: "Miao Yan",
+            authorEmail: "notes@example.com"
+        )
+        let result = await GitSyncCoordinator().sync(
+            root: root,
+            configuration: configuration,
+            credential: GitHTTPSCredential(username: "octocat", personalAccessToken: "secret"),
+            viewController: ViewController()
+        )
+
+        XCTAssertEqual(result, .blocked(.singleFileMode))
     }
 
     func testRecognizesKnownCloudStorageRootsWithoutSubstringFalsePositives() {

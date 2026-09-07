@@ -150,8 +150,8 @@ public class Note: NSObject {
         return false
     }
 
-    public func forceReload() {
-        if let attributedString = getContent() {
+    public func forceReloadAsync() async {
+        if let attributedString = await getContentAsync() {
             content = NSMutableAttributedString(attributedString: attributedString)
             isContentLoaded = true
             return

@@ -309,6 +309,7 @@ final class GitSyncCoordinator {
         guard !state.isRunning else {
             return .failed(GitSyncFailure(stage: .preflight, description: "A sync is already running.", recovery: .retry))
         }
+        guard !UserDefaultsManagement.isSingleMode else { return finish(.blocked(.singleFileMode)) }
         guard root.isRoot else { return finish(.blocked(.repositoryUnavailable)) }
         guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
             return finish(.blocked(.cloudBackedRepository))
@@ -320,6 +321,7 @@ final class GitSyncCoordinator {
         }
 
         var failureStage = GitSyncFailureStage.preflight
+        var failureRecovery = GitSyncRecoveryAction.resolveWorkingTreeExternally
         do {
             setState(.flushingEdits)
             failureStage = .flush
@@ -336,7 +338,11 @@ final class GitSyncCoordinator {
             setState(.fetching)
             failureStage = .fetch
             let auth = GitHTTPAuthentication(username: credential.username, token: credential.personalAccessToken)
-            try await repository.fetchOrigin(in: root.url, authentication: auth)
+            try await repository.fetchOrigin(
+                in: root.url,
+                configuredRemoteURL: configuration.remoteURL,
+                authentication: auth
+            )
 
             // Close the edit-during-fetch window and include those bytes in the
             // same manual sync before any incoming checkout begins.
@@ -376,6 +382,7 @@ final class GitSyncCoordinator {
             viewController.fsManager?.beginGitMutation()
             let integration: GitHeadIntegration
             var appliedRevision: String?
+            var checkoutMayHaveMutated = false
             do {
                 do {
                     integration = try await repository.integrateOriginMain(
@@ -410,6 +417,7 @@ final class GitSyncCoordinator {
                 }
 
                 if integration != .upToDate {
+                    checkoutMayHaveMutated = true
                     appliedRevision = try await repository.headRevision(in: root.url)
                     let appliedChanges = try await repository.changesAppliedSince(previousRevision, in: root.url)
                     let currentSnapshot = captureEditorSnapshot(viewController: viewController, root: root)
@@ -429,11 +437,23 @@ final class GitSyncCoordinator {
             } catch {
                 let applyError = error
                 let applyFailureStage = failureStage
-                if let recoveryRevision, let appliedRevision {
+                if let recoveryRevision, checkoutMayHaveMutated {
+                    detachEditorForRecovery(viewController: viewController, root: root)
                     do {
                         failureStage = .recovery
+                        let revisionToRollBack: String
+                        if let appliedRevision {
+                            revisionToRollBack = appliedRevision
+                        } else if let currentRevision = try await repository.headRevision(in: root.url) {
+                            revisionToRollBack = currentRevision
+                        } else {
+                            throw GitRepositoryError.operationFailed(
+                                operation: "sync recovery",
+                                message: "Applied revision is unavailable"
+                            )
+                        }
                         try await repository.restoreMain(to: recoveryRevision, in: root.url)
-                        let rollbackChanges = try await repository.changesAppliedSince(appliedRevision, in: root.url)
+                        let rollbackChanges = try await repository.changesAppliedSince(revisionToRollBack, in: root.url)
                         try await viewController.fsManager?.reconcileGitChanges(
                             rollbackChanges,
                             root: root,
@@ -441,8 +461,10 @@ final class GitSyncCoordinator {
                             flushedEditorText: nil
                         )
                         restoreEditorAfterRollback(finalSnapshot, viewController: viewController)
+                        failureRecovery = .retry
                         failureStage = applyFailureStage
                     } catch let rollbackError {
+                        failureRecovery = .restoreRevision(recoveryRevision)
                         viewController.fsManager?.endGitMutation()
                         throw GitRepositoryError.operationFailed(
                             operation: "sync recovery",
@@ -456,7 +478,11 @@ final class GitSyncCoordinator {
 
             setState(.pushing)
             failureStage = .push
-            try await repository.pushMain(in: root.url, authentication: auth)
+            try await repository.pushMain(
+                in: root.url,
+                configuredRemoteURL: configuration.remoteURL,
+                authentication: auth
+            )
             let revision = try await repository.headRevision(in: root.url) ?? previousRevision ?? ""
             if firstCommit || secondCommit || integration == .mergeCommit {
                 return finish(.published(revision: revision, recoveryRevision: recoveryRevision))
@@ -483,7 +509,69 @@ final class GitSyncCoordinator {
                     GitSyncFailure(
                         stage: failureStage,
                         description: error.localizedDescription,
-                        recovery: failureStage == .push ? .retry : .resolveWorkingTreeExternally
+                        recovery: failureStage == .push ? .retry : failureRecovery
+                    )
+                )
+            )
+        }
+    }
+
+    func restoreRecoveryRevision(
+        root: Project,
+        revision: String,
+        viewController: ViewController
+    ) async -> GitSyncResult {
+        guard !state.isRunning else {
+            return .failed(GitSyncFailure(stage: .recovery, description: "A sync is already running.", recovery: .retry))
+        }
+        guard !UserDefaultsManagement.isSingleMode else { return finish(.blocked(.singleFileMode)) }
+        guard root.isRoot else { return finish(.blocked(.repositoryUnavailable)) }
+        guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
+            return finish(.blocked(.cloudBackedRepository))
+        }
+
+        do {
+            setState(.flushingEdits)
+            let editorSnapshot = try flushEdits(viewController: viewController, root: root)
+            let appliedRevision = try await repository.headRevision(in: root.url)
+            guard GitSyncLibraryMutationGate.beginGitOperation(of: root.url) else {
+                throw GitRepositoryError.operationFailed(
+                    operation: "sync recovery safety barrier",
+                    message: "Wait for active image uploads or another protected library operation to finish"
+                )
+            }
+            defer { GitSyncLibraryMutationGate.endGitOperation() }
+
+            detachEditorForRecovery(viewController: viewController, root: root)
+            viewController.fsManager?.beginGitMutation()
+            do {
+                setState(.applying)
+                try await repository.restoreMain(to: revision, in: root.url)
+                let rollbackChanges = try await repository.changesAppliedSince(appliedRevision, in: root.url)
+                setState(.reloading)
+                try await viewController.fsManager?.reconcileGitChanges(
+                    rollbackChanges,
+                    root: root,
+                    editorOwnerURL: nil,
+                    flushedEditorText: nil
+                )
+                restoreEditorAfterRollback(editorSnapshot, viewController: viewController)
+                viewController.fsManager?.endGitMutation()
+            } catch {
+                viewController.fsManager?.endGitMutation()
+                throw error
+            }
+
+            let restoredRevision = try await repository.headRevision(in: root.url) ?? revision
+            return finish(.updated(revision: restoredRevision, recoveryRevision: nil))
+        } catch {
+            AppDelegate.trackError(error, context: "GitSyncCoordinator.restoreRecoveryRevision")
+            return finish(
+                .failed(
+                    GitSyncFailure(
+                        stage: .recovery,
+                        description: error.localizedDescription,
+                        recovery: .restoreRevision(revision)
                     )
                 )
             )
@@ -501,9 +589,21 @@ final class GitSyncCoordinator {
         guard !state.isRunning else {
             return .failed(GitSyncFailure(stage: .apply, description: "A sync is already running.", recovery: .retry))
         }
+        guard !UserDefaultsManagement.isSingleMode else { return finish(.blocked(.singleFileMode)) }
+        guard root.isRoot else { return finish(.blocked(.repositoryUnavailable)) }
+        guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
+            return finish(.blocked(.cloudBackedRepository))
+        }
         var failureStage = GitSyncFailureStage.apply
-        let editorSnapshot = captureEditorSnapshot(viewController: viewController, root: root)
+        var failureRecovery = GitSyncRecoveryAction.retry
+        var editorSnapshot: EditorSnapshot?
+        var appliedRevision: String?
+        var checkoutMayHaveMutated = false
         do {
+            setState(.flushingEdits)
+            failureStage = .flush
+            editorSnapshot = try flushEdits(viewController: viewController, root: root)
+            failureStage = .preflight
             let staged = try await repository.stagedChanges(in: root.url)
             let worktree = try await repository.worktreeChanges(in: root.url)
             let managedWorktreeChanges = worktree.filter { change in
@@ -525,7 +625,11 @@ final class GitSyncCoordinator {
                 )
             }
             defer { GitSyncLibraryMutationGate.endGitOperation() }
+            let editorWasEditable = viewController.editArea.isEditable
+            viewController.editArea.isEditable = false
+            defer { viewController.editArea.isEditable = editorWasEditable }
             setState(.resolvingConflicts)
+            failureStage = .apply
             viewController.fsManager?.beginGitMutation()
             do {
                 _ = try await repository.resolveOriginMainConflicts(
@@ -535,6 +639,8 @@ final class GitSyncCoordinator {
                     authorName: configuration.authorName,
                     authorEmail: configuration.authorEmail
                 )
+                checkoutMayHaveMutated = true
+                appliedRevision = try await repository.headRevision(in: root.url)
                 let changes = try await repository.changesAppliedSince(context.localRevision, in: root.url)
                 setState(.reloading)
                 failureStage = .reload
@@ -546,14 +652,53 @@ final class GitSyncCoordinator {
                 )
                 viewController.fsManager?.endGitMutation()
             } catch {
+                let applyError = error
+                let applyFailureStage = failureStage
+                if checkoutMayHaveMutated {
+                    let recoveryRevision = context.recoveryRevision ?? context.localRevision
+                    detachEditorForRecovery(viewController: viewController, root: root)
+                    do {
+                        failureStage = .recovery
+                        let revisionToRollBack: String
+                        if let appliedRevision {
+                            revisionToRollBack = appliedRevision
+                        } else if let currentRevision = try await repository.headRevision(in: root.url) {
+                            revisionToRollBack = currentRevision
+                        } else {
+                            throw GitRepositoryError.operationFailed(
+                                operation: "conflict recovery",
+                                message: "Applied revision is unavailable"
+                            )
+                        }
+                        try await repository.restoreMain(to: recoveryRevision, in: root.url)
+                        let rollbackChanges = try await repository.changesAppliedSince(revisionToRollBack, in: root.url)
+                        try await viewController.fsManager?.reconcileGitChanges(
+                            rollbackChanges,
+                            root: root,
+                            editorOwnerURL: nil,
+                            flushedEditorText: nil
+                        )
+                        restoreEditorAfterRollback(editorSnapshot, viewController: viewController)
+                        failureRecovery = .retry
+                        failureStage = applyFailureStage
+                    } catch let rollbackError {
+                        failureRecovery = .restoreRevision(recoveryRevision)
+                        viewController.fsManager?.endGitMutation()
+                        throw GitRepositoryError.operationFailed(
+                            operation: "conflict recovery",
+                            message: "\(applyError.localizedDescription); rollback failed: \(rollbackError.localizedDescription)"
+                        )
+                    }
+                }
                 viewController.fsManager?.endGitMutation()
-                throw error
+                throw applyError
             }
 
             setState(.pushing)
             failureStage = .push
             try await repository.pushMain(
                 in: root.url,
+                configuredRemoteURL: configuration.remoteURL,
                 authentication: GitHTTPAuthentication(username: credential.username, token: credential.personalAccessToken)
             )
             let revision = try await repository.headRevision(in: root.url) ?? ""
@@ -565,7 +710,7 @@ final class GitSyncCoordinator {
                     GitSyncFailure(
                         stage: failureStage,
                         description: error.localizedDescription,
-                        recovery: failureStage == .push ? .retry : .restoreRevision(context.localRevision)
+                        recovery: failureStage == .push ? .retry : failureRecovery
                     )
                 )
             )
@@ -641,6 +786,13 @@ final class GitSyncCoordinator {
         EditTextView.note = note
         viewController.editArea.publishStorage(note.content, owner: note)
         viewController.notesTableView.setSelected(note: note, ensureVisible: true, suppressSideEffects: false)
+    }
+
+    private func detachEditorForRecovery(viewController: ViewController, root: Project) {
+        guard let owner = viewController.editArea.storageNote,
+            owner.project.getParent() == root
+        else { return }
+        viewController.editArea.clear()
     }
 
     private func setState(_ newState: GitSyncState) {

@@ -316,6 +316,11 @@
 "Author name" = "Nombre del autor";
 "Author email" = "Correo del autor";
 "Automatically sync every 15 minutes" = "Sincronizar automáticamente cada 15 minutos";
+"Git sync is unavailable in single-file mode." = "La sincronización Git no está disponible en el modo de archivo único.";
+"Restore Local Revision" = "Restaurar revisión local";
+"Restore the preserved local Git revision? Current post-failure working tree changes will be replaced." = "¿Restaurar la revisión local de Git conservada? Se reemplazarán los cambios actuales del árbol de trabajo posteriores al fallo.";
+"Restoring Git recovery revision…" = "Restaurando la revisión de recuperación de Git…";
+"Git recovery revision restored~" = "Revisión de recuperación de Git restaurada~";
 "Git sync configured~" = "Git configurado~";
 "Git sync configuration is invalid." = "La configuración Git no es válida.";
 "Git credentials are unavailable." = "Las credenciales Git no están disponibles.";

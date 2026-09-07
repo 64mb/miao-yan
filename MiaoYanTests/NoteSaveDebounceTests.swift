@@ -33,6 +33,20 @@ final class NoteSaveDebounceTests: XCTestCase {
     }
 
     @MainActor
+    func testForceReloadAsyncReadsLargeNoteWithoutSynchronousMainActorAPI() async throws {
+        let url = tempDir.appendingPathComponent("large-reload.md")
+        let body = String(repeating: "0123456789abcdef", count: 131_072)
+        try body.write(to: url, atomically: true, encoding: .utf8)
+        let project = Project(url: tempDir, label: "test", isRoot: true)
+        let note = Note(url: url, with: project)
+
+        await note.forceReloadAsync()
+
+        XCTAssertEqual(note.content.length, body.utf16.count)
+        XCTAssertEqual(note.content.string.prefix(16), "0123456789abcdef")
+    }
+
+    @MainActor
     func testSaveContentSchedulesDebouncedWorkItem() {
         let url = tempDir.appendingPathComponent("scheduled.md")
         let project = Project(url: tempDir, label: "test", isRoot: true)

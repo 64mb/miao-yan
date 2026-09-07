@@ -40,7 +40,7 @@ final class GitRepositoryClientTests: XCTestCase {
             authorEmail: "tests@localhost"
         )
         XCTAssertTrue(initialCommitted)
-        try await firstClient.pushMain(in: firstURL, authentication: authentication)
+        try await firstClient.pushMain(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
 
         // An empty local library adopts an existing origin/main without
         // creating an unrelated empty root commit.
@@ -50,7 +50,7 @@ final class GitRepositoryClientTests: XCTestCase {
         try await emptyClient.prepareRepository(at: emptyURL, remoteURL: remoteURL)
         let emptyCommit = try await commit(emptyClient, at: emptyURL, message: "Must stay unborn")
         XCTAssertFalse(emptyCommit)
-        try await emptyClient.fetchOrigin(in: emptyURL, authentication: authentication)
+        try await emptyClient.fetchOrigin(in: emptyURL, configuredRemoteURL: remoteURL, authentication: authentication)
         let adopted = try await emptyClient.integrateOriginMain(
             in: emptyURL,
             authorName: "MiaoYan Tests",
@@ -75,8 +75,8 @@ final class GitRepositoryClientTests: XCTestCase {
         try await secondClient.stage(relativePaths: ["note.md", "i/payload.bin"], in: secondURL)
         let remoteUpdateCommitted = try await commit(secondClient, at: secondURL, message: "Remote update")
         XCTAssertTrue(remoteUpdateCommitted)
-        try await secondClient.pushMain(in: secondURL, authentication: authentication)
-        try await firstClient.fetchOrigin(in: firstURL, authentication: authentication)
+        try await secondClient.pushMain(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        try await firstClient.fetchOrigin(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
         let incoming = try await firstClient.incomingChangesFromOriginMain(in: firstURL)
         XCTAssertEqual(incoming.first(where: { $0.path == "i/payload.bin" })?.byteCount, 11)
         let fastForward = try await firstClient.integrateOriginMain(
@@ -96,8 +96,8 @@ final class GitRepositoryClientTests: XCTestCase {
         try await secondClient.stage(relativePaths: ["remote.md"], in: secondURL)
         let remoteFileCommitted = try await commit(secondClient, at: secondURL, message: "Remote file")
         XCTAssertTrue(remoteFileCommitted)
-        try await secondClient.pushMain(in: secondURL, authentication: authentication)
-        try await firstClient.fetchOrigin(in: firstURL, authentication: authentication)
+        try await secondClient.pushMain(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        try await firstClient.fetchOrigin(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
         let revisionBeforeMerge = try await firstClient.headRevision(in: firstURL)
         let merge = try await firstClient.integrateOriginMain(
             in: firstURL,
@@ -109,11 +109,11 @@ final class GitRepositoryClientTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: firstURL.appendingPathComponent("remote.md").path))
         let appliedMergeChanges = try await firstClient.changesAppliedSince(revisionBeforeMerge, in: firstURL)
         XCTAssertEqual(appliedMergeChanges.map(\.path), ["remote.md"])
-        try await firstClient.pushMain(in: firstURL, authentication: authentication)
+        try await firstClient.pushMain(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
 
         // Bring the second worktree forward, then edit the same note on both
         // sides. Conflict analysis must leave first/note.md untouched.
-        try await secondClient.fetchOrigin(in: secondURL, authentication: authentication)
+        try await secondClient.fetchOrigin(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
         _ = try await secondClient.integrateOriginMain(
             in: secondURL,
             authorName: "MiaoYan Tests",
@@ -127,8 +127,8 @@ final class GitRepositoryClientTests: XCTestCase {
         try await secondClient.stage(relativePaths: ["note.md"], in: secondURL)
         let remoteConflictCommitted = try await commit(secondClient, at: secondURL, message: "Remote conflict")
         XCTAssertTrue(remoteConflictCommitted)
-        try await secondClient.pushMain(in: secondURL, authentication: authentication)
-        try await firstClient.fetchOrigin(in: firstURL, authentication: authentication)
+        try await secondClient.pushMain(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        try await firstClient.fetchOrigin(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
 
         let conflict = try await firstClient.integrateOriginMain(
             in: firstURL,
@@ -163,7 +163,7 @@ final class GitRepositoryClientTests: XCTestCase {
         )
         XCTAssertEqual(resolved, .mergeCommit)
         XCTAssertEqual(try String(contentsOf: firstURL.appendingPathComponent("note.md")), "remote conflict\n")
-        try await firstClient.pushMain(in: firstURL, authentication: authentication)
+        try await firstClient.pushMain(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
     }
 
     func testProductionClientRejectsNonHTTPSRemote() async throws {
@@ -210,6 +210,7 @@ final class GitRepositoryClientTests: XCTestCase {
         do {
             try await client.pushMain(
                 in: repositoryURL,
+                configuredRemoteURL: remoteURL,
                 authentication: GitHTTPAuthentication(username: "octocat", token: "secret")
             )
             XCTFail("A different push URL must be rejected before credentials or repository data are sent")
@@ -219,6 +220,110 @@ final class GitRepositoryClientTests: XCTestCase {
             }
             XCTAssertEqual(operation, "remote validation")
         }
+    }
+
+    func testExistingRepositoryRejectsChangedFetchURLAgainstConfiguredRemote() async throws {
+        let repositoryURL = temporaryDirectory.appendingPathComponent("fetch-url-worktree", isDirectory: true)
+        let configuredURL = temporaryDirectory.appendingPathComponent("fetch-url-origin.git", isDirectory: true)
+        let attackerURL = temporaryDirectory.appendingPathComponent("fetch-url-attacker.git", isDirectory: true)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        let client = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await client.prepareRepository(at: repositoryURL, remoteURL: configuredURL)
+
+        var repository: OpaquePointer?
+        XCTAssertEqual(git_repository_open(&repository, repositoryURL.path), 0)
+        defer { git_repository_free(repository) }
+        XCTAssertEqual(git_remote_set_url(repository, "origin", attackerURL.absoluteString), 0)
+
+        do {
+            try await client.fetchOrigin(
+                in: repositoryURL,
+                configuredRemoteURL: configuredURL,
+                authentication: GitHTTPAuthentication(username: "octocat", token: "secret")
+            )
+            XCTFail("A changed fetch URL must be rejected before credentials are requested")
+        } catch let error as GitRepositoryError {
+            guard case .operationFailed(let operation, _) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(operation, "remote validation")
+        }
+    }
+
+    func testPrepareExistingRepositoryRejectsForeignPushURL() async throws {
+        let repositoryURL = temporaryDirectory.appendingPathComponent("prepare-push-worktree", isDirectory: true)
+        let configuredURL = temporaryDirectory.appendingPathComponent("prepare-push-origin.git", isDirectory: true)
+        let attackerURL = temporaryDirectory.appendingPathComponent("prepare-push-attacker.git", isDirectory: true)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        let client = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await client.prepareRepository(at: repositoryURL, remoteURL: configuredURL)
+
+        var repository: OpaquePointer?
+        XCTAssertEqual(git_repository_open(&repository, repositoryURL.path), 0)
+        XCTAssertEqual(git_remote_set_pushurl(repository, "origin", attackerURL.absoluteString), 0)
+        git_repository_free(repository)
+
+        do {
+            try await client.prepareRepository(at: repositoryURL, remoteURL: configuredURL)
+            XCTFail("Existing repository validation must reject a foreign push URL")
+        } catch let error as GitRepositoryError {
+            guard case .operationFailed(let operation, _) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(operation, "remote validation")
+        }
+    }
+
+    func testFetchIgnoresRepositoryControlledFetchRefspec() async throws {
+        let remoteURL = temporaryDirectory.appendingPathComponent("refspec-origin.git", isDirectory: true)
+        var bareRepository: OpaquePointer?
+        XCTAssertEqual(git_repository_init(&bareRepository, remoteURL.path, 1), 0)
+        git_repository_free(bareRepository)
+
+        let authentication = GitHTTPAuthentication(username: "", token: "")
+        let publisherURL = temporaryDirectory.appendingPathComponent("refspec-publisher", isDirectory: true)
+        try FileManager.default.createDirectory(at: publisherURL, withIntermediateDirectories: true)
+        let publisher = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await publisher.prepareRepository(at: publisherURL, remoteURL: remoteURL)
+        try "main\n".write(to: publisherURL.appendingPathComponent("note.md"), atomically: true, encoding: .utf8)
+        try await publisher.stage(relativePaths: ["note.md"], in: publisherURL)
+        let committed = try await commit(publisher, at: publisherURL, message: "Main")
+        XCTAssertTrue(committed)
+        try await publisher.pushMain(in: publisherURL, configuredRemoteURL: remoteURL, authentication: authentication)
+
+        let consumerURL = temporaryDirectory.appendingPathComponent("refspec-consumer", isDirectory: true)
+        try FileManager.default.createDirectory(at: consumerURL, withIntermediateDirectories: true)
+        let consumer = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await consumer.prepareRepository(at: consumerURL, remoteURL: remoteURL)
+
+        var repository: OpaquePointer?
+        XCTAssertEqual(git_repository_open(&repository, consumerURL.path), 0)
+        var config: OpaquePointer?
+        XCTAssertEqual(git_repository_config(&config, repository), 0)
+        XCTAssertEqual(
+            git_config_set_string(config, "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/repo-controlled"),
+            0
+        )
+        git_config_free(config)
+        git_repository_free(repository)
+
+        try await consumer.fetchOrigin(in: consumerURL, configuredRemoteURL: remoteURL, authentication: authentication)
+
+        XCTAssertTrue(referenceExists("refs/remotes/origin/main", in: consumerURL))
+        XCTAssertFalse(referenceExists("refs/remotes/origin/repo-controlled", in: consumerURL))
+    }
+
+    func testCredentialScopeAllowsOnlyConfiguredHTTPSOrigin() throws {
+        let scope = try GitRemoteCredentialScope(
+            configuredRemoteURL: XCTUnwrap(URL(string: "https://Git.Example.com/team/notes.git"))
+        )
+
+        XCTAssertTrue(scope.allowsCredentials(for: "https://git.example.com/team/notes.git"))
+        XCTAssertTrue(scope.allowsCredentials(for: "https://git.example.com:443/redirected-path"))
+        XCTAssertFalse(scope.allowsCredentials(for: "https://git.example.com:8443/team/notes.git"))
+        XCTAssertFalse(scope.allowsCredentials(for: "https://git.example.com.attacker.invalid/team/notes.git"))
+        XCTAssertFalse(scope.allowsCredentials(for: "http://git.example.com/team/notes.git"))
+        XCTAssertFalse(scope.allowsCredentials(for: "https://user@git.example.com/team/notes.git"))
     }
 
     func testRestoreMainReturnsHeadAndWorktreeToRecoveryRevision() async throws {
@@ -269,7 +374,7 @@ final class GitRepositoryClientTests: XCTestCase {
         try await publisher.stage(relativePaths: ["remote.md"], in: publisherURL)
         let remoteCommitted = try await commit(publisher, at: publisherURL, message: "Remote root")
         XCTAssertTrue(remoteCommitted)
-        try await publisher.pushMain(in: publisherURL, authentication: authentication)
+        try await publisher.pushMain(in: publisherURL, configuredRemoteURL: remoteURL, authentication: authentication)
 
         let localURL = temporaryDirectory.appendingPathComponent("unrelated-local", isDirectory: true)
         try FileManager.default.createDirectory(at: localURL, withIntermediateDirectories: true)
@@ -283,7 +388,7 @@ final class GitRepositoryClientTests: XCTestCase {
         try await local.stage(relativePaths: ["local.md"], in: localURL)
         let localCommitted = try await commit(local, at: localURL, message: "Local root")
         XCTAssertTrue(localCommitted)
-        try await local.fetchOrigin(in: localURL, authentication: authentication)
+        try await local.fetchOrigin(in: localURL, configuredRemoteURL: remoteURL, authentication: authentication)
 
         do {
             _ = try await local.integrateOriginMain(
@@ -436,5 +541,15 @@ final class GitRepositoryClientTests: XCTestCase {
             authorName: "MiaoYan Tests",
             authorEmail: "tests@localhost"
         )
+    }
+
+    private func referenceExists(_ name: String, in repositoryURL: URL) -> Bool {
+        var repository: OpaquePointer?
+        guard git_repository_open(&repository, repositoryURL.path) == 0 else { return false }
+        defer { git_repository_free(repository) }
+        var reference: OpaquePointer?
+        let result = git_reference_lookup(&reference, repository, name)
+        git_reference_free(reference)
+        return result == 0
     }
 }
