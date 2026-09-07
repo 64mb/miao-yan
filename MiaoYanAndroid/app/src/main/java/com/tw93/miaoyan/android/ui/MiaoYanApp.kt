@@ -18,8 +18,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +26,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -104,12 +103,11 @@ fun MiaoYanApp(
     editorSettings: EditorSettings,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
+    onImportLibrary: () -> Unit = {},
+    onExportLibrary: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showSettings by rememberSaveable { mutableStateOf(false) }
-    val chooser = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let(viewModel::selectRoot)
-    }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(state.message) {
@@ -126,6 +124,8 @@ fun MiaoYanApp(
                     settings = editorSettings,
                     onFontChanged = onFontChanged,
                     onFontSizeChanged = onFontSizeChanged,
+                    onImportLibrary = onImportLibrary,
+                    onExportLibrary = onExportLibrary,
                     onBack = { showSettings = false },
                 )
                 state.selected != null -> EditorScreen(
@@ -138,12 +138,11 @@ fun MiaoYanApp(
                     onSettings = { showSettings = true },
                 )
                 state.rootUri == null -> WelcomeScreen(
-                    onChoose = { chooser.launch(null) },
+                    onImportLibrary = onImportLibrary,
                     onSettings = { showSettings = true },
                 )
                 else -> LibraryScreen(
                     state = state,
-                    onChoose = { chooser.launch(state.rootUri) },
                     onRefresh = viewModel::reload,
                     onQueryChanged = viewModel::updateQuery,
                     onOpenNote = viewModel::openNote,
@@ -158,7 +157,7 @@ fun MiaoYanApp(
 }
 
 @Composable
-private fun WelcomeScreen(onChoose: () -> Unit, onSettings: () -> Unit) {
+private fun WelcomeScreen(onImportLibrary: () -> Unit, onSettings: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         IconButton(
             onClick = onSettings,
@@ -170,7 +169,8 @@ private fun WelcomeScreen(onChoose: () -> Unit, onSettings: () -> Unit) {
             )
         }
         Column(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
+            modifier = Modifier.align(Alignment.Center).fillMaxWidth().widthIn(max = 680.dp)
+                .padding(horizontal = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
@@ -193,10 +193,10 @@ private fun WelcomeScreen(onChoose: () -> Unit, onSettings: () -> Unit) {
                 style = MaterialTheme.typography.bodyLarge,
             )
             Spacer(Modifier.height(28.dp))
-            Button(onClick = onChoose) {
+            Button(onClick = onImportLibrary) {
                 Icon(painterResource(R.drawable.ic_folder_open), contentDescription = null)
                 Spacer(Modifier.size(8.dp))
-                Text(stringResource(R.string.choose_library))
+                Text(stringResource(R.string.import_library))
             }
         }
     }
@@ -205,13 +205,13 @@ private fun WelcomeScreen(onChoose: () -> Unit, onSettings: () -> Unit) {
 @Composable
 private fun LibraryScreen(
     state: LibraryUiState,
-    onChoose: () -> Unit,
     onRefresh: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onOpenNote: (LibraryNote) -> Unit,
     onSettings: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 920.dp).fillMaxWidth().fillMaxHeight()) {
         Row(
             Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -228,12 +228,6 @@ private fun LibraryScreen(
             }
             IconButton(onClick = onRefresh) {
                 Icon(painterResource(R.drawable.ic_refresh), contentDescription = stringResource(R.string.refresh))
-            }
-            IconButton(onClick = onChoose) {
-                Icon(
-                    painterResource(R.drawable.ic_folder_open),
-                    contentDescription = stringResource(R.string.choose_another_library),
-                )
             }
             IconButton(onClick = onSettings) {
                 Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
@@ -259,6 +253,7 @@ private fun LibraryScreen(
                     HorizontalDivider(Modifier.padding(start = 20.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = .16f))
                 }
             }
+        }
         }
     }
 }
@@ -306,7 +301,8 @@ private fun EditorScreen(
     val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
     BackHandler(onBack = requestBack)
 
-    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 1120.dp).fillMaxWidth().fillMaxHeight()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -344,6 +340,7 @@ private fun EditorScreen(
                 editorSettings = editorSettings,
                 modifier = Modifier.fillMaxSize(),
             )
+        }
         }
     }
 
@@ -559,12 +556,15 @@ private fun SettingsScreen(
     settings: EditorSettings,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
+    onImportLibrary: () -> Unit,
+    onExportLibrary: () -> Unit,
     onBack: () -> Unit,
 ) {
     var showLicense by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
 
-    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight()) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -586,6 +586,28 @@ private fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.storage),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+                ) {
+                    StorageWarning()
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsActionRow(
+                        icon = R.drawable.ic_library_import,
+                        title = stringResource(R.string.import_library),
+                        detail = stringResource(R.string.import_library_detail),
+                        onClick = onImportLibrary,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsActionRow(
+                        icon = R.drawable.ic_library_export,
+                        title = stringResource(R.string.export_library),
+                        detail = stringResource(R.string.export_library_detail),
+                        onClick = onExportLibrary,
+                    )
+                }
+            }
             item {
                 SettingsSection(
                     title = stringResource(R.string.appearance),
@@ -641,6 +663,7 @@ private fun SettingsScreen(
                 }
             }
         }
+        }
     }
 
     if (showLicense) {
@@ -662,6 +685,53 @@ private fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = { showLicense = false }) { Text(stringResource(R.string.close)) }
             },
+        )
+    }
+}
+
+@Composable
+private fun StorageWarning() {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            painterResource(R.drawable.ic_storage_warning),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                stringResource(R.string.local_storage_warning_title),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                stringResource(R.string.local_storage_warning_detail),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsActionRow(icon: Int, title: String, detail: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(
+            painterResource(R.drawable.ic_chevron_right),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

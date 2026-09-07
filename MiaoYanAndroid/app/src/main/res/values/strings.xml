@@ -1,9 +1,7 @@
 <resources>
     <string name="app_name">MiaoYan</string>
-    <string name="choose_library">Choose library</string>
-    <string name="choose_another_library">Change library</string>
-    <string name="empty_title">Your Markdown library, without a cloud account</string>
-    <string name="empty_message">Choose one folder. MiaoYan keeps the notes there and asks Android for persistent access only to that folder.</string>
+    <string name="empty_title">Your private Markdown library</string>
+    <string name="empty_message">Notes live in MiaoYan’s local app storage. Import a library to get started.</string>
     <string name="search_notes">Search notes</string>
     <string name="no_notes">No Markdown notes found</string>
     <string name="refresh">Refresh</string>
@@ -17,6 +15,13 @@
     <string name="unsaved_message">The note changed in the editor and has not been saved to the library.</string>
     <string name="loading">Loading library…</string>
     <string name="settings">Settings</string>
+    <string name="storage">Storage</string>
+    <string name="local_storage_warning_title">Keep a restorable copy</string>
+    <string name="local_storage_warning_detail">Uninstalling MiaoYan or clearing app data deletes local notes. Use Git or Export Library so you can restore them.</string>
+    <string name="import_library">Import Library</string>
+    <string name="import_library_detail">Copy notes from a folder into MiaoYan’s local library.</string>
+    <string name="export_library">Export Library</string>
+    <string name="export_library_detail">Copy the local library to a folder you choose.</string>
     <string name="appearance">Appearance</string>
     <string name="system_theme">Follow system</string>
     <string name="system_theme_detail">Light and dark appearance changes with Android.</string>

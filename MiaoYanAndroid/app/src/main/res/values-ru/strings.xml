@@ -1,9 +1,7 @@
 <resources>
     <string name="app_name">MiaoYan</string>
-    <string name="choose_library">Выбрать библиотеку</string>
-    <string name="choose_another_library">Сменить библиотеку</string>
-    <string name="empty_title">Ваша Markdown-библиотека без облачного аккаунта</string>
-    <string name="empty_message">Выберите одну папку. MiaoYan хранит заметки в ней и получает постоянный доступ только к этой папке.</string>
+    <string name="empty_title">Ваша локальная Markdown-библиотека</string>
+    <string name="empty_message">Заметки хранятся в локальном хранилище MiaoYan. Импортируйте библиотеку, чтобы начать работу.</string>
     <string name="search_notes">Поиск заметок</string>
     <string name="no_notes">Markdown-заметки не найдены</string>
     <string name="refresh">Обновить</string>
@@ -17,6 +15,13 @@
     <string name="unsaved_message">Текст в редакторе изменён и ещё не сохранён в библиотеку.</string>
     <string name="loading">Загрузка библиотеки…</string>
     <string name="settings">Настройки</string>
+    <string name="storage">Хранилище</string>
+    <string name="local_storage_warning_title">Сохраните копию для восстановления</string>
+    <string name="local_storage_warning_detail">Удаление MiaoYan или очистка данных приложения удалит локальные заметки. Для восстановления используйте Git или «Экспорт библиотеки».</string>
+    <string name="import_library">Импорт библиотеки</string>
+    <string name="import_library_detail">Скопировать заметки из выбранной папки в локальную библиотеку MiaoYan.</string>
+    <string name="export_library">Экспорт библиотеки</string>
+    <string name="export_library_detail">Скопировать локальную библиотеку в выбранную папку.</string>
     <string name="appearance">Оформление</string>
     <string name="system_theme">Как в системе</string>
     <string name="system_theme_detail">Светлое и тёмное оформление переключается вместе с Android.</string>

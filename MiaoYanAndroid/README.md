@@ -50,6 +50,6 @@ The renderer enables the table, strikethrough, autolink, tagfilter, and task-lis
 
 ## Deliberate prototype limits
 
-- Note creation/rename/Trash, Room indexing, Git sync, and SAF Import/Export are not included in this first executable slice. Android AI is explicitly out of scope.
+- Note creation/rename/Trash, Room indexing, Git sync, and the SAF transport behind the Settings Import/Export callbacks are not included in this slice. SAF never becomes the live-library root. Android AI is explicitly out of scope.
 - Native APKs are currently produced for `arm64-v8a` devices and `x86_64` emulators only.
 - The production atomic-write and crash-recovery state machine remains Phase 0 work.
