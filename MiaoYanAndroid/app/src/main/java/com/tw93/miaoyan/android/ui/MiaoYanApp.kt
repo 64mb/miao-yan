@@ -1,25 +1,16 @@
 package com.tw93.miaoyan.android.ui
 
-import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
-import android.content.res.Resources
 import android.graphics.Color as AndroidColor
 import android.graphics.Typeface
 import android.text.Editable
 import android.text.TextWatcher
-import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.EditText
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -68,7 +59,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,7 +68,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -97,7 +86,6 @@ import com.tw93.miaoyan.android.data.EDITOR_FONT_SIZES
 import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.EditorSettings
 import com.tw93.miaoyan.android.data.ThemeMode
-import com.tw93.miaoyan.android.data.LocalFileImageLoader
 import com.tw93.miaoyan.android.data.LocalImagePolicy
 import com.tw93.miaoyan.android.data.NameError
 import com.tw93.miaoyan.android.data.NameResult
@@ -108,17 +96,20 @@ import com.tw93.miaoyan.android.ui.editor.MarkdownEditorPalettes
 import com.tw93.miaoyan.android.ui.editor.MarkdownSyntaxHighlighter
 import com.tw93.miaoyan.android.ui.editor.MarkdownSyntaxPalette
 import com.tw93.miaoyan.android.ui.presentation.AppPrivatePresentationImageHandler
+import com.tw93.miaoyan.android.ui.presentation.ContinuousPreview
+import com.tw93.miaoyan.android.ui.presentation.ContinuousPreviewPreparation
 import com.tw93.miaoyan.android.ui.presentation.PresentationHost
 import com.tw93.miaoyan.android.ui.presentation.PresentationImageHandler
 import com.tw93.miaoyan.android.ui.presentation.PresentationMode
+import com.tw93.miaoyan.android.ui.presentation.PreviewWebViewController
+import com.tw93.miaoyan.android.ui.presentation.rememberContinuousPreviewDocument
 import com.tw93.miaoyan.android.ui.presentation.rememberPresentationSession
 import com.tw93.miaoyan.android.ui.theme.MiaoYanColors
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 private val JetBrainsMonoFamily = FontFamily(Font(R.font.jetbrains_mono_regular))
 
@@ -168,7 +159,15 @@ fun MiaoYanApp(
         imageScope?.let(::AppPrivatePresentationImageHandler) ?: PresentationImageHandler.DenyAll
     }
     val presentationMode = presentationSession.mode
-    if (presentationMode != null && selected != null) {
+    val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
+    val continuousPreparation = rememberContinuousPreviewDocument(
+        markdown = state.draft,
+        darkMode = darkMode,
+        editorSettings = editorSettings,
+        enabled = selected != null,
+    )
+    val previewController = remember(selected?.note?.relativePath) { PreviewWebViewController() }
+    if (presentationMode == PresentationMode.Slides && selected != null) {
         PresentationHost(
             mode = presentationMode,
             markdown = state.draft,
@@ -213,11 +212,21 @@ fun MiaoYanApp(
                     onBack = viewModel::closeNote,
                     onDraftChanged = viewModel::updateDraft,
                     onSelectionChanged = viewModel::updateSelection,
-                    onPreviewChanged = viewModel::setPreview,
+                    onPreviewChanged = { enabled ->
+                        if (enabled) previewController.markRequested("inline")
+                        viewModel.setPreview(enabled)
+                    },
                     onTypeset = viewModel::typesetDraft,
                     onSave = viewModel::save,
-                    onSettings = { showSettings = true },
-                    onFullscreenPreview = { presentationSession.enter(PresentationMode.ContinuousPreview) },
+                    continuousPreparation = continuousPreparation,
+                    previewController = previewController,
+                    previewImageHandler = presentationImageHandler,
+                    fullscreenPreview = presentationMode == PresentationMode.ContinuousPreview,
+                    onFullscreenPreview = {
+                        previewController.markRequested("fullscreen")
+                        presentationSession.enter(PresentationMode.ContinuousPreview)
+                    },
+                    onExitFullscreenPreview = presentationSession::exit,
                     onSlidePresentation = { presentationSession.enter(PresentationMode.Slides) },
                     onPrepareAttachment = viewModel::prepareAttachment,
                     onAttachmentResult = viewModel::finishAttachmentPicker,
@@ -585,8 +594,12 @@ private fun EditorScreen(
     onPreviewChanged: (Boolean) -> Unit,
     onTypeset: () -> Unit,
     onSave: () -> Unit,
-    onSettings: () -> Unit,
+    continuousPreparation: ContinuousPreviewPreparation,
+    previewController: PreviewWebViewController,
+    previewImageHandler: PresentationImageHandler,
+    fullscreenPreview: Boolean,
     onFullscreenPreview: () -> Unit,
+    onExitFullscreenPreview: () -> Unit,
     onSlidePresentation: () -> Unit,
     onPrepareAttachment: (AttachmentKind) -> AttachmentRequest?,
     onAttachmentResult: (AttachmentKind, android.net.Uri?) -> Unit,
@@ -602,112 +615,125 @@ private fun EditorScreen(
     val canEditDraft = !state.preview && !state.loading && !state.saving && !state.mutating && !state.syncing &&
         !state.formatting && !state.attaching && !state.attachmentPickerOpen
     val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
-    BackHandler(onBack = requestBack)
+    BackHandler(enabled = !fullscreenPreview, onBack = requestBack)
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-        Column(Modifier.widthIn(max = 1120.dp).fillMaxWidth().fillMaxHeight()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = requestBack) {
-                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
-            }
-            Text(
-                state.selected?.note?.displayName.orEmpty(),
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            IconButton(onClick = onSettings) {
-                Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
-            }
-            IconButton(onClick = onFullscreenPreview) {
-                Icon(
-                    painterResource(R.drawable.ic_videocam),
-                    contentDescription = stringResource(R.string.fullscreen_preview),
-                )
-            }
-            IconButton(onClick = onSlidePresentation) {
-                Icon(
-                    painterResource(R.drawable.ic_slideshow),
-                    contentDescription = stringResource(R.string.slide_presentation),
-                )
-            }
-            IconButton(onClick = onTypeset, enabled = canEditDraft) {
-                if (state.formatting) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_typesetting),
-                        contentDescription = stringResource(R.string.typesetting),
-                    )
-                }
-            }
-            Box {
-                IconButton(onClick = { showAttachmentMenu = true }, enabled = canEditDraft) {
-                    Icon(
-                        painterResource(R.drawable.ic_attach_file),
-                        contentDescription = stringResource(R.string.insert_attachment),
-                    )
-                }
-                DropdownMenu(
-                    expanded = showAttachmentMenu,
-                    onDismissRequest = { showAttachmentMenu = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.insert_image)) },
-                        leadingIcon = {
-                            Icon(painterResource(R.drawable.ic_insert_image), contentDescription = null)
-                        },
-                        onClick = {
-                            showAttachmentMenu = false
-                            if (onPrepareAttachment(AttachmentKind.Image) != null) {
-                                imagePicker.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                                )
-                            }
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.insert_file)) },
-                        leadingIcon = {
-                            Icon(painterResource(R.drawable.ic_attach_file), contentDescription = null)
-                        },
-                        onClick = {
-                            showAttachmentMenu = false
-                            if (onPrepareAttachment(AttachmentKind.File) != null) {
-                                filePicker.launch(arrayOf("*/*"))
-                            }
-                        },
-                    )
-                }
-            }
-            IconButton(onClick = onSave, enabled = state.dirty && canEditDraft) {
-                Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))
-            }
-        }
-        ModeSwitcher(preview = state.preview, onPreviewChanged = onPreviewChanged)
-        if (state.preview) {
-            MarkdownPreview(
-                markdown = state.draft,
-                noteRelativePath = state.selected?.note?.relativePath,
-                editorSettings = editorSettings,
-                modifier = Modifier.fillMaxSize(),
-            )
+        val columnModifier = if (fullscreenPreview) {
+            Modifier.fillMaxSize()
         } else {
-            PlatformMarkdownEditor(
-                text = state.draft,
-                selectionStart = state.selectionStart,
-                selectionEnd = state.selectionEnd,
-                onTextChanged = onDraftChanged,
-                onSelectionChanged = onSelectionChanged,
-                editorSettings = editorSettings,
-                modifier = Modifier.fillMaxSize(),
-            )
+            Modifier.widthIn(max = 1120.dp).fillMaxWidth().fillMaxHeight()
         }
+        Column(columnModifier) {
+            if (!fullscreenPreview) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = requestBack) {
+                        Icon(
+                            painterResource(R.drawable.ic_arrow_back),
+                            contentDescription = stringResource(R.string.back),
+                        )
+                    }
+                    Text(
+                        state.selected?.note?.displayName.orEmpty(),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    IconButton(onClick = onFullscreenPreview) {
+                        Icon(
+                            painterResource(R.drawable.ic_videocam),
+                            contentDescription = stringResource(R.string.fullscreen_preview),
+                        )
+                    }
+                    IconButton(onClick = onSlidePresentation) {
+                        Icon(
+                            painterResource(R.drawable.ic_slideshow),
+                            contentDescription = stringResource(R.string.slide_presentation),
+                        )
+                    }
+                    IconButton(onClick = onTypeset, enabled = canEditDraft) {
+                        if (state.formatting) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_typesetting),
+                                contentDescription = stringResource(R.string.typesetting),
+                            )
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { showAttachmentMenu = true }, enabled = canEditDraft) {
+                            Icon(
+                                painterResource(R.drawable.ic_attach_file),
+                                contentDescription = stringResource(R.string.insert_attachment),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showAttachmentMenu,
+                            onDismissRequest = { showAttachmentMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.insert_image)) },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.ic_insert_image), contentDescription = null)
+                                },
+                                onClick = {
+                                    showAttachmentMenu = false
+                                    if (onPrepareAttachment(AttachmentKind.Image) != null) {
+                                        imagePicker.launch(
+                                            PickVisualMediaRequest(
+                                                ActivityResultContracts.PickVisualMedia.ImageOnly,
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.insert_file)) },
+                                leadingIcon = {
+                                    Icon(painterResource(R.drawable.ic_attach_file), contentDescription = null)
+                                },
+                                onClick = {
+                                    showAttachmentMenu = false
+                                    if (onPrepareAttachment(AttachmentKind.File) != null) {
+                                        filePicker.launch(arrayOf("*/*"))
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    IconButton(onClick = onSave, enabled = state.dirty && canEditDraft) {
+                        Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))
+                    }
+                }
+                ModeSwitcher(preview = state.preview, onPreviewChanged = onPreviewChanged)
+            }
+            Box(Modifier.fillMaxSize()) {
+                if (!state.preview && !fullscreenPreview) {
+                    PlatformMarkdownEditor(
+                        text = state.draft,
+                        selectionStart = state.selectionStart,
+                        selectionEnd = state.selectionEnd,
+                        onTextChanged = onDraftChanged,
+                        onSelectionChanged = onSelectionChanged,
+                        editorSettings = editorSettings,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                ContinuousPreview(
+                    preparation = continuousPreparation,
+                    controller = previewController,
+                    imageHandler = previewImageHandler,
+                    active = state.preview || fullscreenPreview,
+                    fullscreen = fullscreenPreview,
+                    onExitFullscreen = onExitFullscreenPreview,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
     }
 
@@ -795,7 +821,8 @@ private fun PlatformMarkdownEditor(
         factory = { context ->
             SelectionAwareEditText(context).apply {
                 gravity = Gravity.TOP or Gravity.START
-                setPadding(20, 18, 20, 48)
+                val padding = editorPaddingPixels(resources.displayMetrics.density)
+                setPadding(padding.horizontal, padding.top, padding.horizontal, padding.bottom)
                 setBackgroundColor(AndroidColor.TRANSPARENT)
                 includeFontPadding = false
                 setHorizontallyScrolling(false)
@@ -918,98 +945,16 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
     }
 }
 
-@Composable
-private fun MarkdownPreview(
-    markdown: String,
-    noteRelativePath: String?,
-    editorSettings: EditorSettings,
-    modifier: Modifier = Modifier,
-) {
-    if (LocalInspectionMode.current) return
-    val context = LocalContext.current
-    val resources = LocalResources.current
-    val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
-    var jetBrainsMonoData by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(resources) {
-        jetBrainsMonoData = withContext(Dispatchers.IO) {
-            loadJetBrainsMonoData(resources)
-        }
-    }
-    val html = remember(markdown, darkMode, editorSettings, jetBrainsMonoData) {
-        MarkdownRenderer.renderDocument(
-            markdown = markdown,
-            darkMode = darkMode,
-            font = editorSettings.font,
-            fontSizeSp = editorSettings.fontSizeSp,
-            jetBrainsMonoData = jetBrainsMonoData,
-        )
-    }
-    val canonicalRoot = remember(context) { File(context.filesDir, "libraries/default") }
-    val imageScope = remember(canonicalRoot, noteRelativePath) {
-        noteRelativePath?.let { LocalImagePolicy.resolveNoteAssetScope(canonicalRoot, it) }
-    }
-    key(imageScope) {
-        val imageLoader = remember(imageScope) { imageScope?.let(::LocalFileImageLoader) }
-        AndroidView(
-            modifier = modifier,
-            factory = {
-                WebView(context).apply {
-                    settings.javaScriptEnabled = false
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    settings.blockNetworkLoads = true
-                    settings.domStorageEnabled = false
-                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                    settings.setSupportMultipleWindows(false)
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(
-                            view: WebView,
-                            request: WebResourceRequest,
-                        ): WebResourceResponse? {
-                            val url = request.url.toString()
-                            if (request.method != "GET" || request.url.host != LocalImagePolicy.AssetHost) {
-                                return blockedWebResourceResponse()
-                            }
-                            return imageLoader?.load(url) ?: blockedWebResourceResponse()
-                        }
+internal data class EditorPaddingPixels(
+    val horizontal: Int,
+    val top: Int,
+    val bottom: Int,
+)
 
-                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                            val uri = request.url
-                            val userActivated = request.isForMainFrame && request.hasGesture()
-                            if (uri.host != LocalImagePolicy.AssetHost &&
-                                PreviewNavigationPolicy.opensExternally(uri.toString(), userActivated)
-                            ) {
-                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                            }
-                            return true
-                        }
-                    }
-                }
-            },
-            update = { webView ->
-                if (webView.tag != html) {
-                    webView.tag = html
-                    webView.loadDataWithBaseURL(
-                        "https://appassets.androidplatform.net/",
-                        html,
-                        "text/html",
-                        "utf-8",
-                        null,
-                    )
-                }
-            },
-            onRelease = { it.destroy() },
-        )
-    }
-}
-
-private fun blockedWebResourceResponse(): WebResourceResponse = WebResourceResponse(
-    "text/plain",
-    "utf-8",
-    403,
-    "Forbidden",
-    mapOf("Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff"),
-    java.io.ByteArrayInputStream(ByteArray(0)),
+internal fun editorPaddingPixels(density: Float): EditorPaddingPixels = EditorPaddingPixels(
+    horizontal = (20f * density).roundToInt(),
+    top = (18f * density).roundToInt(),
+    bottom = (48f * density).roundToInt(),
 )
 
 @Composable
@@ -1497,14 +1442,6 @@ private fun editorTypeface(font: EditorFont, editor: EditText): Typeface = when 
     EditorFont.SYSTEM_MONOSPACE -> Typeface.create("monospace", Typeface.NORMAL)
     EditorFont.JETBRAINS_MONO -> editor.resources.getFont(R.font.jetbrains_mono_regular)
 }
-
-@SuppressLint("ResourceType")
-private fun loadJetBrainsMonoData(resources: Resources): String =
-    // Font resources are compiled file resources and can be opened as streams; lint's
-    // resource annotation only lists R.raw even though Resources supports both here.
-    resources.openRawResource(R.font.jetbrains_mono_regular).use { input ->
-        Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
-    }
 
 @Composable
 private fun LoadingOverlay(label: String) {

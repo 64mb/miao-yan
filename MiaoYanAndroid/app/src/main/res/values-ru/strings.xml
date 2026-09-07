@@ -8,6 +8,8 @@
     <string name="edit">Редактор</string>
     <string name="preview">Просмотр</string>
     <string name="fullscreen_preview">Полноэкранный просмотр</string>
+    <string name="preview_renderer_failed">Предпросмотр неожиданно остановился.</string>
+    <string name="retry">Повторить</string>
     <string name="slide_presentation">Презентация по слайдам</string>
     <string name="save">Сохранить</string>
     <string name="back">Назад</string>

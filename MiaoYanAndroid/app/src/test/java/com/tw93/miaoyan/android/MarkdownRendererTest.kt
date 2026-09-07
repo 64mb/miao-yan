@@ -1,6 +1,5 @@
 package com.tw93.miaoyan.android
 
-import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.ui.MarkdownRenderer
 import com.tw93.miaoyan.android.ui.PreviewContentPolicy
 import com.tw93.miaoyan.android.ui.PreviewNavigationPolicy
@@ -20,31 +19,6 @@ class MarkdownRendererTest {
     fun leavesUnclosedFrontmatterUntouched() {
         val source = "---\ntitle: Test\n# Note"
         assertEquals(source, MarkdownRenderer.stripFrontmatter(source))
-    }
-
-    @Test
-    fun documentStripsFrontmatterBeforeCallingNativeRenderer() {
-        var nativeInput = ""
-        val html = MarkdownRenderer.renderDocument("---\ntitle: Test\n---\n# Note", darkMode = false) { markdown ->
-            nativeInput = markdown
-            "<h1>Note</h1>"
-        }
-
-        assertEquals("# Note", nativeInput)
-        assertTrue(html.contains("<h1>Note</h1>"))
-    }
-
-    @Test
-    fun documentKeepsWebViewResourceContractClosed() {
-        val html = MarkdownRenderer.renderDocument("text", darkMode = true) { "<p>text</p>" }
-
-        assertTrue(html.contains("default-src 'none'"))
-        assertTrue(html.contains("font-src data:"))
-        assertTrue(html.contains("img-src https://appassets.androidplatform.net"))
-        assertTrue(html.contains("media-src 'none'"))
-        assertTrue(html.contains("frame-src 'none'"))
-        assertTrue(html.contains("connect-src 'none'"))
-        assertTrue(html.contains("img,video,audio,iframe,table { max-width: 100%; }"))
     }
 
     @Test
@@ -111,38 +85,4 @@ class MarkdownRendererTest {
         assertFalse(PreviewNavigationPolicy.opensExternally("file:///secret", userActivated = true))
     }
 
-    @Test
-    fun usesMacPreviewPaletteInLightAndDarkModes() {
-        val light = MarkdownRenderer.renderDocument("Hello", darkMode = false) { "<p>Hello</p>" }
-        val dark = MarkdownRenderer.renderDocument("Hello", darkMode = true) { "<p>Hello</p>" }
-
-        assertTrue(light.contains("background: #FFFFFF; color: #262626"))
-        assertTrue(light.contains("a { color: #0C6ADA; }"))
-        assertTrue(light.contains("background: #F7F7F7"))
-        assertTrue(dark.contains("background: #23282D; color: #E7E9EA"))
-        assertTrue(dark.contains("a { color: #1D9BF0; }"))
-        assertTrue(dark.contains("background: #282E33"))
-    }
-
-    @Test
-    fun appliesOnlyValidatedTypographyInputs() {
-        val html = MarkdownRenderer.renderDocument(
-            markdown = "Hello",
-            darkMode = false,
-            font = EditorFont.JETBRAINS_MONO,
-            fontSizeSp = 20,
-            jetBrainsMonoData = "Zm9udA==",
-        ) { "<p>Hello</p>" }
-
-        assertTrue(html.contains("font-family: \"JetBrains Mono\", ui-monospace, monospace"))
-        assertTrue(html.contains("font-size: 20px"))
-        assertTrue(html.contains("data:font/ttf;base64,Zm9udA=="))
-
-        val invalidSize = MarkdownRenderer.renderDocument(
-            markdown = "Hello",
-            darkMode = false,
-            fontSizeSp = 999,
-        ) { "<p>Hello</p>" }
-        assertTrue(invalidSize.contains("font-size: 16px"))
-    }
 }

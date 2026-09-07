@@ -75,10 +75,13 @@ class PresentationDocumentTest {
 
     @Test
     fun continuousPreviewIsOneScrollableScriptlessDocument() {
+        var renderCount = 0
         val html = PresentationDocument.renderContinuous("# One\n---\n# Two", darkMode = false) {
+            renderCount += 1
             "<h1>One</h1><hr /><h1>Two</h1>"
         }
 
+        assertEquals(1, renderCount)
         assertTrue(html.contains("script-src 'none'"))
         assertTrue(html.contains("overflow-x: hidden"))
         assertTrue(html.contains("<hr />"))
@@ -99,6 +102,24 @@ class PresentationDocumentTest {
         assertTrue(html.contains("font-family: serif"))
         assertTrue(html.contains("font-size: 24px"))
         assertFalse(html.contains("#fffdfa", ignoreCase = true))
+    }
+
+    @Test
+    fun bundledFontIsFinalBeforeTheDocumentCanBecomeVisible() {
+        val html = PresentationDocument.renderContinuous(
+            markdown = "text",
+            darkMode = false,
+            editorSettings = EditorSettings(EditorFont.JETBRAINS_MONO, 16),
+        ) { "<p>text</p>" }
+
+        val fontUrl = "https://appassets.androidplatform.net/presentation/jetbrains-mono.ttf"
+        assertTrue(html.contains("font-src https://appassets.androidplatform.net"))
+        assertTrue(html.contains("rel=\"preload\" href=\"$fontUrl\""))
+        assertTrue(html.contains("src: url('$fontUrl')"))
+        assertTrue(html.contains("font-display: block"))
+        assertTrue(html.contains("rel=\"icon\" href=\"data:,\""))
+        assertFalse(html.contains("font/ttf;base64"))
+        assertEquals(1, "@font-face".toRegex().findAll(html).count())
     }
 
     @Test

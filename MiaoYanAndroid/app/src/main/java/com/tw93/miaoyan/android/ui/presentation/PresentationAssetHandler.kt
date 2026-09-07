@@ -1,8 +1,10 @@
 package com.tw93.miaoyan.android.ui.presentation
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.webkit.WebResourceResponse
+import com.tw93.miaoyan.android.R
 import com.tw93.miaoyan.android.data.LocalFileImageLoader
 import com.tw93.miaoyan.android.data.LocalImagePolicy
 import java.io.ByteArrayInputStream
@@ -25,15 +27,19 @@ class AppPrivatePresentationImageHandler(scope: LocalImagePolicy.NoteAssetScope)
 internal class PresentationAssetRouter(
     private val context: Context,
     private val imageHandler: PresentationImageHandler,
+    private val onResourceOpened: (String) -> Unit = {},
 ) {
     fun open(uri: Uri): WebResourceResponse {
         val rawUrl = uri.toString()
         if (uri.scheme != "https" || uri.encodedAuthority != AssetHost || uri.query != null || uri.fragment != null) {
             return blockedResponse()
         }
+        onResourceOpened(uri.encodedPath.orEmpty())
         return when (uri.encodedPath) {
             "/presentation/reveal.js" -> bundled("presentation/reveal.js", "text/javascript")
             "/presentation/reveal.css" -> bundled("presentation/reveal.css", "text/css")
+            "/presentation/jetbrains-mono.ttf" -> bundledFont()
+            "/favicon.ico" -> blockedResponse(204, "No Content")
             else -> if (LocalImagePolicy.fileNameForAssetUrl(rawUrl) != null) {
                 imageHandler.open(rawUrl) ?: blockedResponse()
             } else {
@@ -44,6 +50,11 @@ internal class PresentationAssetRouter(
 
     private fun bundled(path: String, mimeType: String): WebResourceResponse = runCatching {
         response(mimeType, context.assets.open(path))
+    }.getOrElse { blockedResponse(404, "Not Found") }
+
+    @SuppressLint("ResourceType")
+    private fun bundledFont(): WebResourceResponse = runCatching {
+        response("font/ttf", context.resources.openRawResource(R.font.jetbrains_mono_regular))
     }.getOrElse { blockedResponse(404, "Not Found") }
 }
 

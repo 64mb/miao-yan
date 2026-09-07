@@ -21,27 +21,26 @@ object PresentationDocument {
         markdown: String,
         darkMode: Boolean,
         editorSettings: EditorSettings = EditorSettings(),
-        jetBrainsMonoData: String? = null,
-    ): String = renderContinuous(markdown, darkMode, editorSettings, jetBrainsMonoData, MarkdownRenderer::renderFragment)
+    ): String = renderContinuous(markdown, darkMode, editorSettings, MarkdownRenderer::renderFragment)
 
     internal fun renderContinuous(
         markdown: String,
         darkMode: Boolean,
         editorSettings: EditorSettings = EditorSettings(),
-        jetBrainsMonoData: String? = null,
         fragmentRenderer: (String) -> String,
     ): String {
         val fragment = fragmentRenderer(MarkdownRenderer.stripFrontmatter(markdown))
-        val body = PresentationAssetPolicy.rewriteLocalImages(fragment)
-        val colors = PresentationColors(darkMode, editorSettings, jetBrainsMonoData)
+        val colors = PresentationColors(darkMode, editorSettings)
         return """
             <!doctype html>
             <html><head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; font-src $AssetOrigin; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <link rel="icon" href="data:,">
+            ${colors.fontPreload}
             <style>${continuousStyle(colors)}</style>
-            </head><body>$body</body></html>
+            </head><body>$fragment</body></html>
         """.trimIndent()
     }
 
@@ -50,13 +49,11 @@ object PresentationDocument {
         darkMode: Boolean,
         initialSlide: Int,
         editorSettings: EditorSettings = EditorSettings(),
-        jetBrainsMonoData: String? = null,
     ): String = renderSlides(
         markdown,
         darkMode,
         initialSlide,
         editorSettings,
-        jetBrainsMonoData,
         createNonce(),
         MarkdownRenderer::renderFragment,
     )
@@ -66,7 +63,6 @@ object PresentationDocument {
         darkMode: Boolean,
         initialSlide: Int,
         editorSettings: EditorSettings = EditorSettings(),
-        jetBrainsMonoData: String? = null,
         nonce: String,
         fragmentRenderer: (String) -> String,
     ): String {
@@ -74,16 +70,18 @@ object PresentationDocument {
         val slides = split(markdown)
         val start = initialSlide.coerceIn(0, slides.lastIndex)
         val sections = slides.joinToString("\n") { slide ->
-            val fragment = PresentationAssetPolicy.rewriteLocalImages(fragmentRenderer(slide))
+            val fragment = fragmentRenderer(slide)
             "<section>$fragment</section>"
         }
-        val colors = PresentationColors(darkMode, editorSettings, jetBrainsMonoData)
+        val colors = PresentationColors(darkMode, editorSettings)
         return """
             <!doctype html>
             <html><head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce' 'strict-dynamic'; style-src 'unsafe-inline' $AssetOrigin; font-src data:; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce' 'strict-dynamic'; style-src 'unsafe-inline' $AssetOrigin; font-src $AssetOrigin; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <link rel="icon" href="data:,">
+            ${colors.fontPreload}
             <link nonce="$nonce" rel="stylesheet" href="$AssetOrigin/presentation/reveal.css">
             <style nonce="$nonce">${slideStyle(colors)}</style>
             </head><body>
@@ -188,7 +186,6 @@ object PresentationDocument {
     private data class PresentationColors(
         val darkMode: Boolean,
         val editorSettings: EditorSettings,
-        val jetBrainsMonoData: String?,
     ) {
         val scheme = if (darkMode) "dark" else "light"
         val background = if (darkMode) MiaoYanColors.PreviewBackgroundDarkCss else MiaoYanColors.PreviewBackgroundLightCss
@@ -201,9 +198,17 @@ object PresentationDocument {
         val fontStack = editorSettings.font.cssStack
         val slideFontSize = (fontSize * 2.375f).toInt()
         val compactSlideFontSize = fontSize * 2
-        val fontFace = jetBrainsMonoData?.let {
-            "@font-face { font-family: 'JetBrains Mono'; src: url(data:font/ttf;base64,$it) format('truetype'); font-style: normal; font-weight: 400; font-display: swap; }"
-        }.orEmpty()
+        val usesBundledFont = editorSettings.font == com.tw93.miaoyan.android.data.EditorFont.JETBRAINS_MONO
+        val fontPreload = if (usesBundledFont) {
+            "<link rel=\"preload\" href=\"$AssetOrigin/presentation/jetbrains-mono.ttf\" as=\"font\" type=\"font/ttf\" crossorigin>"
+        } else {
+            ""
+        }
+        val fontFace = if (usesBundledFont) {
+            "@font-face { font-family: 'JetBrains Mono'; src: url('$AssetOrigin/presentation/jetbrains-mono.ttf') format('truetype'); font-style: normal; font-weight: 400; font-display: block; }"
+        } else {
+            ""
+        }
     }
 
     private val Nonce = Regex("[A-Za-z0-9_-]{16,64}")

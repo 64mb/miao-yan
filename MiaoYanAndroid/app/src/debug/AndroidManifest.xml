@@ -4,5 +4,8 @@
         <activity
             android:name="com.tw93.miaoyan.android.PresentationTestActivity"
             android:exported="false" />
+        <activity
+            android:name="com.tw93.miaoyan.android.ContinuousPreviewTestActivity"
+            android:exported="false" />
     </application>
 </manifest>
