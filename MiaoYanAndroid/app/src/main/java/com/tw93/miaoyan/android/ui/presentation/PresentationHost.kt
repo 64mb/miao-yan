@@ -454,6 +454,12 @@ private fun SecureDocumentWebView(
                             ?.let(currentSession.onSlideChanged)
                         if (
                             request.isForMainFrame && request.hasGesture() &&
+                            currentSession.router.openAttachment(context, uri.toString())
+                        ) {
+                            return true
+                        }
+                        if (
+                            request.isForMainFrame && request.hasGesture() &&
                             PreviewNavigationPolicy.opensExternally(uri.toString(), userActivated = true)
                         ) {
                             runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }

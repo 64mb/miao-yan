@@ -57,19 +57,27 @@ object LocalImagePolicy {
     }
 
     fun resolveLocalImage(scope: NoteAssetScope, fileName: String): File? {
+        return resolveLocalAsset(scope, ImageDirectoryName, fileName)
+    }
+
+    fun resolveLocalAttachment(scope: NoteAssetScope, fileName: String): File? {
+        return resolveLocalAsset(scope, AttachmentDirectoryName, fileName)
+    }
+
+    private fun resolveLocalAsset(scope: NoteAssetScope, directoryName: String, fileName: String): File? {
         if (decodeFileName(encodePathSegment(fileName)) != fileName) return null
         val root = canonicalFile(File(scope.canonicalRootPath)) ?: return null
         val parent = canonicalFile(File(scope.canonicalParentPath)) ?: return null
         if (root.path != scope.canonicalRootPath || parent.path != scope.canonicalParentPath) return null
         if (!root.isDirectory || !parent.isDirectory || !isWithin(parent, root)) return null
 
-        val imageDirectory = canonicalFile(File(parent, ImageDirectoryName)) ?: return null
-        if (!imageDirectory.isDirectory || imageDirectory.parentFile != parent) return null
-        if (!isWithin(imageDirectory, root)) return null
+        val assetDirectory = canonicalFile(File(parent, directoryName)) ?: return null
+        if (!assetDirectory.isDirectory || assetDirectory.parentFile != parent) return null
+        if (!isWithin(assetDirectory, root)) return null
 
-        val image = canonicalFile(File(imageDirectory, fileName)) ?: return null
-        if (!image.isFile || image.parentFile != imageDirectory) return null
-        return image.takeIf { isWithin(it, root) }
+        val asset = canonicalFile(File(assetDirectory, fileName)) ?: return null
+        if (!asset.isFile || asset.parentFile != assetDirectory) return null
+        return asset.takeIf { isWithin(it, root) }
     }
 
     fun classifyMarkdownSource(rawSource: String): MarkdownSource {
@@ -115,12 +123,21 @@ object LocalImagePolicy {
     }
 
     fun fileNameForAssetUrl(rawUrl: String): String? {
+        return fileNameForLocalAssetUrl(rawUrl, ImageDirectoryName)
+    }
+
+    fun fileNameForAttachmentUrl(rawUrl: String): String? {
+        return fileNameForLocalAssetUrl(rawUrl, AttachmentDirectoryName)
+    }
+
+    private fun fileNameForLocalAssetUrl(rawUrl: String, directoryName: String): String? {
         val uri = parseUri(rawUrl) ?: return null
         if (uri.scheme != "https" || uri.host != AssetHost) return null
         if (uri.rawAuthority != AssetHost || uri.rawQuery != null || uri.rawFragment != null) return null
         val rawPath = uri.rawPath ?: return null
-        if (!rawPath.startsWith("/i/")) return null
-        return decodeFileName(rawPath.removePrefix("/i/"))
+        val prefix = "/$directoryName/"
+        if (!rawPath.startsWith(prefix)) return null
+        return decodeFileName(rawPath.removePrefix(prefix))
     }
 
     fun mimeTypeFor(fileName: String, providerMimeType: String?): String? {
@@ -224,4 +241,5 @@ object LocalImagePolicy {
         "image/x-ms-bmp" to "image/bmp",
     )
     private const val ImageDirectoryName = "i"
+    private const val AttachmentDirectoryName = "files"
 }

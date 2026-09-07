@@ -12,6 +12,23 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class LocalImagePolicyTest {
+    @Test
+    fun acceptsOnlyDirectEncodedAttachmentUrlsOnTheSyntheticOrigin() {
+        assertEquals(
+            "design notes.pdf",
+            LocalImagePolicy.fileNameForAttachmentUrl(
+                "https://appassets.androidplatform.net/files/design%20notes.pdf",
+            ),
+        )
+        listOf(
+            "https://appassets.androidplatform.net/files/../secret.txt",
+            "https://appassets.androidplatform.net/files/%252e%252e.txt",
+            "https://appassets.androidplatform.net/files/nested/file.txt",
+            "https://evil.example/files/file.txt",
+            "https://appassets.androidplatform.net/files/file.txt?download=1",
+        ).forEach { assertNull(it, LocalImagePolicy.fileNameForAttachmentUrl(it)) }
+    }
+
     @get:Rule
     val temporaryFolder = TemporaryFolder()
 
@@ -115,6 +132,23 @@ class LocalImagePolicyTest {
 
         assertEquals(nestedImage.canonicalFile, resolved)
         assertNotEquals(rootImage.canonicalFile, resolved)
+    }
+
+    @Test
+    fun resolvesOnlyTheSelectedNotesDirectAttachmentFile() {
+        val container = temporaryFolder.newFolder("attachment-library")
+        val root = File(container, "root").apply { mkdirs() }
+        writeFile(root, "Project/note.md", "inside")
+        val attachment = writeFile(root, "Project/files/design.pdf", "pdf")
+        writeFile(root, "files/design.pdf", "wrong")
+        val outside = writeFile(container, "outside.txt", "outside")
+        Files.createSymbolicLink(File(root, "Project/files/escape.txt").toPath(), outside.toPath())
+
+        val scope = requireNotNull(LocalImagePolicy.resolveNoteAssetScope(root, "Project/note.md"))
+
+        assertEquals(attachment.canonicalFile, LocalImagePolicy.resolveLocalAttachment(scope, "design.pdf"))
+        assertNull(LocalImagePolicy.resolveLocalAttachment(scope, "escape.txt"))
+        assertNull(LocalImagePolicy.resolveLocalAttachment(scope, "../note.md"))
     }
 
     @Test

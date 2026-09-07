@@ -6,12 +6,15 @@ import android.net.Uri
 import android.webkit.WebResourceResponse
 import com.tw93.miaoyan.android.R
 import com.tw93.miaoyan.android.data.LocalFileImageLoader
+import com.tw93.miaoyan.android.data.LocalFileAttachmentOpener
 import com.tw93.miaoyan.android.data.LocalImagePolicy
 import java.io.ByteArrayInputStream
 
 /** Pluggable boundary for note-local images; WebView never sees a filesystem path. */
 fun interface PresentationImageHandler {
     fun open(assetUrl: String): WebResourceResponse?
+
+    fun openAttachment(context: Context, assetUrl: String): Boolean = false
 
     companion object {
         val DenyAll = PresentationImageHandler { null }
@@ -20,8 +23,11 @@ fun interface PresentationImageHandler {
 
 class AppPrivatePresentationImageHandler(scope: LocalImagePolicy.NoteAssetScope) : PresentationImageHandler {
     private val loader = LocalFileImageLoader(scope)
+    private val attachmentOpener = LocalFileAttachmentOpener(scope)
 
     override fun open(assetUrl: String): WebResourceResponse = loader.load(assetUrl)
+
+    override fun openAttachment(context: Context, assetUrl: String): Boolean = attachmentOpener.open(context, assetUrl)
 }
 
 internal class PresentationAssetRouter(
@@ -47,6 +53,8 @@ internal class PresentationAssetRouter(
             }
         }
     }
+
+    fun openAttachment(context: Context, rawUrl: String): Boolean = imageHandler.openAttachment(context, rawUrl)
 
     private fun bundled(path: String, mimeType: String): WebResourceResponse = runCatching {
         response(mimeType, context.assets.open(path))
