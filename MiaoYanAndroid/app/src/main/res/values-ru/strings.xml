@@ -50,7 +50,7 @@
     <string name="settings">Настройки</string>
     <string name="storage">Хранилище</string>
     <string name="local_storage_warning_title">Сохраните копию для восстановления</string>
-    <string name="local_storage_warning_detail">Удаление MiaoYan или очистка данных приложения удалит локальные заметки. Для восстановления используйте Git или «Экспорт библиотеки».</string>
+    <string name="local_storage_warning_detail">Настройте Git или экспортируйте библиотеку до удаления приложения или очистки данных</string>
     <string name="import_library">Импорт библиотеки</string>
     <string name="import_library_detail">Скопировать заметки из выбранной папки в локальную библиотеку MiaoYan.</string>
     <string name="export_library">Экспорт библиотеки</string>
@@ -99,6 +99,17 @@
     <string name="git_settings_saved">Настройки Git-синхронизации сохранены.</string>
     <string name="git_sync_complete">Git-синхронизация завершена.</string>
     <string name="git_save_before_sync">Перед Git-синхронизацией сохраните или отмените активный черновик.</string>
+    <string name="git_draft_owner_missing">Не удалось сопоставить активный черновик с заметкой. Синхронизация не выполнялась.</string>
+    <string name="git_draft_changed_during_save">Черновик изменился во время сохранения. Синхронизация не выполнялась; повторите обновление.</string>
+    <string name="git_backup_status_save_failed">Библиотека изменилась, но не удалось сохранить локальный статус резервной Git-копии.</string>
+    <string name="git_backup_first_sync_title">Git-копия ещё не проверена</string>
+    <string name="git_backup_first_sync_detail">Запустите синхронизацию, чтобы создать первую восстанавливаемую Git-копию</string>
+    <string name="git_backup_synced_title">Git-копия актуальна</string>
+    <string name="git_backup_synced_detail">Последняя успешная синхронизация: %1$s</string>
+    <string name="git_backup_dirty_title">Git-копия устарела</string>
+    <string name="git_backup_dirty_detail">Локальные изменения ещё не синхронизированы</string>
+    <string name="git_backup_failed_title">Git-копия требует внимания</string>
+    <string name="git_backup_failed_detail">Последняя Git-синхронизация не удалась, локальные заметки не изменены</string>
     <string name="git_configured_detail">HTTPS-учётные данные сохранены для этого URL репозитория.</string>
     <string name="git_not_configured_detail">Настройте HTTPS origin, имя пользователя, PAT и автора коммитов.</string>
     <string name="git_conflict_title">Выберите версии файлов</string>

@@ -50,7 +50,7 @@
     <string name="settings">Settings</string>
     <string name="storage">Storage</string>
     <string name="local_storage_warning_title">Keep a restorable copy</string>
-    <string name="local_storage_warning_detail">Uninstalling MiaoYan or clearing app data deletes local notes. Use Git or Export Library so you can restore them.</string>
+    <string name="local_storage_warning_detail">Set up Git or export the library before uninstalling or clearing app data</string>
     <string name="import_library">Import Library</string>
     <string name="import_library_detail">Copy notes from a folder into MiaoYan’s local library.</string>
     <string name="export_library">Export Library</string>
@@ -99,6 +99,17 @@
     <string name="git_settings_saved">Git sync settings saved.</string>
     <string name="git_sync_complete">Git sync complete.</string>
     <string name="git_save_before_sync">Save or discard the active draft before Git sync.</string>
+    <string name="git_draft_owner_missing">The active draft could not be matched to its note. Nothing was synced.</string>
+    <string name="git_draft_changed_during_save">The draft changed while it was being saved. Nothing was synced; try Reload again.</string>
+    <string name="git_backup_status_save_failed">The library changed, but its local Git backup status could not be saved.</string>
+    <string name="git_backup_first_sync_title">Git backup not verified</string>
+    <string name="git_backup_first_sync_detail">Run Sync Now to create the first restorable Git copy</string>
+    <string name="git_backup_synced_title">Git backup current</string>
+    <string name="git_backup_synced_detail">Last successful sync: %1$s</string>
+    <string name="git_backup_dirty_title">Git backup is out of date</string>
+    <string name="git_backup_dirty_detail">Local changes have not been synced yet</string>
+    <string name="git_backup_failed_title">Git backup needs attention</string>
+    <string name="git_backup_failed_detail">The last Git sync failed; local notes remain unchanged</string>
     <string name="git_configured_detail">HTTPS credentials are stored for this repository URL.</string>
     <string name="git_not_configured_detail">Configure an HTTPS origin, username, PAT, and commit identity.</string>
     <string name="git_conflict_title">Choose conflicting files</string>

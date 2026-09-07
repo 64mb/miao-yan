@@ -38,6 +38,32 @@ data class GitCredentials(val username: String, val personalAccessToken: String)
     }
 }
 
+internal object GitSyncSetupPolicy {
+    fun canSync(config: GitSyncConfig?, credentials: GitCredentials?): Boolean =
+        config != null && credentials != null && runCatching {
+            config.validated()
+            credentials.validated()
+        }.isSuccess
+}
+
+enum class GitSyncAttemptOutcome { None, Success, Failed }
+
+data class GitSyncStatus(
+    val lastSuccessAtMillis: Long? = null,
+    val lastAttemptAtMillis: Long? = null,
+    val lastAttemptOutcome: GitSyncAttemptOutcome = GitSyncAttemptOutcome.None,
+    val hasLocalChanges: Boolean = false,
+) {
+    fun afterLocalChange(): GitSyncStatus = copy(hasLocalChanges = true)
+
+    fun afterAttempt(succeeded: Boolean, atMillis: Long): GitSyncStatus = copy(
+        lastSuccessAtMillis = if (succeeded) atMillis else lastSuccessAtMillis,
+        lastAttemptAtMillis = atMillis,
+        lastAttemptOutcome = if (succeeded) GitSyncAttemptOutcome.Success else GitSyncAttemptOutcome.Failed,
+        hasLocalChanges = if (succeeded) false else hasLocalChanges,
+    )
+}
+
 private fun String.hasCredentialControls(): Boolean = any { it == '\r' || it == '\n' || it == '\u0000' }
 
 data class GitSyncResult(

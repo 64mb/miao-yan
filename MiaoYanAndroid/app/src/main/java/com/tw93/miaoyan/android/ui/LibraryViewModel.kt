@@ -20,6 +20,7 @@ import com.tw93.miaoyan.android.git.GitSyncException
 import com.tw93.miaoyan.android.git.GitSyncPreferences
 import com.tw93.miaoyan.android.git.GitSyncRefreshEvents
 import com.tw93.miaoyan.android.git.GitSyncScheduler
+import com.tw93.miaoyan.android.git.GitSyncStatus
 import com.tw93.miaoyan.android.git.KeystoreCredentialStore
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
@@ -29,6 +30,7 @@ import com.tw93.miaoyan.android.typesetting.TypesettingRequest
 import com.tw93.miaoyan.android.typesetting.TypesettingResultGuard
 import com.tw93.miaoyan.android.typesetting.WebViewMarkdownFormatter
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -64,9 +66,15 @@ data class LibraryUiState(
     val gitUsername: String = "",
     val hasGitCredentials: Boolean = false,
     val gitConflict: GitConflictDetails? = null,
+    val gitSyncStatus: GitSyncStatus = GitSyncStatus(),
 ) {
     val visibleNotes: List<LibraryNote>
         get() = if (query.isBlank()) notes else searchResults
+
+    val hasValidGitSetup: Boolean
+        get() = hasGitCredentials && gitConfig?.let { config ->
+            runCatching { config.validated() }.isSuccess
+        } == true
 }
 
 class LibraryViewModel @JvmOverloads constructor(
@@ -90,6 +98,11 @@ class LibraryViewModel @JvmOverloads constructor(
     private var formatJob: Job? = null
     private var lastDraftRevision = 0L
     private var pendingAttachmentRequest: AttachmentRequest? = null
+    private val manualReloadOrchestrator = ManualReloadOrchestrator(
+        saveDirtyDraft = ::saveDirtyDraftForSync,
+        syncGit = { syncCoordinator.sync() },
+        refreshLibrary = ::refreshLibrary,
+    )
 
     init {
         reload()
@@ -113,33 +126,39 @@ class LibraryViewModel @JvmOverloads constructor(
             }
         }
         viewModelScope.launch {
+            gitPreferences.syncStatus.distinctUntilChanged().collectLatest { syncStatus ->
+                mutableState.update { it.copy(gitSyncStatus = syncStatus) }
+            }
+        }
+        viewModelScope.launch {
             GitSyncRefreshEvents.events.collectLatest {
-                runCatching { refreshAfterGit() }.onFailure(::showError)
+                runCatching { refreshLibrary() }.onFailure(::showError)
             }
         }
     }
 
     fun reload() {
         if (isBusy()) return
+        mutableState.update { it.copy(loading = true, message = null) }
         viewModelScope.launch {
-            mutableState.update { it.copy(loading = true, message = null) }
-            runCatching {
-                Triple(repository.scan(), repository.listTrash(), loadPinnedPaths())
-            }.onSuccess { (notes, trash, pinnedPaths) ->
-                    mutableState.update {
-                        it.copy(
-                            notes = notes,
-                            trash = trash,
-                            pinnedPaths = pinnedPaths,
-                            loading = false,
-                        )
-                    }
-                    refreshSearch()
-                }
-                .onFailure { error ->
-                    mutableState.update { it.copy(loading = false) }
-                    showError(error)
-                }
+            val route = if (syncCoordinator.hasValidConfigurationAndCredentials()) {
+                ManualReloadRoute.Git
+            } else {
+                ManualReloadRoute.Local
+            }
+            if (route == ManualReloadRoute.Git) {
+                mutableState.update { it.copy(loading = false, syncing = true) }
+            }
+            val dirty = mutableState.value.dirty
+            val attempt = try {
+                manualReloadOrchestrator.run(route, dirty)
+                Result.success(Unit)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Result.failure(error)
+            }
+            finishManualReload(route, attempt)
         }
     }
 
@@ -199,6 +218,7 @@ class LibraryViewModel @JvmOverloads constructor(
                         )
                     }
                     refreshSearch()
+                    markLocalChanges()
                 }
                 .onFailure { error -> finishFailedMutation(error) }
         }
@@ -209,7 +229,7 @@ class LibraryViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             mutableState.update { it.copy(mutating = true, message = null) }
             runCatching { repository.rename(note, name) }
-                .onSuccess {
+                .onSuccess { renamed ->
                     mutableState.update { state ->
                         state.copy(
                             notes = repository.scan(),
@@ -218,6 +238,7 @@ class LibraryViewModel @JvmOverloads constructor(
                         )
                     }
                     refreshSearch()
+                    if (renamed.relativePath != note.relativePath) markLocalChanges()
                 }
                 .onFailure { error -> finishFailedMutation(error) }
         }
@@ -239,6 +260,7 @@ class LibraryViewModel @JvmOverloads constructor(
                         )
                     }
                     refreshSearch()
+                    markLocalChanges()
                 }
                 .onFailure { error -> finishFailedMutation(error) }
         }
@@ -266,6 +288,7 @@ class LibraryViewModel @JvmOverloads constructor(
                         )
                     }
                     refreshSearch()
+                    markLocalChanges()
                 }
                 .onFailure { error -> finishFailedMutation(error) }
         }
@@ -309,6 +332,7 @@ class LibraryViewModel @JvmOverloads constructor(
                         )
                     }
                     refreshSearch()
+                    if (result.fileCount > 0) markLocalChanges()
                 }
                 .onFailure { error -> finishFailedMutation(error) }
         }
@@ -447,6 +471,7 @@ class LibraryViewModel @JvmOverloads constructor(
                             attaching = false,
                         )
                         ActiveDraftRegistry.update(request.ownerNoteId, true)
+                        markLocalChanges()
                     }
                     AttachmentInsertionResult.Stale -> {
                         runCatching {
@@ -476,6 +501,7 @@ class LibraryViewModel @JvmOverloads constructor(
     fun save(onSaved: (() -> Unit)? = null) {
         val snapshot = mutableState.value.selected ?: return
         val draft = mutableState.value.draft
+        val contentChanged = draft != snapshot.text
         if (isBusy()) return
         viewModelScope.launch {
             mutableState.update { it.copy(saving = true, message = null) }
@@ -494,6 +520,7 @@ class LibraryViewModel @JvmOverloads constructor(
                     onSaved?.invoke()
                     mutableState.update { it.copy(notes = repository.scan()) }
                     refreshSearch()
+                    if (contentChanged) markLocalChanges()
                 }
                 .onFailure { error ->
                     mutableState.update { it.copy(saving = false) }
@@ -643,19 +670,7 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
-    fun syncNow() {
-        if (isBusy()) return
-        if (mutableState.value.dirty) {
-            mutableState.update {
-                it.copy(message = getApplication<Application>().getString(R.string.git_save_before_sync))
-            }
-            return
-        }
-        viewModelScope.launch {
-            mutableState.update { it.copy(syncing = true, message = null) }
-            finishGitAttempt(runCatching { syncCoordinator.sync() })
-        }
-    }
+    fun syncNow() = reload()
 
     fun resolveGitConflict(choices: Map<String, GitConflictChoice>) {
         val conflict = mutableState.value.gitConflict ?: return
@@ -673,7 +688,7 @@ class LibraryViewModel @JvmOverloads constructor(
     }
 
     private suspend fun finishGitAttempt(attempt: Result<*>) {
-        val refreshFailure = runCatching { refreshAfterGit() }.exceptionOrNull()
+        val refreshFailure = runCatching { refreshLibrary() }.exceptionOrNull()
         val error = attempt.exceptionOrNull() ?: refreshFailure
         if (error == null) {
             mutableState.update {
@@ -694,7 +709,7 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
-    private suspend fun refreshAfterGit() {
+    private suspend fun refreshLibrary() {
         val before = mutableState.value
         val ownerPath = before.selected?.note?.relativePath
         val ownerRevision = before.draftRevision
@@ -734,6 +749,72 @@ class LibraryViewModel @JvmOverloads constructor(
         }
         updateActiveDraftRegistry()
         refreshSearch()
+    }
+
+    private suspend fun saveDirtyDraftForSync() {
+        val beforeSave = mutableState.value
+        if (!beforeSave.dirty) return
+        val snapshot = beforeSave.selected
+            ?: throw GitSyncException.Storage(
+                getApplication<Application>().getString(R.string.git_draft_owner_missing),
+            )
+        val draft = beforeSave.draft
+        val saved = repository.save(snapshot, draft)
+        mutableState.update { current ->
+            if (current.selected?.note?.id != snapshot.note.id) {
+                current
+            } else if (current.draft == draft) {
+                current.copy(selected = saved, draft = saved.text, dirty = false)
+            } else {
+                current.copy(selected = saved, dirty = current.draft != saved.text)
+            }
+        }
+        updateActiveDraftRegistry()
+        markLocalChanges(throwOnPersistenceFailure = true)
+        if (mutableState.value.dirty) {
+            throw GitSyncException.Storage(
+                getApplication<Application>().getString(R.string.git_draft_changed_during_save),
+            )
+        }
+    }
+
+    private fun finishManualReload(route: ManualReloadRoute, attempt: Result<Unit>) {
+        val error = attempt.exceptionOrNull()
+        mutableState.update { current ->
+            current.copy(
+                loading = false,
+                syncing = false,
+                gitConflict = when {
+                    error is GitSyncException.Conflict -> error.details ?: current.gitConflict
+                    error == null && route == ManualReloadRoute.Git -> null
+                    else -> current.gitConflict
+                },
+                message = if (error == null && route == ManualReloadRoute.Git) {
+                    getApplication<Application>().getString(R.string.git_sync_complete)
+                } else {
+                    current.message
+                },
+            )
+        }
+        if (error != null) showError(error)
+    }
+
+    private suspend fun markLocalChanges(throwOnPersistenceFailure: Boolean = false) {
+        mutableState.update { current ->
+            current.copy(gitSyncStatus = current.gitSyncStatus.afterLocalChange())
+        }
+        try {
+            gitPreferences.markLocalChanges()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            val wrapped = GitSyncException.Storage(
+                getApplication<Application>().getString(R.string.git_backup_status_save_failed),
+                error,
+            )
+            if (throwOnPersistenceFailure) throw wrapped
+            showError(wrapped)
+        }
     }
 
     private fun refreshSearch() {

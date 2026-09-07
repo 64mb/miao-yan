@@ -5,6 +5,7 @@ import com.tw93.miaoyan.android.data.LibraryRepository
 import com.tw93.miaoyan.android.data.LibraryRepositoryProvider
 import com.tw93.miaoyan.android.data.core.LibraryAccess
 import com.tw93.miaoyan.android.data.core.LibraryMutationGate
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -19,15 +20,31 @@ class GitSyncCoordinator(
     private val credentialStore = KeystoreCredentialStore(context)
     private val workingTree = GitWorkingTreeSync(context)
 
-    suspend fun sync(deadlineAfterMillis: Long? = null): GitSyncResult = withContext(Dispatchers.IO) {
-        val config = preferences.config.first()
-            ?: throw GitSyncException.Configuration("Configure Git sync first.")
-        val credentials = credentialStore.load(config.repositoryUrl)
-            ?: throw GitSyncException.Configuration(
-                "Enter Git HTTPS credentials for this repository URL.",
-            )
-        runWithProjectionRefresh {
-            workingTree.sync(config, credentials, deadlineNanos(deadlineAfterMillis))
+    suspend fun hasValidConfigurationAndCredentials(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val config = preferences.config.first()
+            // load() returns credentials only when the encrypted payload is bound to this exact,
+            // normalized repository URL. Invalid or undecryptable setup falls back to local reload.
+            val credentials = config?.let { value -> credentialStore.load(value.repositoryUrl) }
+            GitSyncSetupPolicy.canSync(config, credentials)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    suspend fun sync(deadlineAfterMillis: Long? = null): GitSyncResult = recordAttempt {
+        withContext(Dispatchers.IO) {
+            val config = preferences.config.first()
+                ?: throw GitSyncException.Configuration("Configure Git sync first.")
+            val credentials = credentialStore.load(config.repositoryUrl)
+                ?: throw GitSyncException.Configuration(
+                    "Enter Git HTTPS credentials for this repository URL.",
+                )
+            runWithProjectionRefresh {
+                workingTree.sync(config, credentials, deadlineNanos(deadlineAfterMillis))
+            }
         }
     }
 
@@ -35,22 +52,53 @@ class GitSyncCoordinator(
         details: GitConflictDetails,
         choices: Map<String, GitConflictChoice>,
         deadlineAfterMillis: Long? = null,
-    ): GitSyncResult = withContext(Dispatchers.IO) {
-        val config = preferences.config.first()
-            ?: throw GitSyncException.Configuration("Configure Git sync first.")
-        val credentials = credentialStore.load(config.repositoryUrl)
-            ?: throw GitSyncException.Configuration(
-                "Enter Git HTTPS credentials for this repository URL.",
+    ): GitSyncResult = recordAttempt {
+        withContext(Dispatchers.IO) {
+            val config = preferences.config.first()
+                ?: throw GitSyncException.Configuration("Configure Git sync first.")
+            val credentials = credentialStore.load(config.repositoryUrl)
+                ?: throw GitSyncException.Configuration(
+                    "Enter Git HTTPS credentials for this repository URL.",
+                )
+            runWithProjectionRefresh {
+                workingTree.resolve(
+                    config,
+                    credentials,
+                    details,
+                    choices,
+                    deadlineNanos(deadlineAfterMillis),
+                )
+            }
+        }
+    }
+
+    private suspend fun recordAttempt(operation: suspend () -> GitSyncResult): GitSyncResult {
+        val attempt = try {
+            Result.success(operation())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Result.failure(error)
+        }
+        val statusFailure = try {
+            preferences.recordSyncAttempt(
+                succeeded = attempt.isSuccess,
+                atMillis = System.currentTimeMillis(),
             )
-        runWithProjectionRefresh {
-            workingTree.resolve(
-                config,
-                credentials,
-                details,
-                choices,
-                deadlineNanos(deadlineAfterMillis),
+            null
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            error
+        }
+        attempt.exceptionOrNull()?.let { throw it }
+        statusFailure?.let { error ->
+            throw GitSyncException.Storage(
+                "Git sync completed, but its local backup status could not be saved.",
+                error,
             )
         }
+        return attempt.getOrThrow()
     }
 
     private suspend fun runWithProjectionRefresh(

@@ -8,7 +8,6 @@ import android.graphics.Color as AndroidColor
 import android.graphics.Typeface
 import android.text.Editable
 import android.text.TextWatcher
-import android.os.SystemClock
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
@@ -26,6 +25,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -131,6 +131,7 @@ fun MiaoYanApp(
     onThemeModeChanged: (ThemeMode) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val busyOverlay = remember { BusyOverlayStateMachine() }
     val context = LocalContext.current
     val presentationSession = rememberPresentationSession()
     var showSettings by rememberSaveable { mutableStateOf(false) }
@@ -242,7 +243,7 @@ fun MiaoYanApp(
                 state.mutating -> stringResource(R.string.updating_library)
                 else -> stringResource(R.string.loading)
             }
-            DelayedLoadingOverlay(busy = busy, label = busyLabel)
+            DelayedLoadingOverlay(busy = busy, label = busyLabel, stateMachine = busyOverlay)
         }
     }
 
@@ -1133,7 +1134,7 @@ private fun SettingsScreen(
                     title = stringResource(R.string.storage),
                     modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
                 ) {
-                    StorageWarning()
+                    StorageWarning(state)
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     SettingsActionRow(
                         icon = R.drawable.ic_library_import,
@@ -1166,7 +1167,7 @@ private fun SettingsScreen(
                         icon = R.drawable.ic_settings,
                         title = stringResource(R.string.git_settings_title),
                         detail = stringResource(
-                            if (state.gitConfig != null && state.hasGitCredentials) {
+                            if (state.hasValidGitSetup) {
                                 R.string.git_configured_detail
                             } else {
                                 R.string.git_not_configured_detail
@@ -1174,7 +1175,7 @@ private fun SettingsScreen(
                         ),
                         onClick = onGitSettings,
                     )
-                    if (state.gitConfig != null && state.hasGitCredentials) {
+                    if (state.hasValidGitSetup) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         SettingsActionRow(
                             icon = R.drawable.ic_refresh,
@@ -1309,31 +1310,77 @@ private fun SettingsScreen(
 }
 
 @Composable
-private fun StorageWarning() {
+private fun StorageWarning(state: LibraryUiState) {
+    val backupStatus = LibraryBackupStatusPolicy.evaluate(state.hasValidGitSetup, state.gitSyncStatus)
+    val darkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val presentation = when (backupStatus.kind) {
+        LibraryBackupStatusKind.Unconfigured -> StorageStatusPresentation(
+            icon = R.drawable.ic_storage_warning,
+            tint = MaterialTheme.colorScheme.error,
+            title = stringResource(R.string.local_storage_warning_title),
+            detail = stringResource(R.string.local_storage_warning_detail),
+        )
+        LibraryBackupStatusKind.FirstSyncRequired -> StorageStatusPresentation(
+            icon = R.drawable.ic_refresh,
+            tint = androidx.compose.ui.graphics.Color(if (darkTheme) 0xFFFFCC80 else 0xFFF57C00),
+            title = stringResource(R.string.git_backup_first_sync_title),
+            detail = stringResource(R.string.git_backup_first_sync_detail),
+        )
+        LibraryBackupStatusKind.Synced -> StorageStatusPresentation(
+            icon = R.drawable.ic_check_circle,
+            tint = androidx.compose.ui.graphics.Color(if (darkTheme) 0xFF81C784 else 0xFF2E7D32),
+            title = stringResource(R.string.git_backup_synced_title),
+            detail = stringResource(
+                R.string.git_backup_synced_detail,
+                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                    .format(Date(requireNotNull(backupStatus.lastSuccessAtMillis))),
+            ),
+        )
+        LibraryBackupStatusKind.LocallyModified -> StorageStatusPresentation(
+            icon = R.drawable.ic_storage_warning,
+            tint = androidx.compose.ui.graphics.Color(if (darkTheme) 0xFFFFCC80 else 0xFFF57C00),
+            title = stringResource(R.string.git_backup_dirty_title),
+            detail = stringResource(R.string.git_backup_dirty_detail),
+        )
+        LibraryBackupStatusKind.Failed -> StorageStatusPresentation(
+            icon = R.drawable.ic_storage_warning,
+            tint = MaterialTheme.colorScheme.error,
+            title = stringResource(R.string.git_backup_failed_title),
+            detail = stringResource(R.string.git_backup_failed_detail),
+        )
+    }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Icon(
-            painterResource(R.drawable.ic_storage_warning),
+            painterResource(presentation.icon),
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.error,
+            tint = presentation.tint,
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                stringResource(R.string.local_storage_warning_title),
+                presentation.title,
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                stringResource(R.string.local_storage_warning_detail),
+                presentation.detail,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 }
+
+private data class StorageStatusPresentation(
+    @param:DrawableRes
+    val icon: Int,
+    val tint: androidx.compose.ui.graphics.Color,
+    val title: String,
+    val detail: String,
+)
 
 @Composable
 private fun SettingsActionRow(icon: Int, title: String, detail: String, onClick: () -> Unit) {
@@ -1462,7 +1509,10 @@ private fun loadJetBrainsMonoData(resources: Resources): String =
 @Composable
 private fun LoadingOverlay(label: String) {
     Box(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = .22f)),
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = .22f))
+            .testTag(BusyOverlayTestTag),
         contentAlignment = Alignment.Center,
     ) {
         Surface(shape = RoundedCornerShape(18.dp), tonalElevation = 8.dp) {
@@ -1478,26 +1528,22 @@ private fun LoadingOverlay(label: String) {
     }
 }
 
+internal const val BusyOverlayTestTag = "busy-overlay"
+
 @Composable
-private fun DelayedLoadingOverlay(
+internal fun DelayedLoadingOverlay(
     busy: Boolean,
     label: String,
-    timing: BusyOverlayTimingController = remember { BusyOverlayTimingController() },
+    stateMachine: BusyOverlayStateMachine = remember { BusyOverlayStateMachine() },
 ) {
-    var visible by remember { mutableStateOf(false) }
-    var shownAtMillis by remember { mutableStateOf(0L) }
-    LaunchedEffect(busy) {
-        if (busy) {
-            val wait = timing.delayBeforeShow(visible)
-            if (wait > 0) delay(wait)
-            if (!visible) {
-                shownAtMillis = SystemClock.uptimeMillis()
-                visible = true
-            }
-        } else if (visible) {
-            val wait = timing.delayBeforeHide(shownAtMillis, SystemClock.uptimeMillis())
-            if (wait > 0) delay(wait)
-            visible = false
+    var visible by remember(stateMachine) { mutableStateOf(stateMachine.isVisible) }
+    LaunchedEffect(busy, stateMachine) {
+        var waitMillis = stateMachine.updateBusy(busy)
+        visible = stateMachine.isVisible
+        while (waitMillis != null) {
+            if (waitMillis > 0L) delay(waitMillis)
+            waitMillis = stateMachine.advanceToNextDeadline()
+            visible = stateMachine.isVisible
         }
     }
     if (visible) LoadingOverlay(label)
