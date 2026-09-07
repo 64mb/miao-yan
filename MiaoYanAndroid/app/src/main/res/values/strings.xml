@@ -71,4 +71,9 @@
     <string name="typesetting">Typesetting</string>
     <string name="typesetting_succeeded">Typesetting complete</string>
     <string name="typesetting_failed">Typesetting failed; the draft was left unchanged.</string>
+    <string name="insert_attachment">Insert attachment</string>
+    <string name="insert_image">Insert image</string>
+    <string name="insert_file">Attach file</string>
+    <string name="importing_attachment">Importing attachment…</string>
+    <string name="attachment_stale">The note or draft changed while the file picker was open. The attachment was not inserted; please try again.</string>
 </resources>

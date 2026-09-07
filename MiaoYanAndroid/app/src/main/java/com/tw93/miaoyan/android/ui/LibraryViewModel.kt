@@ -5,6 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tw93.miaoyan.android.R
+import com.tw93.miaoyan.android.data.AttachmentImporter
+import com.tw93.miaoyan.android.data.AttachmentKind
+import com.tw93.miaoyan.android.data.ContentUriAttachmentSource
 import com.tw93.miaoyan.android.data.IndexedLibraryRepository
 import com.tw93.miaoyan.android.data.LibraryRepository
 import com.tw93.miaoyan.android.data.LocalLibraryRepository
@@ -17,6 +20,7 @@ import com.tw93.miaoyan.android.typesetting.MarkdownFormatter
 import com.tw93.miaoyan.android.typesetting.TypesettingRequest
 import com.tw93.miaoyan.android.typesetting.TypesettingResultGuard
 import com.tw93.miaoyan.android.typesetting.WebViewMarkdownFormatter
+import java.io.File
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,8 +43,12 @@ data class LibraryUiState(
     val saving: Boolean = false,
     val mutating: Boolean = false,
     val formatting: Boolean = false,
+    val attaching: Boolean = false,
+    val attachmentPickerOpen: Boolean = false,
     val dirty: Boolean = false,
     val draftRevision: Long = 0,
+    val selectionStart: Int = 0,
+    val selectionEnd: Int = 0,
     val message: String? = null,
 ) {
     val visibleNotes: List<LibraryNote>
@@ -56,11 +64,15 @@ class LibraryViewModel @JvmOverloads constructor(
         index = RoomLibrarySearchIndex(application),
         pins = LocalPinStore(application),
     )
+    private val attachmentImporter = AttachmentImporter()
+    private val libraryRoot = File(application.filesDir, "libraries/default")
+    private val contentResolver = application.contentResolver
     private val mutableState = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = mutableState.asStateFlow()
     private var searchJob: Job? = null
     private var formatJob: Job? = null
     private var lastDraftRevision = 0L
+    private var pendingAttachmentRequest: AttachmentRequest? = null
 
     init {
         reload()
@@ -115,6 +127,8 @@ class LibraryViewModel @JvmOverloads constructor(
                             loading = false,
                             formatting = false,
                             draftRevision = nextDraftRevision(),
+                            selectionStart = opened.text.length,
+                            selectionEnd = opened.text.length,
                         )
                     }
                 }
@@ -143,6 +157,8 @@ class LibraryViewModel @JvmOverloads constructor(
                             draftRevision = nextDraftRevision(),
                             mutating = false,
                             showingTrash = false,
+                            selectionStart = opened.text.length,
+                            selectionEnd = opened.text.length,
                         )
                     }
                     refreshSearch()
@@ -274,12 +290,114 @@ class LibraryViewModel @JvmOverloads constructor(
     fun updateDraft(text: String) {
         mutableState.update { current ->
             val selected = current.selected ?: return@update current
-            if (text == current.draft) return@update current
+            if (current.draft == text) return@update current
             current.copy(
                 draft = text,
                 dirty = text != selected.text,
                 draftRevision = nextDraftRevision(),
+                selectionStart = current.selectionStart.coerceIn(0, text.length),
+                selectionEnd = current.selectionEnd.coerceIn(0, text.length),
             )
+        }
+    }
+
+    fun updateSelection(start: Int, end: Int) {
+        mutableState.update { current ->
+            if (current.selected == null) return@update current
+            current.copy(
+                selectionStart = start.coerceIn(0, current.draft.length),
+                selectionEnd = end.coerceIn(0, current.draft.length),
+            )
+        }
+    }
+
+    fun prepareAttachment(kind: AttachmentKind): AttachmentRequest? {
+        val current = mutableState.value
+        val note = current.selected?.note ?: return null
+        if (current.preview || isBusy() || current.attachmentPickerOpen || pendingAttachmentRequest != null) return null
+        val request = AttachmentInsertionPolicy.request(
+            DraftSnapshot(
+                ownerNoteId = note.relativePath,
+                revision = current.draftRevision,
+                text = current.draft,
+                selectionStart = current.selectionStart,
+                selectionEnd = current.selectionEnd,
+            ),
+            kind,
+        )
+        pendingAttachmentRequest = request
+        mutableState.value = current.copy(attachmentPickerOpen = true)
+        return request
+    }
+
+    fun finishAttachmentPicker(kind: AttachmentKind, uri: Uri?) {
+        val request = pendingAttachmentRequest
+        pendingAttachmentRequest = null
+        mutableState.update { it.copy(attachmentPickerOpen = false) }
+        if (uri == null) return
+        if (request == null || request.kind != kind) {
+            mutableState.update {
+                it.copy(message = getApplication<Application>().getString(R.string.attachment_stale))
+            }
+            return
+        }
+        insertAttachment(request, uri)
+    }
+
+    private fun insertAttachment(request: AttachmentRequest, uri: Uri) {
+        if (mutableState.value.attaching) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(attaching = true, message = null) }
+            runCatching {
+                attachmentImporter.import(
+                    libraryRoot = libraryRoot,
+                    noteRelativePath = request.ownerNoteId,
+                    kind = request.kind,
+                    source = ContentUriAttachmentSource(contentResolver, uri),
+                )
+            }.onSuccess { attachment ->
+                val current = mutableState.value
+                val selected = current.selected
+                val insertion = selected?.let {
+                    AttachmentInsertionPolicy.apply(
+                        current = DraftSnapshot(
+                            ownerNoteId = it.note.relativePath,
+                            revision = current.draftRevision,
+                            text = current.draft,
+                            selectionStart = current.selectionStart,
+                            selectionEnd = current.selectionEnd,
+                        ),
+                        request = request,
+                        markdown = attachment.markdown,
+                    )
+                } ?: AttachmentInsertionResult.Stale
+                when (insertion) {
+                    is AttachmentInsertionResult.Applied -> {
+                        mutableState.value = current.copy(
+                            draft = insertion.text,
+                            dirty = insertion.text != selected?.text,
+                            draftRevision = nextDraftRevision(),
+                            selectionStart = insertion.cursor,
+                            selectionEnd = insertion.cursor,
+                            attaching = false,
+                        )
+                    }
+                    AttachmentInsertionResult.Stale -> {
+                        runCatching {
+                            attachmentImporter.discard(libraryRoot, request.ownerNoteId, attachment)
+                        }
+                        mutableState.update {
+                            it.copy(
+                                attaching = false,
+                                message = getApplication<Application>().getString(R.string.attachment_stale),
+                            )
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                mutableState.update { it.copy(attaching = false) }
+                showError(error)
+            }
         }
     }
 
@@ -318,7 +436,12 @@ class LibraryViewModel @JvmOverloads constructor(
     fun typesetDraft() {
         val snapshot = mutableState.value
         val selected = snapshot.selected ?: return
-        if (snapshot.preview || snapshot.formatting || snapshot.loading || snapshot.saving || snapshot.mutating) return
+        if (
+            snapshot.preview || snapshot.formatting || snapshot.loading || snapshot.saving || snapshot.mutating ||
+            snapshot.attaching || snapshot.attachmentPickerOpen
+        ) {
+            return
+        }
         val request = TypesettingRequest(
             ownerNoteId = selected.note.id,
             draftRevision = snapshot.draftRevision,
@@ -350,6 +473,8 @@ class LibraryViewModel @JvmOverloads constructor(
                                 dirty = formatted != opened.text,
                                 formatting = false,
                                 draftRevision = nextDraftRevision(),
+                                selectionStart = current.selectionStart.coerceIn(0, formatted.length),
+                                selectionEnd = current.selectionEnd.coerceIn(0, formatted.length),
                                 message = getApplication<Application>().getString(R.string.typesetting_succeeded),
                             )
                         }
@@ -387,6 +512,9 @@ class LibraryViewModel @JvmOverloads constructor(
                 preview = false,
                 formatting = false,
                 draftRevision = nextDraftRevision(),
+                attaching = false,
+                selectionStart = 0,
+                selectionEnd = 0,
                 message = null,
             )
         }
@@ -431,7 +559,9 @@ class LibraryViewModel @JvmOverloads constructor(
         showError(error)
     }
 
-    private fun isBusy(): Boolean = mutableState.value.run { loading || saving || mutating || formatting }
+    private fun isBusy(): Boolean = mutableState.value.run {
+        loading || saving || mutating || formatting || attaching
+    }
 
     private suspend fun loadPinnedPaths(): Set<String> =
         repository.pinnedNotes().mapTo(mutableSetOf(), LibraryNote::relativePath)

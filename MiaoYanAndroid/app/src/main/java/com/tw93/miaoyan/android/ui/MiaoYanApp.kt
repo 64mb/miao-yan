@@ -1,6 +1,7 @@
 package com.tw93.miaoyan.android.ui
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.res.Resources
 import android.graphics.Color as AndroidColor
@@ -19,6 +20,7 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
@@ -85,6 +87,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tw93.miaoyan.android.R
+import com.tw93.miaoyan.android.data.AttachmentKind
 import com.tw93.miaoyan.android.data.EDITOR_FONT_SIZES
 import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.EditorSettings
@@ -175,12 +178,15 @@ fun MiaoYanApp(
                     editorSettings = editorSettings,
                     onBack = viewModel::closeNote,
                     onDraftChanged = viewModel::updateDraft,
+                    onSelectionChanged = viewModel::updateSelection,
                     onPreviewChanged = viewModel::setPreview,
                     onTypeset = viewModel::typesetDraft,
                     onSave = viewModel::save,
                     onSettings = { showSettings = true },
                     onFullscreenPreview = { presentationSession.enter(PresentationMode.ContinuousPreview) },
                     onSlidePresentation = { presentationSession.enter(PresentationMode.Slides) },
+                    onPrepareAttachment = viewModel::prepareAttachment,
+                    onAttachmentResult = viewModel::finishAttachmentPicker,
                 )
                 else -> LibraryScreen(
                     state = state,
@@ -198,9 +204,10 @@ fun MiaoYanApp(
                     onSettings = { showSettings = true },
                 )
             }
-            if (state.loading || state.saving || state.mutating) {
+            if (state.loading || state.saving || state.mutating || state.attaching) {
                 val label = when {
                     state.saving -> stringResource(R.string.save)
+                    state.attaching -> stringResource(R.string.importing_attachment)
                     state.mutating -> stringResource(R.string.updating_library)
                     else -> stringResource(R.string.loading)
                 }
@@ -520,14 +527,26 @@ private fun EditorScreen(
     editorSettings: EditorSettings,
     onBack: () -> Unit,
     onDraftChanged: (String) -> Unit,
+    onSelectionChanged: (Int, Int) -> Unit,
     onPreviewChanged: (Boolean) -> Unit,
     onTypeset: () -> Unit,
     onSave: () -> Unit,
     onSettings: () -> Unit,
     onFullscreenPreview: () -> Unit,
     onSlidePresentation: () -> Unit,
+    onPrepareAttachment: (AttachmentKind) -> AttachmentRequest?,
+    onAttachmentResult: (AttachmentKind, android.net.Uri?) -> Unit,
 ) {
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var showAttachmentMenu by remember { mutableStateOf(false) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        onAttachmentResult(AttachmentKind.Image, uri)
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        onAttachmentResult(AttachmentKind.File, uri)
+    }
+    val canEditDraft = !state.preview && !state.loading && !state.saving && !state.mutating &&
+        !state.formatting && !state.attaching && !state.attachmentPickerOpen
     val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
     BackHandler(onBack = requestBack)
 
@@ -563,7 +582,7 @@ private fun EditorScreen(
                     contentDescription = stringResource(R.string.slide_presentation),
                 )
             }
-            IconButton(onClick = onTypeset, enabled = !state.preview && !state.formatting) {
+            IconButton(onClick = onTypeset, enabled = canEditDraft) {
                 if (state.formatting) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                 } else {
@@ -573,7 +592,46 @@ private fun EditorScreen(
                     )
                 }
             }
-            IconButton(onClick = onSave, enabled = state.dirty && !state.saving) {
+            Box {
+                IconButton(onClick = { showAttachmentMenu = true }, enabled = canEditDraft) {
+                    Icon(
+                        painterResource(R.drawable.ic_attach_file),
+                        contentDescription = stringResource(R.string.insert_attachment),
+                    )
+                }
+                DropdownMenu(
+                    expanded = showAttachmentMenu,
+                    onDismissRequest = { showAttachmentMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.insert_image)) },
+                        leadingIcon = {
+                            Icon(painterResource(R.drawable.ic_insert_image), contentDescription = null)
+                        },
+                        onClick = {
+                            showAttachmentMenu = false
+                            if (onPrepareAttachment(AttachmentKind.Image) != null) {
+                                imagePicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            }
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.insert_file)) },
+                        leadingIcon = {
+                            Icon(painterResource(R.drawable.ic_attach_file), contentDescription = null)
+                        },
+                        onClick = {
+                            showAttachmentMenu = false
+                            if (onPrepareAttachment(AttachmentKind.File) != null) {
+                                filePicker.launch(arrayOf("*/*"))
+                            }
+                        },
+                    )
+                }
+            }
+            IconButton(onClick = onSave, enabled = state.dirty && canEditDraft) {
                 Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))
             }
         }
@@ -588,7 +646,10 @@ private fun EditorScreen(
         } else {
             PlatformMarkdownEditor(
                 text = state.draft,
+                selectionStart = state.selectionStart,
+                selectionEnd = state.selectionEnd,
                 onTextChanged = onDraftChanged,
+                onSelectionChanged = onSelectionChanged,
                 editorSettings = editorSettings,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -663,7 +724,10 @@ private fun ModeButton(label: String, icon: Int, selected: Boolean, modifier: Mo
 @Composable
 private fun PlatformMarkdownEditor(
     text: String,
+    selectionStart: Int,
+    selectionEnd: Int,
     onTextChanged: (String) -> Unit,
+    onSelectionChanged: (Int, Int) -> Unit,
     editorSettings: EditorSettings,
     modifier: Modifier = Modifier,
 ) {
@@ -674,7 +738,7 @@ private fun PlatformMarkdownEditor(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            EditText(context).apply {
+            SelectionAwareEditText(context).apply {
                 gravity = Gravity.TOP or Gravity.START
                 setPadding(20, 18, 20, 48)
                 setBackgroundColor(AndroidColor.TRANSPARENT)
@@ -683,13 +747,14 @@ private fun PlatformMarkdownEditor(
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                     android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                setText(text)
+                setSelection(selectionStart.coerceIn(0, text.length), selectionEnd.coerceIn(0, text.length))
+                selectionListener = onSelectionChanged
                 addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(value: CharSequence?, start: Int, count: Int, after: Int) = Unit
                     override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) = Unit
                     override fun afterTextChanged(value: Editable?) = onTextChanged(value?.toString().orEmpty())
                 })
-                setText(text)
-                setSelection(text.length)
             }
         },
         update = { editor ->
@@ -705,8 +770,22 @@ private fun PlatformMarkdownEditor(
                 editor.setText(text)
                 editor.setSelection(selection)
             }
+            if (!composing) {
+                val start = selectionStart.coerceIn(0, editor.text.length)
+                val end = selectionEnd.coerceIn(0, editor.text.length)
+                if (editor.selectionStart != start || editor.selectionEnd != end) editor.setSelection(start, end)
+            }
         },
     )
+}
+
+private class SelectionAwareEditText(context: Context) : EditText(context) {
+    var selectionListener: ((Int, Int) -> Unit)? = null
+
+    override fun onSelectionChanged(selectionStart: Int, selectionEnd: Int) {
+        super.onSelectionChanged(selectionStart, selectionEnd)
+        selectionListener?.invoke(selectionStart, selectionEnd)
+    }
 }
 
 @Composable

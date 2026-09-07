@@ -71,4 +71,9 @@
     <string name="typesetting">Форматирование</string>
     <string name="typesetting_succeeded">Форматирование завершено</string>
     <string name="typesetting_failed">Не удалось отформатировать; черновик не изменён.</string>
+    <string name="insert_attachment">Вставить вложение</string>
+    <string name="insert_image">Вставить изображение</string>
+    <string name="insert_file">Прикрепить файл</string>
+    <string name="importing_attachment">Импорт вложения…</string>
+    <string name="attachment_stale">Заметка или черновик изменились, пока был открыт выбор файла. Вложение не вставлено; повторите попытку.</string>
 </resources>
