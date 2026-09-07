@@ -34,6 +34,18 @@ class GitWorkingTreeSync(context: Context) {
         configValue: GitSyncConfig,
         credentialsValue: GitCredentials,
         deadlineNanos: Long? = null,
+    ): GitSyncResult = GitSyncDiagnostics.run(
+        "sync",
+        configValue.repositoryUrl,
+        credentialsValue.personalAccessToken,
+    ) {
+        syncWorkingTree(configValue, credentialsValue, deadlineNanos)
+    }
+
+    private fun syncWorkingTree(
+        configValue: GitSyncConfig,
+        credentialsValue: GitCredentials,
+        deadlineNanos: Long? = null,
     ): GitSyncResult {
         val config = configValue.validated()
         val credentials = credentialsValue.validated()
@@ -54,7 +66,7 @@ class GitWorkingTreeSync(context: Context) {
                     "The private library",
                 )
                 stageAllowedFiles(git, localBeforeCommit.sizes.keys)
-                val staged = git.diff().setCached(true).call()
+                val staged = GitIndexDiff.stagedChanges(git, repository)
                 if (staged.isNotEmpty()) commit(git, config)
 
                 val localHead = repository.resolve(Constants.HEAD)
@@ -157,6 +169,20 @@ class GitWorkingTreeSync(context: Context) {
     }
 
     fun resolve(
+        configValue: GitSyncConfig,
+        credentialsValue: GitCredentials,
+        details: GitConflictDetails,
+        choices: Map<String, GitConflictChoice>,
+        deadlineNanos: Long? = null,
+    ): GitSyncResult = GitSyncDiagnostics.run(
+        "conflict resolution",
+        configValue.repositoryUrl,
+        credentialsValue.personalAccessToken,
+    ) {
+        resolveWorkingTree(configValue, credentialsValue, details, choices, deadlineNanos)
+    }
+
+    private fun resolveWorkingTree(
         configValue: GitSyncConfig,
         credentialsValue: GitCredentials,
         details: GitConflictDetails,
