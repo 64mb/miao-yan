@@ -173,6 +173,8 @@ Compose используется для экранов, но редактор MV
 - smart quotes/dashes и изменения, способные переписать Markdown, отключены;
 - подсветка пересчитывается по изменённому абзацу, глобальный fence pass — только когда он нужен;
 - вставка изображения копирует файл в соседний `i/`, затем вставляет `/i/<name>`;
+- существующие изображения выбираются через системный Photo Picker, остальные attachments — через system document picker; оба потока дают доступ только к выбранному URI и не требуют broad `READ_MEDIA_*` permission;
+- выбранный объект проверяется по MIME/signature и лимиту 25 MiB, получает collision-safe имя и копируется атомарно в соседний `i/` или `files/`; Markdown-ссылка вставляется только после успешной проверки копии;
 - Typesetting повторяет macOS-действие над текущим owner-buffer: форматирует Markdown локально, сохраняет protected code/math/raw-HTML regions и применяет результат только если note ID/revision не изменились;
 - autosave несёт `ownerNoteId`, buffer revision и expected file generation;
 - несовпадение owner, исчезновение файла или внешнее изменение приводит к fail-closed, а не overwrite.
@@ -234,6 +236,7 @@ Golden corpus должен прогоняться через Swift и Android re
 - Fullscreen Preview (иконка видеокамеры, как на macOS) показывает текущий обычный cmark-gfm document единой непрерывной прокручиваемой простынёй, скрывает app chrome и системные bars через актуальные WindowInsets APIs, возвращается по Back/gesture и не меняет текст;
 - Slide Presentation делит документ по отдельным строкам `---`, создаёт Reveal.js sections, использует только bundled/pinned Reveal.js и локальные `/i/` assets, поддерживает swipe/keyboard navigation и сохраняет номер текущего слайда;
 - приложение не запрашивает `CAMERA` permission и не подключает CameraX/media-capture API;
+- приложение также не запрашивает broad media-library permissions: импорт изображений/files выполняется только через системные picker contracts;
 - note-provided JavaScript не выполняется ни в одном режиме; Reveal.js запускается только как доверенный bundled script под nonce/CSP;
 - rotation/configuration change и уход приложения в background сохраняют текущий режим/slide, но не удерживают Activity;
 - на планшете основной экран использует list-detail/two-pane layout, а оба presentation-режима занимают всё доступное окно; Android multi-window остаётся поддержан и не форсируется в системный fullscreen.
