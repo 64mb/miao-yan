@@ -62,7 +62,14 @@ internal class PresentationAssetRouter(
 
     @SuppressLint("ResourceType")
     private fun bundledFont(): WebResourceResponse = runCatching {
-        response("font/ttf", context.resources.openRawResource(R.font.jetbrains_mono_regular))
+        WebResourceResponse(
+            "font/ttf",
+            null,
+            200,
+            "OK",
+            FontResponseHeaders,
+            context.resources.openRawResource(R.font.jetbrains_mono_regular),
+        )
     }.getOrElse { blockedResponse(404, "Not Found") }
 }
 
@@ -76,4 +83,9 @@ private const val AssetHost = "appassets.androidplatform.net"
 private val ResponseHeaders = mapOf(
     "Cache-Control" to "no-store",
     "X-Content-Type-Options" to "nosniff",
+)
+private val FontResponseHeaders = ResponseHeaders + mapOf(
+    // loadDataWithBaseURL documents have an opaque origin in current Android WebView.
+    // This is safe only for the public bundled font; private note images remain non-CORS.
+    "Access-Control-Allow-Origin" to "*",
 )

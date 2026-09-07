@@ -33,17 +33,18 @@ object PresentationDocument {
         darkMode: Boolean,
         editorSettings: EditorSettings = EditorSettings(),
         nonce: String = createNonce(),
+        bundledFontDataUri: String? = null,
         fragmentRenderer: (String) -> String,
     ): String {
         require(Nonce.matches(nonce)) { "CSP nonce must be URL-safe base64." }
         val fragment = fragmentRenderer(MarkdownRenderer.stripFrontmatter(markdown))
-        val colors = PresentationColors(darkMode, editorSettings)
+        val colors = PresentationColors(darkMode, editorSettings, bundledFontDataUri)
         return """
             <!doctype html>
             <html><head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce'; style-src 'unsafe-inline'; font-src $AssetOrigin; img-src $AssetOrigin data:; media-src 'none'; frame-src https:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce'; style-src 'unsafe-inline'; font-src $AssetOrigin data:; img-src $AssetOrigin data:; media-src 'none'; frame-src https:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
             <link rel="icon" href="data:,">
             ${colors.fontPreload}
             <style>${continuousStyle(colors)}</style>
@@ -83,7 +84,7 @@ object PresentationDocument {
         initialSlide,
         editorSettings,
         createNonce(),
-        MarkdownRenderer::renderFragment,
+        fragmentRenderer = MarkdownRenderer::renderFragment,
     )
 
     internal fun renderSlides(
@@ -92,6 +93,7 @@ object PresentationDocument {
         initialSlide: Int,
         editorSettings: EditorSettings = EditorSettings(),
         nonce: String,
+        bundledFontDataUri: String? = null,
         fragmentRenderer: (String) -> String,
     ): String {
         require(Nonce.matches(nonce)) { "CSP nonce must be URL-safe base64." }
@@ -101,13 +103,13 @@ object PresentationDocument {
             val fragment = fragmentRenderer(slide)
             "<section>$fragment</section>"
         }
-        val colors = PresentationColors(darkMode, editorSettings)
+        val colors = PresentationColors(darkMode, editorSettings, bundledFontDataUri)
         return """
             <!doctype html>
             <html><head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce' 'strict-dynamic'; style-src 'unsafe-inline' $AssetOrigin; font-src $AssetOrigin; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce' 'strict-dynamic'; style-src 'unsafe-inline' $AssetOrigin; font-src $AssetOrigin data:; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
             <link rel="icon" href="data:,">
             ${colors.fontPreload}
             <link nonce="$nonce" rel="stylesheet" href="$AssetOrigin/presentation/reveal.css">
@@ -266,6 +268,7 @@ object PresentationDocument {
     private data class PresentationColors(
         val darkMode: Boolean,
         val editorSettings: EditorSettings,
+        val bundledFontDataUri: String?,
     ) {
         val scheme = if (darkMode) "dark" else "light"
         val background = if (darkMode) MiaoYanColors.PreviewBackgroundDarkCss else MiaoYanColors.PreviewBackgroundLightCss
@@ -287,13 +290,14 @@ object PresentationDocument {
         val slideFontSize = (fontSize * 2.375f).toInt()
         val compactSlideFontSize = fontSize * 2
         val usesBundledFont = editorSettings.font == com.tw93.miaoyan.android.data.EditorFont.JETBRAINS_MONO
-        val fontPreload = if (usesBundledFont) {
+        val fontPreload = if (usesBundledFont && bundledFontDataUri == null) {
             "<link rel=\"preload\" href=\"$AssetOrigin/presentation/jetbrains-mono.ttf\" as=\"font\" type=\"font/ttf\" crossorigin>"
         } else {
             ""
         }
         val fontFace = if (usesBundledFont) {
-            "@font-face { font-family: 'JetBrains Mono'; src: url('$AssetOrigin/presentation/jetbrains-mono.ttf') format('truetype'); font-style: normal; font-weight: 400; font-display: block; }"
+            val source = bundledFontDataUri ?: "$AssetOrigin/presentation/jetbrains-mono.ttf"
+            "@font-face { font-family: 'JetBrains Mono'; src: url('$source') format('truetype'); font-style: normal; font-weight: 400; font-display: block; }"
         } else {
             ""
         }
@@ -336,5 +340,14 @@ object SlideStateNavigation {
             return null
         }
         return uri.path.removePrefix("/").takeIf { it.matches(Regex("0|[1-9][0-9]{0,5}")) }?.toIntOrNull()
+    }
+}
+
+object PreviewReadinessNavigation {
+    fun isReady(rawUrl: String, hasUserGesture: Boolean): Boolean {
+        if (hasUserGesture) return false
+        val uri = runCatching { java.net.URI(rawUrl) }.getOrNull() ?: return false
+        return uri.scheme == "miaoyan-preview" && uri.rawAuthority == "ready" && uri.path.isEmpty() &&
+            uri.rawQuery == null && uri.rawFragment == null
     }
 }

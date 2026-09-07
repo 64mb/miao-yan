@@ -1,14 +1,14 @@
 # MiaoYan Native Android: архитектура и план реализации
 
-Дата актуализации: 2026-09-07
+Дата актуализации: 2026-09-08
 
 Статус: research завершён; первый исполняемый editor/preview-прототип находится в `MiaoYanAndroid/`. Каноническое хранилище Android подтверждено как app-private; SAF остаётся только границей явного Import/Export.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, полноценная навигация и CRUD вложенных папок, строгие CRUD/Trash/Restore заметок и папок, явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting и permissionless Photo Picker/OpenDocument attachments уже находятся в target. Git HTTPS и preview реализованы, но требуют release/device regression gates; folder CRUD интегрирован с Room, pins и owner metadata. Adaptive tablet layout, iframe и корректный короткий exit-sync ещё не реализованы. AI для Android исключён.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, полноценная навигация и CRUD вложенных папок, строгие CRUD/Trash/Restore заметок и папок, явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` и `/files/` assets, continuous preview, Reveal presentation, локальный typesetting и permissionless Photo Picker/OpenDocument attachments находятся в target. Git HTTPS, whole-library unrelated-history resolution, синхронизация app Trash, ручной/15-минутный/короткий exit sync, adaptive tablet layout и click-to-load iframe реализованы. Android AI resolver намеренно отсутствует.
 
 ## Текущий объединённый goal и Definition of Done
 
-Android-версия доводится одним цельным локальным этапом; CI/CD и публикация пока не входят в scope. Goal считается выполненным только после сборки, автоматических проверок и smoke-теста на Android-эмуляторе по каждому пункту ниже.
+Android-версия доводится одним цельным этапом; публикация в Google Play пока не входит в scope. Goal считается выполненным только после сборки, автоматических проверок, smoke-теста на Android-эмуляторе, installable minified APK и отдельного PR в fork по каждому пункту ниже.
 
 - Android 15+ (`minSdk 35`), одна canonical app-private библиотека; SAF используется только из Settings для явных Import Library и Export Library.
 - Файлы `.md` остаются источником истины. Room — только восстанавливаемая поисковая проекция с full-text search, wikilinks/backlinks, удалением stale rows, ограниченным WAL и автоматическим self-healing rebuild/compaction при чрезмерном размере или фрагментации. Изображения и другие attachments в Room не индексируются.
@@ -16,7 +16,7 @@ Android-версия доводится одним цельным локальн
 - Удаление заметок и папок только через recoverable Trash. В Settings доступны Restore и Delete Permanently с явным подтверждением; rename/trash/restore корректно переводят pins, Room paths, открытый draft и прочие локальные owner metadata.
 - Production `cmark-gfm` preview использует один безопасный WebView pipeline для embedded и fullscreen continuous view, поддерживает `/i/`, не допускает горизонтального overflow и не показывает промежуточный системный шрифт. Первый стабильный кадр укладывается в измеримый бюджет либо до готовности показывается skeleton; смена режима не создаёт повторный cold render. Reveal.js presentation остаётся отдельным полноэкранным послайдовым режимом.
 - Вложения вставляются только после явного выбора через системный Photo Picker/OpenDocument; camera/media permission не запрашиваются. Изображения сохраняются по соглашению `i/`, прочие файлы — в разрешённой структуре библиотеки; лимит одного вложения — 25 MiB.
-- Git работает только по HTTPS, только с `origin/main`, через username + PAT; PAT привязан к URL и хранится через Android Keystore. Commit author name и email задаются отдельно. Локальные metadata, Room, Trash и secrets не попадают в Git.
+- Git работает только по HTTPS, только с `origin/main`, через username + PAT; PAT привязан к URL и хранится через Android Keystore. Commit author name и email задаются отдельно. App-managed `.Trash` синхронизируется по строгому allowlist, а Room, pins, mutation metadata и secrets не попадают в Git.
 - Верхний Reload при полной Git-конфигурации выполняет безопасный save/fetch/integrate/commit/push и затем пересканирует библиотеку; без Git выполняет локальный reload. Операции сериализованы с filesystem mutations. Опциональный WorkManager sync имеет системный минимум 15 минут; при завершении приложения применяется best-effort sync с коротким timeout без блокировки выхода и без потери локальных данных.
 - Reload сохраняет progress-модалку: она появляется после 150 мс, а после появления остаётся видимой непрерывно минимум 800 мс. Быстрые повторные состояния и recomposition не должны сокращать это время.
 - Конфликты разрешаются выбором полной Local или Remote версии файла с датами обеих сторон. Android AI conflict resolver отсутствует полностью: нет checkbox, endpoint, model, key, prompt или отправки содержимого AI-провайдеру.
@@ -29,21 +29,21 @@ Android-версия доводится одним цельным локальн
 
 Этот реестр является источником истины для статуса. Наличие кода или unit-теста само по себе не означает, что device-flow принят.
 
-| Приоритет | Поверхность | Статус на 2026-09-07 | Следующий gate |
+| Приоритет | Поверхность | Статус на 2026-09-08 | Следующий gate |
 |---|---|---|---|
-| P0 | `Sync Now` / Reload с Git | Исправляется release-only сбой `lb0`; debug API и JVM policy уже существуют | minified `localRelease` smoke с настоящим JGit init/sync path, стабильные пользовательские ошибки без обфусцированных имён |
-| P0 | Inline Preview | Отдельный hotfix подготовлен: reusable continuous WebView, renderer recovery, font-before-first-frame | rebase на текущий target, JVM/lint/build и один изолированный device smoke без crash/FOUT |
-| P1 | Nested folder CRUD | Интегрирован: create/rename/navigation и recoverable Trash/restore/permanent delete с Room/pins/draft remap | targeted device smoke и дальнейший filesystem hardening |
-| P1 | Tablet | Реального list-detail/two-pane branching пока нет | phone/tablet, rotation и multi-window tests от 840 dp |
-| P1 | Best-effort exit sync | Текущий worker ошибочно зависит от periodic toggle и допускает длинный timeout | отдельный от periodic запускающий путь, короткий timeout, выход не блокируется, local commit остаётся восстановимым |
-| P1 | Click-to-load iframe | Ещё отсутствует; raw HTML сейчас безопасно удаляется cmark без unsafe mode | явное нажатие, изолированный in-app iframe без scripts/forms/popups/top-navigation и security tests |
-| P1 | `/files/` attachments | Импорт и вставка ссылки есть, preview обслуживает только `/i/` | безопасное открытие выбранного файла и path/MIME tests |
-| P2 | Room FTS/backlinks/cleanup | Реализовано: stale-row cleanup, WAL checkpoint, size/fragmentation rebuild | длительный churn/size regression test |
-| P2 | Demo/theme/fonts/syntax/icon | Реализовано, включая macOS editor palette и отдельный monochrome bird+branch layer | финальный light/dark и themed-launcher visual smoke; preview FOUT закрывается P0 hotfix |
-| P2 | Progress overlay | Delay 150 ms, после появления minimum 800 ms; тесты state machine есть | runtime smoke Reload и Sync после Git fix |
-| P2 | Initial unrelated history | Обычные file conflicts есть, но whole-library first-sync choice не выделен | отдельный выбор: заменить локальную библиотеку remote либо оставить local без применения remote |
-| P3 | Subtitle punctuation | Исправлено не во всех EN/RU detail strings | убрать декоративные финальные точки из всех subtitle/detail, не затрагивая обычный текст |
-| Release gate | APK | Предыдущий переданный APK не содержит последние syntax/reload изменения | после всех интеграций `test lint assembleDebug assembleDebugAndroidTest assembleLocalRelease`, установка свежей сборки на `emulator-5554` |
+| P0 | `Sync Now` / Reload с Git | Release-only `lb0` устранён; minified JGit path проверен на устройстве, пользовательские ошибки не содержат obfuscated internals и сохраняют локальные данные | закрыто для prototype; настоящий remote остаётся beta integration gate |
+| P0 | Inline Preview | Один reusable continuous WebView для inline/fullscreen, renderer recovery и font-before-first-frame; device smoke без crash/FOUT пройден | финальный regression suite |
+| P1 | Nested folder CRUD | Интегрирован и покрыт: create/rename/navigation, three-dot actions, recoverable Trash/restore/permanent delete, Room/pins/draft remap | финальный instrumentation suite |
+| P1 | Tablet | List-detail/two-pane включается от 840 dp; preview/presentation остаются полнооконными | landscape/840 dp smoke |
+| P1 | Best-effort exit sync | Отделён от periodic toggle, имеет короткий timeout, не блокирует выход и сохраняет локальные данные при ошибке | финальный lifecycle test |
+| P1 | Click-to-load iframe | HTTPS placeholder загружается только по нажатию в sandboxed iframe; scripts/forms/popups/top-navigation и non-HTTPS запрещены | security regression tests |
+| P1 | `/files/` attachments | Импорт, Markdown-ссылка и безопасный native open через allowlisted router реализованы | финальный MIME/path suite |
+| P2 | Room FTS/backlinks/cleanup | Stale rows, WAL checkpoint, size/fragmentation rebuild и bounded unchanged-open churn покрыты | финальный instrumentation suite |
+| P2 | Demo/theme/language/fonts/syntax/icon | Реализовано: desktop demo data, Auto/System/Dark/Light, Auto/English/Русский, macOS palettes, bundled JetBrains Mono, monochrome bird+branch | финальный light/dark/language/themed-icon smoke |
+| P2 | Progress overlay | Delay 150 ms, после появления minimum 800 ms; state-machine tests есть | runtime Reload smoke |
+| P2 | Initial unrelated history | Whole-library выбор Keep Local или Replace with Remote без content merge реализован | minified Git regression suite |
+| P3 | Subtitle/toast punctuation | EN/RU subtitle/detail без декоративных финальных точек; snackbar удаляет финальную точку у status messages | resource/lint gate |
+| Release gate | APK | `test`, `lint`, Debug/test APK и minified `localRelease` собраны; 43/43 instrumentation tests и release JGit failure-path smoke прошли на `emulator-5554` | checksum, fresh Debug reinstall и fork PR |
 
 ## 1. Scope и принятые ограничения
 
@@ -160,7 +160,7 @@ Android обязан сохранить следующие правила MiaoYa
 - `i/` рядом с заметкой для inline-изображений;
 - Markdown-ссылка на локальное изображение: `![](/i/<name>)`;
 - `files/` для других вложений;
-- `Trash` и `.Trash` исключены из обычного списка, поиска и Git;
+- `Trash` и `.Trash` исключены из обычного списка и поиска; только app-managed `.Trash/manifest.tsv` и валидированные items UUID sync-ятся через Git;
 - YAML frontmatter удаляется на каждой rendering/export surface с одинаковой LF/CRLF-семантикой;
 - wikilinks `[[note]]`, backlinks и recursive search;
 - GFM tables, task lists, strikethrough, autolinks и GitHub Alerts;
@@ -174,9 +174,9 @@ Git path policy:
 
 - разрешены заметки, содержимое любых `i/` и `files/`, корневая `.gitignore`;
 - запрещены absolute paths, `..`, backslash, control chars и пути длиннее 4096 bytes;
-- запрещены hidden paths, кроме `.gitignore`;
+- запрещены hidden paths, кроме `.gitignore` и строго валидированной app-managed `.Trash` структуры;
 - запрещены symlink, submodule и non-regular entries;
-- `Trash`/`.Trash` запрещены;
+- legacy `Trash` запрещён; `.Trash` разрешён только как manifest и UUID items с обычными note/attachment path rules;
 - 25 MiB проверяются для added/modified attachment, но не для deletion.
 
 ## 6. App-private storage и SAF Import/Export
@@ -209,7 +209,7 @@ bootstrap state; удаление demo-файлов никогда не запу
   `.Trash/items/<uuid>/`; restore использует локальный manifest исходного пути и fallback в root при
   конфликте/исчезновении родительской папки. Permanent delete доступен только из Settings Trash и
   удаляет ровно проверенный item после именованного destructive confirm.
-- `Trash`, `.Trash`, `.git`, `i/` и служебные файлы исключены из обычного списка и поискового индекса согласно своему назначению.
+- `Trash`, `.Trash`, `.git`, `i/` и служебные файлы исключены из обычного списка и поискового индекса согласно своему назначению; `.Trash` при этом остаётся частью восстанавливаемой Git-копии.
 
 Folder rename/trash проходят через общий `LibraryRepositoryProvider` и process-wide
 `LibraryMutationGate`, затем единым scan перестраивают Room paths/wikilinks/backlinks. DataStore pins
@@ -468,7 +468,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - ✅ image/file picker, `i/` и базовая вставка `files/`;
 - ✅ Typesetting action;
 - ✅ recoverable note/folder Trash/restore/permanent delete с named confirm и folder-owner dirty guard;
-- `/files/` preview/open policy, local history и external-change conflicts остаются открыты.
+- `/files/` preview/open policy реализована; local history и расширенная external-change UX остаются отдельным post-prototype hardening.
 
 ### Phase 3 — manual + periodic Git MVP, 3–5 недель
 
@@ -478,18 +478,21 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - ✅ commit/fetch/classify/apply/push без content merge;
 - ✅ recovery ref;
 - ✅ local/remote whole-file conflict UI с timestamps и choose-all;
-- opt-in WorkManager каждые 15 минут реализован;
-- ручная кнопка Sync ожидает release-only `lb0` regression gate;
-- best-effort background/exit sync требует отделения от periodic toggle и сокращения timeout.
+- ✅ whole-library Local/Remote выбор для unrelated histories;
+- ✅ строгий Git allowlist для app-managed `.Trash`;
+- ✅ opt-in WorkManager каждые 15 минут;
+- ✅ ручные Reload/Sync Now и короткий best-effort exit sync независимо от periodic toggle;
+- ✅ minified release собран; полный device regression — 43/43 instrumentation tests.
 
 ### Phase 4 — visual/settings и platform polish, 2–3 недели
 
-- adaptive app/action icons;
-- системная light/dark theme и macOS color parity;
-- лицензируемые bundled fonts и локальный font/size picker (до 10 размеров);
-- adaptive tablet two-pane layout и корректный multi-window;
-- отдельные fullscreen continuous Preview и Reveal.js slide Presentation modes;
-- diagnostics/polishing.
+- ✅ adaptive app/action icons, включая monochrome bird+branch layer;
+- ✅ Auto/System, light/dark theme и macOS color parity;
+- ✅ bundled JetBrains Mono и локальный font/size picker (до 10 размеров);
+- ✅ explicit Auto/English/Русский language selector;
+- ✅ adaptive tablet two-pane layout;
+- ✅ отдельные fullscreen continuous Preview и Reveal.js slide Presentation modes с подсветкой кода;
+- multi-window/device matrix и дальнейший diagnostics polish остаются beta-hardening.
 
 ### Phase 5 — beta hardening, около 2 недель
 

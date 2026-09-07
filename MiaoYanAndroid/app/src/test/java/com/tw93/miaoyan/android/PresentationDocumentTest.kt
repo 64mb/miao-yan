@@ -2,6 +2,7 @@ package com.tw93.miaoyan.android
 
 import com.tw93.miaoyan.android.ui.presentation.PresentationAssetPolicy
 import com.tw93.miaoyan.android.ui.presentation.PresentationDocument
+import com.tw93.miaoyan.android.ui.presentation.PreviewReadinessNavigation
 import com.tw93.miaoyan.android.ui.presentation.SlideStateNavigation
 import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.EditorSettings
@@ -197,5 +198,14 @@ class PresentationDocumentTest {
         assertNull(SlideStateNavigation.reportedIndex("miaoyan-slide://state/42", hasUserGesture = true))
         assertNull(SlideStateNavigation.reportedIndex("miaoyan-slide://other/42", hasUserGesture = false))
         assertNull(SlideStateNavigation.reportedIndex("https://state/42", hasUserGesture = false))
+    }
+
+    @Test
+    fun acceptsOnlyTheExactNonGesturePreviewReadinessReport() {
+        assertTrue(PreviewReadinessNavigation.isReady("miaoyan-preview://ready", hasUserGesture = false))
+        assertFalse(PreviewReadinessNavigation.isReady("miaoyan-preview://ready", hasUserGesture = true))
+        assertFalse(PreviewReadinessNavigation.isReady("miaoyan-preview://ready/path", hasUserGesture = false))
+        assertFalse(PreviewReadinessNavigation.isReady("miaoyan-preview://ready?value=1", hasUserGesture = false))
+        assertFalse(PreviewReadinessNavigation.isReady("https://ready", hasUserGesture = false))
     }
 }

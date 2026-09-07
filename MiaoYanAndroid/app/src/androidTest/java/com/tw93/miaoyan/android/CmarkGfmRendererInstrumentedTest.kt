@@ -28,10 +28,13 @@ class CmarkGfmRendererInstrumentedTest {
     @Test
     fun keepsRawHtmlAndDangerousLinksInCmarkSafeMode() {
         val html = MarkdownRenderer.renderFragment(
-            "<iframe src=\"https://example.com\"></iframe>\n\n[bad](javascript:alert(1))",
+            "<div>raw HTML</div>\n\n<iframe src=\"https://example.com\"></iframe>\n\n" +
+                "[bad](javascript:alert(1))",
         )
 
         assertTrue(html.contains("raw HTML omitted"))
+        assertTrue(html.contains("class=\"embed-placeholder\""))
+        assertTrue(html.contains("data-embed=\"https://example.com\""))
         assertFalse(html.contains("<iframe"))
         assertFalse(html.contains("javascript:"))
     }

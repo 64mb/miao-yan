@@ -6,7 +6,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets as AndroidWindowInsets
 import android.view.WindowInsetsController
@@ -85,6 +87,7 @@ internal fun rememberContinuousPreviewDocument(
     editorSettings: EditorSettings,
     enabled: Boolean,
 ): ContinuousPreviewPreparation {
+    val appContext = LocalContext.current.applicationContext
     val request = remember(markdown, darkMode, editorSettings) {
         ContinuousPreviewRequest(markdown, darkMode, editorSettings)
     }
@@ -94,7 +97,20 @@ internal fun rememberContinuousPreviewDocument(
         delay(PreviewPreparationDebounceMillis)
         val startedAt = SystemClock.elapsedRealtime()
         val html = withContext(Dispatchers.Default) {
-            PresentationDocument.renderContinuous(markdown, darkMode, editorSettings)
+            val bundledFont = if (
+                editorSettings.font == com.tw93.miaoyan.android.data.EditorFont.JETBRAINS_MONO
+            ) {
+                BundledPreviewFont.dataUri(appContext)
+            } else {
+                null
+            }
+            PresentationDocument.renderContinuous(
+                markdown = markdown,
+                darkMode = darkMode,
+                editorSettings = editorSettings,
+                bundledFontDataUri = bundledFont,
+                fragmentRenderer = com.tw93.miaoyan.android.ui.MarkdownRenderer::renderFragment,
+            )
         }
         val duration = SystemClock.elapsedRealtime() - startedAt
         prepared = PreparedContinuousPreview(request, html, duration)
@@ -164,7 +180,6 @@ internal class PreviewWebViewController {
             it.startsWith("data:text/html") || it.startsWith(PresentationDocument.AssetOrigin)
         } == true
         if (revision == null || !isPreviewDocument) return
-        readyRevision = revision
         failureDescription = null
         awaitingManualRetry = false
         renderGoneCount = 0
@@ -174,6 +189,16 @@ internal class PreviewWebViewController {
                 DiagnosticsTag,
                 "page finished #$pageFinishedCount surface=$requestedSurface elapsed=${requestElapsed()}ms",
             )
+        }
+    }
+
+    fun onResourcesReady(revision: Any?) {
+        if (revision == null) return
+        readyRevision = revision
+        failureDescription = null
+        awaitingManualRetry = false
+        if (BuildConfig.DEBUG) {
+            Log.d(DiagnosticsTag, "resources ready surface=$requestedSurface elapsed=${requestElapsed()}ms")
         }
     }
 
@@ -275,7 +300,7 @@ internal fun ContinuousPreview(
                     controller = controller,
                     active = active && ready,
                     onSlideChanged = {},
-                    modifier = Modifier.fillMaxSize().alpha(if (active && ready) 1f else 0f)
+                    modifier = Modifier.fillMaxSize().alpha(if (active && ready) 1f else PreviewWarmupAlpha)
                         .testTag("continuous_preview_webview"),
                 )
             }
@@ -323,9 +348,24 @@ fun PresentationHost(
         val result = withContext(Dispatchers.Default) {
             val count = PresentationDocument.split(markdown).size
             val start = initialSlide.coerceIn(0, count - 1)
+            val bundledFont = if (
+                editorSettings.font == com.tw93.miaoyan.android.data.EditorFont.JETBRAINS_MONO
+            ) {
+                BundledPreviewFont.dataUri(context.applicationContext)
+            } else {
+                null
+            }
             PreparedSlides(
                 request,
-                PresentationDocument.renderSlides(markdown, darkMode, start, editorSettings),
+                PresentationDocument.renderSlides(
+                    markdown = markdown,
+                    darkMode = darkMode,
+                    initialSlide = start,
+                    editorSettings = editorSettings,
+                    nonce = BundledPreviewFont.newNonce(),
+                    bundledFontDataUri = bundledFont,
+                    fragmentRenderer = com.tw93.miaoyan.android.ui.MarkdownRenderer::renderFragment,
+                ),
                 count - 1,
                 0L,
             )
@@ -415,7 +455,7 @@ private fun SecureDocumentWebView(
             val session = PreviewWebViewSession(router, controller, onSlideChanged).apply {
                 allowsNetworkFrames = document.allowsNetworkFrames
             }
-            WebView(context).apply {
+            SecurePreviewWebView(context).apply {
                 tag = session
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 isFocusable = true
@@ -462,6 +502,10 @@ private fun SecureDocumentWebView(
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val currentSession = view.tag as PreviewWebViewSession
                         val uri = request.url
+                        if (PreviewReadinessNavigation.isReady(uri.toString(), request.hasGesture())) {
+                            currentSession.controller.onResourcesReady(currentSession.revision)
+                            return true
+                        }
                         SlideStateNavigation.reportedIndex(uri.toString(), request.hasGesture())
                             ?.takeIf { it <= currentSession.maximumSlideIndex }
                             ?.let(currentSession.onSlideChanged)
@@ -503,11 +547,16 @@ private fun SecureDocumentWebView(
                     override fun onPageFinished(view: WebView, url: String?) {
                         val currentSession = view.tag as PreviewWebViewSession
                         currentSession.controller.onPageFinished(currentSession.revision, url)
-                        if (currentSession.active) view.requestFocus()
+                        view.evaluateJavascript(FontReadinessScript, null)
                     }
 
                     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                         val currentSession = view.tag as PreviewWebViewSession
+                        // A terminated renderer can leave appassets responses recorded as
+                        // incomplete in Chromium's shared cache. Clear them before Compose
+                        // creates the one automatic replacement, otherwise the recovered page
+                        // may silently fall back to the system font and broken local images.
+                        view.clearCache(true)
                         currentSession.controller.onRenderProcessGone(detail, currentSession.expectedRelease)
                         return true
                     }
@@ -521,8 +570,14 @@ private fun SecureDocumentWebView(
             session.maximumSlideIndex = document.maximumSlideIndex
             session.allowsNetworkFrames = document.allowsNetworkFrames
             session.active = active
-            webView.visibility = if (active) View.VISIBLE else View.INVISIBLE
-            if (session.revision != document.revision) {
+            val needsLoad = session.revision != document.revision
+            // Keep the retained preview laid out while disabled. INVISIBLE (and a fully
+            // transparent render layer) lets Chromium defer font/image work until the user
+            // opens Preview, which causes a visible late font swap.
+            webView.visibility = View.VISIBLE
+            webView.isEnabled = active
+            if (active) webView.requestFocus()
+            if (needsLoad) {
                 session.revision = document.revision
                 session.expectedRelease = false
                 webView.settings.javaScriptEnabled = document.javaScriptEnabled
@@ -582,6 +637,36 @@ private class PreviewWebViewSession(
     var expectedRelease = false
 }
 
+private class SecurePreviewWebView(context: Context) : WebView(context) {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val session = tag as? PreviewWebViewSession
+        if (BuildConfig.DEBUG && session != null) {
+            Log.d(
+                DiagnosticsTag,
+                "key code=${event.keyCode} action=${event.action} slides=${session.maximumSlideIndex} " +
+                    "focus=${hasFocus()}",
+            )
+        }
+        if (event.action == KeyEvent.ACTION_DOWN && session != null && session.maximumSlideIndex > 0) {
+            val command = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_RIGHT,
+                KeyEvent.KEYCODE_PAGE_DOWN,
+                KeyEvent.KEYCODE_SPACE,
+                -> "window.Reveal && Reveal.next()"
+                KeyEvent.KEYCODE_DPAD_LEFT,
+                KeyEvent.KEYCODE_PAGE_UP,
+                -> "window.Reveal && Reveal.prev()"
+                else -> null
+            }
+            if (command != null) {
+                evaluateJavascript(command, null)
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+}
+
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
@@ -592,3 +677,34 @@ private const val DiagnosticsTag = "MiaoYanPreview"
 private const val PreviewPreparationDebounceMillis = 80L
 private const val AutomaticRendererRestarts = 1
 private const val BundledFontPath = "/presentation/jetbrains-mono.ttf"
+private const val PreviewWarmupAlpha = 0.01f
+private const val FontReadinessScript = """
+    (() => {
+      const style = getComputedStyle(document.body);
+      const descriptor = style.fontSize + ' ' + style.fontFamily;
+      document.fonts.load(descriptor).catch(() => []).then(() => {
+        window.location.href = 'miaoyan-preview://ready';
+      });
+    })()
+"""
+
+private object BundledPreviewFont {
+    @Volatile
+    private var cachedDataUri: String? = null
+
+    @SuppressLint("ResourceType")
+    fun dataUri(context: Context): String {
+        cachedDataUri?.let { return it }
+        return synchronized(this) {
+            cachedDataUri ?: context.resources.openRawResource(R.font.jetbrains_mono_regular).use { stream ->
+                "data:font/ttf;base64," + Base64.encodeToString(stream.readBytes(), Base64.NO_WRAP)
+            }.also { cachedDataUri = it }
+        }
+    }
+
+    fun newNonce(): String {
+        val bytes = ByteArray(18)
+        java.security.SecureRandom().nextBytes(bytes)
+        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+    }
+}
