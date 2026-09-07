@@ -469,6 +469,55 @@ class Storage {
         return candidates.max(by: { $0.url.path.count < $1.url.path.count })
     }
 
+    /// Ensures the in-memory project chain exists for a note that appeared in
+    /// an externally applied Git tree. This does not rescan or replace existing
+    /// Note instances.
+    func ensureProjectForGitNote(at noteURL: URL, under root: Project) -> Project? {
+        let rootPath = root.url.standardizedFileURL.resolvingSymlinksInPath().path
+        let directory = noteURL.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+        let directoryPath = directory.path
+        guard directoryPath == rootPath || directoryPath.hasPrefix(rootPath + "/") else { return nil }
+        if directoryPath == rootPath { return root }
+
+        let relative = String(directoryPath.dropFirst(rootPath.count + 1))
+        var parent = root
+        var currentURL = root.url
+        for component in relative.split(separator: "/").map(String.init) {
+            currentURL.appendPathComponent(component, isDirectory: true)
+            if let existing = projects.first(where: { $0.url == currentURL.resolvingSymlinksInPath() }) {
+                parent = existing
+            } else {
+                let project = Project(url: currentURL, parent: parent)
+                projects.append(project)
+                parent = project
+            }
+        }
+        return parent
+    }
+
+    /// Retires in-memory descendants whose directories disappeared during a
+    /// Git checkout. Removing the project without retiring its notes would
+    /// leave stale Note objects able to schedule writes into deleted paths.
+    func retireMissingProjectsAfterGit(under root: Project) {
+        let missing =
+            projects
+            .filter {
+                $0 != root
+                    && !$0.isTrash
+                    && $0.isDescendant(of: root)
+                    && !FileManager.default.directoryExists(atUrl: $0.url)
+            }
+            .sorted { $0.url.path.count > $1.url.path.count }
+
+        for project in missing {
+            for note in getNotesBy(project: project) {
+                note.retireAfterRemoval()
+                removeBy(note: note)
+            }
+            remove(project: project)
+        }
+    }
+
     func sortNotes(noteList: [Note], filter: String, project: Project? = nil, operation: Operation? = nil) -> [Note] {
         let hasFilter = !filter.isEmpty
 
@@ -1176,10 +1225,10 @@ class Storage {
 
     public func removeAttachments(urls: [URL]) -> (removed: [URL], failed: [URL]) {
         var removed = [URL]()
-        var failed = [URL]()
+        var failed = urls.filter { !GitSyncLibraryMutationGate.allowsMutation(at: $0) }
         let manager = FileManager.default
 
-        for url in urls {
+        for url in urls where GitSyncLibraryMutationGate.allowsMutation(at: url) {
             do {
                 var resultingItemUrl: NSURL?
                 try manager.trashItem(at: url, resultingItemURL: &resultingItemUrl)

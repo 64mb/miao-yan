@@ -694,3 +694,4 @@
 
 /* Class = "NSMenuItem"; title = "Reload Note"; ObjectID = "Rld-Nt-7Xm"; */
 "Rld-Nt-7Xm.title" = "Recargar Nota";
+"Git-Sync-001.title" = "Sincronizar repositorio Git";

@@ -5,7 +5,7 @@ let package = Package(
     name: "MiaoYan",
     defaultLocalization: "en",
     platforms: [
-        .macOS(.v11),
+        .macOS(.v13),
         .iOS(.v18),
     ],
     dependencies: [

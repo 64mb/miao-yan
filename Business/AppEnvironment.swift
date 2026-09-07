@@ -12,4 +12,6 @@ struct AppEnvironment {
     let versionManager: NoteVersionManager = NoteVersionManager.shared
     let userData: UserDataService = UserDataService.instance
     let session: EditorSessionState = AppContext.shared.sessionState
+    let gitCredentialStore: GitCredentialStore = GitCredentialStore()
+    let gitAIKeyStore: GitAIKeyStore = GitAIKeyStore()
 }

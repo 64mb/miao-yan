@@ -5,6 +5,25 @@ import XCTest
 
 final class PrefsWindowControllerTests: XCTestCase {
     @MainActor
+    func testGitSyncHasDedicatedPreferencesCategory() {
+        XCTAssertTrue(PreferencesCategory.allCases.contains(.gitSync))
+        XCTAssertEqual(PreferencesCategory.gitSync.title, I18n.str("Git Sync"))
+        XCTAssertEqual(PreferencesCategory.gitSync.systemSymbolName, "arrow.triangle.2.circlepath")
+    }
+
+    @MainActor
+    func testGitSyncPreferencesExposeLibraryMigrationButton() {
+        let controller = GitSyncPrefsViewController()
+        controller.loadView()
+
+        let button = controller.view.recursiveSubviews
+            .compactMap { $0 as? NSButton }
+            .first { $0.title == I18n.str("Move Library to Local Storage…") }
+
+        XCTAssertNotNil(button)
+    }
+
+    @MainActor
     func testFontMigrationPreservesCustomFaces() throws {
         let defaults = UserDefaults.standard
         let keys = ["fontName", "windowFontName", "previewFontName", "codeFont", "hasMigratedSystemFonts_v1", "hasMigratedCodeFontDefault_v1", "hasMigratedFontDefaults_v2"]
@@ -61,5 +80,11 @@ final class PrefsWindowControllerTests: XCTestCase {
         NotificationCenter.default.post(name: .alwaysOnTopChanged, object: nil)
 
         XCTAssertEqual(controller.window?.level, .normal)
+    }
+}
+
+private extension NSView {
+    var recursiveSubviews: [NSView] {
+        subviews + subviews.flatMap(\.recursiveSubviews)
     }
 }

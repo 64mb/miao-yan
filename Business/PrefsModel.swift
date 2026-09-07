@@ -4,7 +4,7 @@ typealias PreferencesCategory = PrefsSection
 
 // MARK: - Preferences Category Model
 enum PrefsSection: CaseIterable, Sendable {
-    case general, editor, typography
+    case general, editor, typography, gitSync
 
     @MainActor
     var title: String {
@@ -12,6 +12,7 @@ enum PrefsSection: CaseIterable, Sendable {
         case .general: return I18n.str("Interface")
         case .editor: return I18n.str("Experience")
         case .typography: return I18n.str("Typography")
+        case .gitSync: return I18n.str("Git Sync")
         }
     }
 
@@ -20,6 +21,7 @@ enum PrefsSection: CaseIterable, Sendable {
         case .general: return "paintbrush"
         case .editor: return "square.and.pencil"
         case .typography: return "textformat.size"
+        case .gitSync: return "arrow.triangle.2.circlepath"
         }
     }
 
@@ -28,6 +30,7 @@ enum PrefsSection: CaseIterable, Sendable {
         case .general: return "icon_interface"
         case .editor: return "icon_experience"
         case .typography: return "icon_typography"
+        case .gitSync: return nil
         }
     }
 }

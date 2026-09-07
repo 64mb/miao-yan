@@ -694,3 +694,4 @@
 
 /* Class = "NSMenuItem"; title = "Reload Note"; ObjectID = "Rld-Nt-7Xm"; */
 "Rld-Nt-7Xm.title" = "再読み込み";
+"Git-Sync-001.title" = "Gitリポジトリを同期";

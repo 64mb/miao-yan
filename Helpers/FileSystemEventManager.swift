@@ -5,6 +5,7 @@ class FileSystemEventManager {
     private let storage: Storage
     private weak var delegate: ViewController?
     private var watcher: FileWatcher?
+    private var gitMutationDepth = 0
     private var observedFolders: [String] {
         storage.getProjectPaths()
     }
@@ -22,6 +23,162 @@ class FileSystemEventManager {
             }
         }
         watcher?.start()
+    }
+
+    /// Git checkout/merge uses explicit reconciliation, so normal FSEvents
+    /// must not race it or manufacture backups for expected incoming content.
+    func beginGitMutation() {
+        if gitMutationDepth == 0 {
+            watcher?.stop()
+        }
+        gitMutationDepth += 1
+    }
+
+    func endGitMutation() {
+        guard gitMutationDepth > 0 else { return }
+        gitMutationDepth -= 1
+        if gitMutationDepth == 0 {
+            start()
+        }
+    }
+
+    func reconcileGitChanges(
+        _ changes: [GitSyncChange],
+        root: Project,
+        editorOwnerURL: URL?,
+        flushedEditorText: String?
+    ) async throws {
+        let noteExtensions = Set(storage.allowedExtensions)
+        let resolvedEditorOwnerURL = editorOwnerURL?.resolvingSymlinksInPath()
+        let activeOwnerChange = changes.first { change in
+            switch change.kind {
+            case .deleted:
+                return root.url.appendingPathComponent(change.path).resolvingSymlinksInPath() == resolvedEditorOwnerURL
+            case .renamed:
+                guard let previousPath = change.previousPath else { return false }
+                return root.url.appendingPathComponent(previousPath).resolvingSymlinksInPath() == resolvedEditorOwnerURL
+            case .added, .modified:
+                return false
+            }
+        }
+        let renamedEditorURL: URL? = {
+            guard let activeOwnerChange, activeOwnerChange.kind == .renamed else { return nil }
+            return root.url.appendingPathComponent(activeOwnerChange.path).resolvingSymlinksInPath()
+        }()
+
+        if activeOwnerChange != nil,
+            let resolvedEditorOwnerURL,
+            let activeNote = storage.getBy(url: resolvedEditorOwnerURL),
+            let editArea = delegate?.editArea,
+            let flushedEditorText,
+            editArea.string != flushedEditorText
+        {
+            writeConflictBackup(for: activeNote, editorContent: editArea.string)
+            throw FileSystemError.updateFailed(resolvedEditorOwnerURL)
+        }
+        if activeOwnerChange != nil {
+            delegate?.editArea.clear()
+        }
+
+        let removedPaths = changes.flatMap { change -> [String] in
+            switch change.kind {
+            case .deleted:
+                return [change.path]
+            case .renamed:
+                return change.previousPath.map { [$0] } ?? []
+            case .added, .modified:
+                return []
+            }
+        }
+        for path in removedPaths where noteExtensions.contains((path as NSString).pathExtension.lowercased()) {
+            let url = root.url.appendingPathComponent(path)
+            if let note = storage.getBy(url: url) {
+                storage.removeNotes(notes: [note], fsRemove: false) { _ in }
+            }
+        }
+
+        let currentPaths = changes.compactMap { change -> String? in
+            switch change.kind {
+            case .added, .modified, .renamed:
+                return change.path
+            case .deleted:
+                return nil
+            }
+        }
+        for path in currentPaths where noteExtensions.contains((path as NSString).pathExtension.lowercased()) {
+            let url = root.url.appendingPathComponent(path).resolvingSymlinksInPath()
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            let note: Note
+            if let existing = storage.getBy(url: url) {
+                note = existing
+            } else {
+                guard let project = storage.ensureProjectForGitNote(at: url, under: root) else { continue }
+                note = Note(url: url, with: project)
+                note.loadMetadataFromDisk()
+                storage.add(note)
+            }
+            guard let diskContent = await note.getContentAsync() else {
+                throw FileSystemError.updateFailed(url)
+            }
+
+            if resolvedEditorOwnerURL == url,
+                let editArea = delegate?.editArea,
+                let flushedEditorText,
+                editArea.string != flushedEditorText
+            {
+                writeConflictBackup(for: note, editorContent: editArea.string)
+                throw FileSystemError.updateFailed(url)
+            }
+
+            note.content = NSMutableAttributedString(attributedString: diskContent)
+            note.undoManager.removeAllActions()
+            delegate?.notesTableView.reloadRow(note: note)
+            if resolvedEditorOwnerURL == url {
+                delegate?.refillEditArea(suppressSave: true)
+            }
+        }
+
+        storage.retireMissingProjectsAfterGit(under: root)
+
+        let gitPathPolicy = GitSyncPathPolicy()
+        let attachmentChanged = changes.contains { change in
+            if case .allowed(.attachment) = gitPathPolicy.classify(
+                relativePath: change.path,
+                entryKind: change.entryKind
+            ) {
+                return true
+            }
+            return false
+        }
+        if attachmentChanged, delegate?.shouldShowPreview == true {
+            delegate?.refillEditArea(previewOnly: true, force: true, animatePreview: false, suppressSave: true)
+        }
+
+        guard let delegate else { return }
+        await withCheckedContinuation { continuation in
+            delegate.updateTable {
+                delegate.reloadSideBar()
+                if activeOwnerChange != nil {
+                    if let renamedEditorURL,
+                        let renamedNote = self.storage.getBy(url: renamedEditorURL)
+                    {
+                        delegate.notesTableView.setSelected(
+                            note: renamedNote,
+                            ensureVisible: true,
+                            suppressSideEffects: false
+                        )
+                    }
+                    DispatchQueue.main.async {
+                        if delegate.notesTableView.getSelectedNote() != nil {
+                            delegate.refillEditArea(force: true, suppressSave: true)
+                        } else {
+                            delegate.editArea.clear()
+                        }
+                    }
+                }
+                continuation.resume()
+            }
+        }
     }
 
     private func handleFileSystemEvent(_ event: FileWatcherEvent) {

@@ -199,6 +199,7 @@ public class Project: Equatable {
     }
 
     public func createDirectory() {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return }
         do {
             try FileManager.default.createDirectory(
                 at: url.appendingPathComponent("i"),
@@ -213,6 +214,7 @@ public class Project: Equatable {
     }
 
     public func remove() {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return }
         do {
             try FileManager.default.removeItem(at: url)
         } catch {
@@ -223,6 +225,7 @@ public class Project: Equatable {
     }
 
     public func create() {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return }
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: nil)
         } catch {

@@ -693,3 +693,4 @@
 
 /* Class = "NSMenuItem"; title = "Reload Note"; ObjectID = "Rld-Nt-7Xm"; */
 "Rld-Nt-7Xm.title" = "重新載入";
+"Git-Sync-001.title" = "同步 Git 儲存庫";

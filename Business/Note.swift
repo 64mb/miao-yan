@@ -209,6 +209,9 @@ public class Note: NSObject {
     }
 
     func move(to: URL, project: Project? = nil) -> Bool {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url),
+            GitSyncLibraryMutationGate.allowsMutation(at: to)
+        else { return false }
         do {
             var destination = to
 
@@ -290,6 +293,7 @@ public class Note: NSObject {
     }
 
     func removeFile(completely: Bool = false) -> FileRemovalResult? {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return nil }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
         if isTrash() {
@@ -625,6 +629,7 @@ public class Note: NSObject {
     @discardableResult
     private func executeSave(attributedString: NSAttributedString, globalStorage: Bool = true) -> Bool {
         guard !isRetired else { return false }
+        guard GitSyncLibraryMutationGate.allowsMutation(at: getURL()) else { return false }
         // Cancel pending debounce if we are saving immediately
         saveWorkItem?.cancel()
 
@@ -954,6 +959,9 @@ public class Note: NSObject {
 
         let directory = url.deletingLastPathComponent()
         let duplicateURL = directory.appendingPathComponent(duplicateName).appendingPathExtension(url.pathExtension)
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url),
+            GitSyncLibraryMutationGate.allowsMutation(at: duplicateURL)
+        else { return }
 
         try? FileManager.default.copyItem(at: self.url, to: duplicateURL)
     }

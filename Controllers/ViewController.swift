@@ -41,6 +41,9 @@ class ViewController:
     var formatTask: Task<Void, Never>?
     var formatRequestID: Int = 0
     let markdownFormatWorker = MarkdownFormatWorker()
+    let gitSyncCoordinator = GitSyncCoordinator()
+    let gitSyncConfigurationStore = GitSyncConfigurationStore()
+    let gitAIConflictResolver = GitAIConflictResolver()
     var needRestorePreview: Bool = false
     var shouldRestorePreviewAfterExport: Bool = false
     var shouldDisablePPTAfterExport: Bool = false

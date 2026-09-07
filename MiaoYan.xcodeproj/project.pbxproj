@@ -64,6 +64,14 @@
 		27A077482E714AFE008A5483 /* Highlightr in Frameworks */ = {isa = PBXBuildFile; productRef = 27A077472E714AFE008A5483 /* Highlightr */; };
 		27A0774E2E714C43008A5483 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 27A0774D2E714C43008A5483 /* Sparkle */; };
 		27A077542E7152C9008A5483 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 27A077532E7152C9008A5483 /* KeyboardShortcuts */; };
+		A7C15A032F50000100BEEF01 /* CLibGit2 in Frameworks */ = {isa = PBXBuildFile; productRef = A7C15A022F50000100BEEF01 /* CLibGit2 */; };
+		A7C15A042F50000100BEEF01 /* GitRepositoryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7C15A052F50000100BEEF01 /* GitRepositoryClient.swift */; };
+		BC385DFF893DACFA0A40C91B /* Business/GitCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35391A160D9B9986B895665A /* Business/GitCredentialStore.swift */; };
+		C91B51A52F50000100BEEF01 /* GitSyncFoundation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51A62F50000100BEEF01 /* GitSyncFoundation.swift */; };
+		C91B51A72F50000100BEEF01 /* GitSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51A82F50000100BEEF01 /* GitSyncCoordinator.swift */; };
+		E07272C1ABE538BA8DCAC3DE /* MiaoYanTests/GitCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86FE56AD4A198C2D499DFDD1 /* MiaoYanTests/GitCredentialStoreTests.swift */; };
+		C91B51A92F50000100BEEF01 /* GitSyncFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51AA2F50000100BEEF01 /* GitSyncFoundationTests.swift */; };
+		C91B51AB2F50000100BEEF01 /* GitRepositoryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51AC2F50000100BEEF01 /* GitRepositoryClientTests.swift */; };
 		27A1B2C32E681510006BC2AC /* PdfExportController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27A1B2C42E681510006BC2AC /* PdfExportController.swift */; };
 		27B4A5AA2E6924CC00C89EFF /* ViewController+Action.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27B4A5A82E6924CC00C89EFF /* ViewController+Action.swift */; };
 		27B4A5AB2E6924CC00C89EFF /* ViewController+Data.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27B4A5A92E6924CC00C89EFF /* ViewController+Data.swift */; };
@@ -337,6 +345,13 @@
 		A6E21F00885D42989822E5CC /* SettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SettingsView.swift; path = MiaoYanMobile/Views/SettingsView.swift; sourceTree = SOURCE_ROOT; };
 		A6E21F00885D42989822E5FF /* NewNoteView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NewNoteView.swift; path = MiaoYanMobile/Views/NewNoteView.swift; sourceTree = SOURCE_ROOT; };
 		AA001000AA001000AA001000 /* NoteVersionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoteVersionManager.swift; sourceTree = "<group>"; };
+		A7C15A052F50000100BEEF01 /* GitRepositoryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitRepositoryClient.swift; sourceTree = "<group>"; };
+		35391A160D9B9986B895665A /* Business/GitCredentialStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Business/GitCredentialStore.swift; sourceTree = SOURCE_ROOT; };
+		C91B51A62F50000100BEEF01 /* GitSyncFoundation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitSyncFoundation.swift; sourceTree = "<group>"; };
+		C91B51A82F50000100BEEF01 /* GitSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitSyncCoordinator.swift; sourceTree = "<group>"; };
+		86FE56AD4A198C2D499DFDD1 /* MiaoYanTests/GitCredentialStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiaoYanTests/GitCredentialStoreTests.swift; sourceTree = SOURCE_ROOT; };
+		C91B51AA2F50000100BEEF01 /* GitSyncFoundationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiaoYanTests/GitSyncFoundationTests.swift; sourceTree = SOURCE_ROOT; };
+		C91B51AC2F50000100BEEF01 /* GitRepositoryClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiaoYanTests/GitRepositoryClientTests.swift; sourceTree = SOURCE_ROOT; };
 		AA002000AA002000AA002000 /* VersionHistoryViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VersionHistoryViewController.swift; sourceTree = "<group>"; };
 		ABD610C0BFC74068B993BC2C /* NoteDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NoteDetailView.swift; path = MiaoYanMobile/Views/NoteDetailView.swift; sourceTree = SOURCE_ROOT; };
 		B711EF5A3FFA7FB00A8FC27C /* MiaoYanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MiaoYanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -414,6 +429,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7C15A032F50000100BEEF01 /* CLibGit2 in Frameworks */,
 				27A0773A2E714AB1008A5483 /* CMarkGFM in Frameworks */,
 				27A077482E714AFE008A5483 /* Highlightr in Frameworks */,
 				27977FF42E7126C40016D57D /* CMarkGFM in Frameworks */,
@@ -487,6 +503,9 @@
 		928AEFF5665B95BB43155574 /* MiaoYanTests */ = {
 			isa = PBXGroup;
 			children = (
+				C91B51AC2F50000100BEEF01 /* GitRepositoryClientTests.swift */,
+				C91B51AA2F50000100BEEF01 /* GitSyncFoundationTests.swift */,
+				86FE56AD4A198C2D499DFDD1 /* MiaoYanTests/GitCredentialStoreTests.swift */,
 				8D372825902F0E2A6F8CCF40 /* MiaoYanTests/ImageLinkParserTests.swift */,
 				8B8E4FEFFB4E4C108508945B /* MiaoYanTests/HtmlManagerTests.swift */,
 				D206592CF7404E1D9AF623FD /* MiaoYanTests/PrefsWindowControllerTests.swift */,
@@ -614,6 +633,10 @@
 		D7B6E59C20794B4C00FE0E20 /* Business */ = {
 			isa = PBXGroup;
 			children = (
+				A7C15A052F50000100BEEF01 /* GitRepositoryClient.swift */,
+				35391A160D9B9986B895665A /* Business/GitCredentialStore.swift */,
+				C91B51A62F50000100BEEF01 /* GitSyncFoundation.swift */,
+				C91B51A82F50000100BEEF01 /* GitSyncCoordinator.swift */,
 				b2384ca08b9b4d1389a7bf4e0ae47758 /* FontConfiguration.swift */,
 				278160912E75551F00F3D54B /* PrefsModel.swift */,
 				D7038E2520FB24E000A54E69 /* NoteAttachment.swift */,
@@ -822,6 +845,7 @@
 			);
 			name = MiaoYan;
 			packageProductDependencies = (
+				A7C15A022F50000100BEEF01 /* CLibGit2 */,
 				27977FF32E7126C40016D57D /* CMarkGFM */,
 				27A077472E714AFE008A5483 /* Highlightr */,
 				27A077532E7152C9008A5483 /* KeyboardShortcuts */,
@@ -893,6 +917,7 @@
 			);
 			mainGroup = D7793C661F211C6000CA39B7;
 			packageReferences = (
+				A7C15A012F50000100BEEF01 /* XCLocalSwiftPackageReference "CLibGit2" */,
 				27A077382E714AB1008A5483 /* XCRemoteSwiftPackageReference "swift-cmark-gfm" */,
 				27A0773E2E714ACC008A5483 /* XCRemoteSwiftPackageReference "Prettier" */,
 				27A077462E714AFE008A5483 /* XCRemoteSwiftPackageReference "Highlightr" */,
@@ -1002,6 +1027,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C91B51AB2F50000100BEEF01 /* GitRepositoryClientTests.swift in Sources */,
+				C91B51A92F50000100BEEF01 /* GitSyncFoundationTests.swift in Sources */,
+				E07272C1ABE538BA8DCAC3DE /* MiaoYanTests/GitCredentialStoreTests.swift in Sources */,
 				4E240503121F054AEB3DDDCC /* MiaoYanTests/ImageLinkParserTests.swift in Sources */,
 				A4CADB8809D34E1C9C3267F5 /* MiaoYanTests/HtmlManagerTests.swift in Sources */,
 				33F1E2FF1B56462C8C96769E /* MiaoYanTests/PrefsWindowControllerTests.swift in Sources */,
@@ -1027,6 +1055,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A7C15A042F50000100BEEF01 /* GitRepositoryClient.swift in Sources */,
+				BC385DFF893DACFA0A40C91B /* Business/GitCredentialStore.swift in Sources */,
+				C91B51A52F50000100BEEF01 /* GitSyncFoundation.swift in Sources */,
+				C91B51A72F50000100BEEF01 /* GitSyncCoordinator.swift in Sources */,
 				27F1C0312F40000400AAA001 /* BacktickAndFontNormalizer.swift in Sources */,
 				27F1C0212F40000300AAA001 /* MarkdownRuleHighlighter.swift in Sources */,
 				27F1C0112F40000200AAA001 /* CodeBlockHighlighter.swift in Sources */,
@@ -1205,7 +1237,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tw93.miaoyan.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1227,7 +1259,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tw93.miaoyan.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1278,7 +1310,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tw93.miaoyan.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1347,7 +1379,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -1417,7 +1449,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -1463,7 +1495,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 4.2.0;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
@@ -1514,7 +1546,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 4.2.0;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = (
@@ -1592,7 +1624,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -1652,7 +1684,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.5;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				MARKETING_VERSION = 4.2.0;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
@@ -1778,6 +1810,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		A7C15A012F50000100BEEF01 /* XCLocalSwiftPackageReference "CLibGit2" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/CLibGit2;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		2732D2FD2E70450B00F00158 /* XCRemoteSwiftPackageReference "Prettier" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -1854,6 +1893,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A7C15A022F50000100BEEF01 /* CLibGit2 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A7C15A012F50000100BEEF01 /* XCLocalSwiftPackageReference "CLibGit2" */;
+			productName = CLibGit2;
+		};
 		2732D2FE2E70450B00F00158 /* Prettier */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 2732D2FD2E70450B00F00158 /* XCRemoteSwiftPackageReference "Prettier" */;
