@@ -296,6 +296,18 @@ public class Note: NSObject {
         guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return nil }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
+        if completely {
+            guard isTrash() else { return nil }
+            do {
+                try FileManager.default.removeItem(at: url)
+                NoteVersionManager.shared.removeVersions(for: self)
+                return .hiddenFromMiaoYanTrash
+            } catch {
+                AppDelegate.trackError(error, context: "Note.permanentDelete")
+                return nil
+            }
+        }
+
         if isTrash() {
             do {
                 if Storage.isSystemTrashProject(project) {
@@ -323,6 +335,21 @@ public class Note: NSObject {
             // A note restored from Finder keeps its xattrs. Clear the marker
             // before a later soft delete so it appears in MiaoYan Trash again.
             try? url.removeExtendedAttribute(forName: AppIdentifier.removedFromTrashKey)
+
+            if let originData = Storage.trashOriginMetadataData(
+                for: url,
+                root: project.getParent().url)
+            {
+                do {
+                    try url.setExtendedAttribute(
+                        data: originData,
+                        forName: AppIdentifier.trashOriginKey)
+                } catch {
+                    // The note remains recoverable even when a volume does not
+                    // support xattrs; Restore will fall back to the main root.
+                    AppDelegate.trackError(error, context: "Note.storeTrashOrigin")
+                }
+            }
 
             guard let dst = Storage.sharedInstance().trashItem(url: url) else {
                 var resultingItemUrl: NSURL?
@@ -751,6 +778,15 @@ public class Note: NSObject {
         hasUnpersistedChanges = false
         saveWorkItem?.cancel()
         saveWorkItem = nil
+    }
+
+    /// A permanent delete retires the object before unlinking the file, so a
+    /// watcher/editor callback cannot race the delete and recreate it. If the
+    /// filesystem operation fails, Storage reactivates the same object because
+    /// the row and file must remain usable.
+    func reactivateAfterFailedRemoval() {
+        guard isRetired else { return }
+        isRetired = false
     }
 
     public func getContentFileURL() -> URL? {

@@ -408,3 +408,9 @@
 "Checking library location…" = "Comprobando la ubicación de la biblioteca…";
 "Move the current library out of cloud storage before enabling Git sync." = "Mueve la biblioteca actual fuera del almacenamiento en la nube antes de activar la sincronización Git.";
 "The current library is already stored locally." = "La biblioteca actual ya está almacenada localmente.";
+"Restore" = "Restaurar";
+"Delete Permanently" = "Eliminar permanentemente";
+"Delete %d note(s) permanently?" = "¿Eliminar permanentemente %d nota(s)?";
+"Failed to delete %d note(s) permanently~" = "No se pudieron eliminar permanentemente %d nota(s)~";
+"Restored %d note(s) from Trash~" = "Se restauraron %d nota(s) de la papelera~";
+"Failed to restore %d note(s) from Trash~" = "No se pudieron restaurar %d nota(s) de la papelera~";

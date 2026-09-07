@@ -289,4 +289,155 @@ final class NoteSaveDebounceTests: XCTestCase {
         note.flushPendingSave(globalStorage: false)
         XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "edit after failure")
     }
+
+    @MainActor
+    func testTrashOriginMetadataRestoresOriginalNestedLocation() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        let nestedURL = rootURL.appendingPathComponent("Projects/Ideas", isDirectory: true)
+        let sourceURL = nestedURL.appendingPathComponent("Concept.md")
+        let trashURL = tempDir.appendingPathComponent("Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
+        try "body".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let data = try XCTUnwrap(Storage.trashOriginMetadataData(for: sourceURL, root: rootURL))
+        let metadata = try XCTUnwrap(Storage.trashOriginMetadata(from: data))
+        let trashedURL = trashURL.appendingPathComponent("Concept.md")
+        try FileManager.default.moveItem(at: sourceURL, to: trashedURL)
+        let destination = Storage.trashRestoreDestination(
+            for: trashedURL,
+            metadata: metadata,
+            availableRoots: [rootURL],
+            defaultRoot: rootURL)
+
+        XCTAssertEqual(metadata.relativePath, "Projects/Ideas/Concept.md")
+        XCTAssertEqual(destination.fileURL, sourceURL)
+        XCTAssertTrue(destination.usesOriginalFolder)
+    }
+
+    @MainActor
+    func testTrashRestoreFallsBackToRootAndNeverOverwrites() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let existingURL = rootURL.appendingPathComponent("Concept.md")
+        try "existing".write(to: existingURL, atomically: true, encoding: .utf8)
+        let metadata = TrashOriginMetadata(
+            rootPath: rootURL.resolvingSymlinksInPath().path,
+            relativePath: "Missing/Concept.md")
+
+        let destination = Storage.trashRestoreDestination(
+            for: tempDir.appendingPathComponent("Trash/Concept.md"),
+            metadata: metadata,
+            availableRoots: [rootURL],
+            defaultRoot: rootURL)
+
+        XCTAssertEqual(destination.fileURL, rootURL.appendingPathComponent("Concept 1.md"))
+        XCTAssertFalse(destination.usesOriginalFolder)
+        XCTAssertEqual(try String(contentsOf: existingURL, encoding: .utf8), "existing")
+    }
+
+    @MainActor
+    func testTrashRestoreRejectsTraversalMetadata() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let metadata = TrashOriginMetadata(
+            rootPath: rootURL.resolvingSymlinksInPath().path,
+            relativePath: "../Outside.md")
+
+        let destination = Storage.trashRestoreDestination(
+            for: tempDir.appendingPathComponent("Trash/Safe.md"),
+            metadata: metadata,
+            availableRoots: [rootURL],
+            defaultRoot: rootURL)
+
+        XCTAssertEqual(destination.fileURL, rootURL.appendingPathComponent("Safe.md"))
+        XCTAssertFalse(destination.usesOriginalFolder)
+    }
+
+    @MainActor
+    func testSoftDeletePersistsOriginAndRestoreMovesFreshTrashNoteBack() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        let nestedURL = rootURL.appendingPathComponent("Ideas", isDirectory: true)
+        let trashURL = rootURL.appendingPathComponent("Trash", isDirectory: true)
+        let sourceURL = nestedURL.appendingPathComponent("Restore Me.md")
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
+        try "recoverable".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let storage = Storage()
+        for project in storage.getProjects() {
+            storage.removeBy(project: project)
+        }
+        let rootProject = Project(url: rootURL, label: "Library", isRoot: true, isDefault: true)
+        let nestedProject = Project(url: nestedURL, label: "Ideas", parent: rootProject)
+        let trashProject = Project(url: trashURL, label: "Trash", isTrash: true)
+        _ = storage.add(project: rootProject)
+        _ = storage.add(project: nestedProject)
+        _ = storage.add(project: trashProject)
+
+        let previousStorage = Storage.instance
+        Storage.instance = storage
+        defer { Storage.instance = previousStorage }
+
+        let sourceNote = Note(url: sourceURL, with: nestedProject)
+        sourceNote.sharedStorage = storage
+        storage.add(sourceNote)
+        var movedURL: URL?
+        storage.removeNotes(notes: [sourceNote]) { movedURL = $0?.keys.first }
+
+        let trashedURL = try XCTUnwrap(movedURL)
+        XCTAssertNotNil(try? trashedURL.extendedAttribute(forName: AppIdentifier.trashOriginKey))
+
+        let trashNote = Note(url: trashedURL, with: trashProject)
+        trashNote.sharedStorage = storage
+        storage.add(trashNote)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedURL.path))
+        XCTAssertTrue(trashNote.isTrash())
+        XCTAssertTrue(trashNote.flushPendingSave(globalStorage: false))
+        let result = storage.restoreNotesFromTrash([trashNote])
+
+        XCTAssertEqual(result.failedCount, 0)
+        XCTAssertEqual(result.restored.count, 1)
+        XCTAssertEqual(trashNote.url, sourceURL)
+        XCTAssertEqual(trashNote.project, nestedProject)
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "recoverable")
+        XCTAssertNil(try? sourceURL.extendedAttribute(forName: AppIdentifier.trashOriginKey))
+
+        sourceNote.save(attributed: NSAttributedString(string: "late callback"))
+        XCTAssertFalse(sourceNote.flushPendingSave(globalStorage: false))
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "recoverable")
+    }
+
+    @MainActor
+    func testPermanentDeleteRemovesMarkedSystemTrashNoteAndRejectsLateSave() throws {
+        let trashURL = tempDir.appendingPathComponent("Trash", isDirectory: true)
+        let noteURL = trashURL.appendingPathComponent("Delete Forever.md")
+        try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
+        try "original".write(to: noteURL, atomically: true, encoding: .utf8)
+        try noteURL.setExtendedAttribute(
+            data: Data([1]),
+            forName: AppIdentifier.removedFromTrashKey)
+
+        let storage = Storage()
+        let trashProject = Project(url: trashURL, label: "Trash", isTrash: true)
+        let note = Note(url: noteURL, with: trashProject)
+        note.sharedStorage = storage
+        storage.add(note)
+        note.save(attributed: NSAttributedString(string: "latest"))
+
+        var removed = [Note]()
+        storage.removeNotes(
+            notes: [note],
+            completely: true,
+            didRemove: { removed = $0 }
+        ) { _ in }
+
+        XCTAssertEqual(removed.count, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: noteURL.path))
+        XCTAssertFalse(storage.noteList.contains(where: { $0 === note }))
+
+        note.save(attributed: NSAttributedString(string: "late callback"))
+        XCTAssertFalse(note.flushPendingSave(globalStorage: false))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: noteURL.path))
+    }
 }

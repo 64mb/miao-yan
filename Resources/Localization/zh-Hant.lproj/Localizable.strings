@@ -387,3 +387,9 @@
 "Checking library location…" = "正在檢查資料庫位置…";
 "Move the current library out of cloud storage before enabling Git sync." = "啟用 Git 同步前，請將目前資料庫移出雲端儲存空間。";
 "The current library is already stored locally." = "目前資料庫已儲存在本機。";
+"Restore" = "復原";
+"Delete Permanently" = "永久刪除";
+"Delete %d note(s) permanently?" = "要永久刪除%d篇筆記嗎？";
+"Failed to delete %d note(s) permanently~" = "%d篇筆記無法永久刪除~";
+"Restored %d note(s) from Trash~" = "已從垃圾桶復原%d篇筆記~";
+"Failed to restore %d note(s) from Trash~" = "%d篇筆記無法從垃圾桶復原~";

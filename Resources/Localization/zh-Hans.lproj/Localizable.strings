@@ -410,3 +410,9 @@
 "Checking library location…" = "正在检查资料库位置…";
 "Move the current library out of cloud storage before enabling Git sync." = "启用 Git 同步前，将当前资料库移出云存储。";
 "The current library is already stored locally." = "当前资料库已存储在本地。";
+"Restore" = "恢复";
+"Delete Permanently" = "永久删除";
+"Delete %d note(s) permanently?" = "要永久删除%d条笔记吗？";
+"Failed to delete %d note(s) permanently~" = "%d条笔记永久删除失败~";
+"Restored %d note(s) from Trash~" = "已从废纸篓恢复%d条笔记~";
+"Failed to restore %d note(s) from Trash~" = "%d条笔记未能从废纸篓恢复~";

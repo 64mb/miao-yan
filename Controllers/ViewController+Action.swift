@@ -2074,9 +2074,9 @@ extension ViewController {
         guard let window = MainWindowController.shared() else { return }
 
         MiaoYanAlert.confirm(
-            message: String(format: I18n.str("Are you sure you want to move %d note(s) to the system Trash?"), notes.count),
-            informativeText: I18n.str("The note(s) will be moved to the system Trash and can be recovered."),
-            confirmTitle: I18n.str("Move to Trash"),
+            message: String(format: I18n.str("Delete %d note(s) permanently?"), notes.count),
+            informativeText: I18n.str("This action cannot be undone."),
+            confirmTitle: I18n.str("Delete Permanently"),
             for: window
         ) { confirmed in
             if confirmed {
@@ -2084,13 +2084,14 @@ extension ViewController {
                 let onPartialFailure: (Int) -> Void = { failedCount in
                     DispatchQueue.main.async {
                         vc.toast(
-                            message: String(format: I18n.str("Failed to move %d note(s) to Trash~"), failedCount),
+                            message: String(format: I18n.str("Failed to delete %d note(s) permanently~"), failedCount),
                             style: .failure
                         )
                     }
                 }
                 vc.storage.removeNotes(
                     notes: notes,
+                    completely: true,
                     partialFailure: onPartialFailure,
                     didRemove: { removedNotes in
                         vc.notesTableView.removeAndReselect(
@@ -2110,6 +2111,39 @@ extension ViewController {
                     }
                 }
             }
+        }
+    }
+
+    @objc func deleteNotesPermanently(_ sender: Any) {
+        removeForever()
+    }
+
+    @objc func restoreNotesFromTrash(_ sender: Any) {
+        guard let notes = notesTableView.getSelectedNotes() else { return }
+        let selectedRow = notesTableView.selectedRowIndexes.min() ?? -1
+        let result = storage.restoreNotesFromTrash(notes)
+
+        if !result.restored.isEmpty {
+            notesTableView.removeAndReselect(
+                notes: result.restored,
+                originalRow: selectedRow)
+            storageOutlineView.reloadSidebar()
+            toast(
+                message: String(
+                    format: I18n.str("Restored %d note(s) from Trash~"),
+                    result.restored.count),
+                style: .success)
+            if notesTableView.noteList.isEmpty {
+                editArea.clear()
+            }
+        }
+
+        if result.failedCount > 0 {
+            toast(
+                message: String(
+                    format: I18n.str("Failed to restore %d note(s) from Trash~"),
+                    result.failedCount),
+                style: .failure)
         }
     }
 
@@ -2239,6 +2273,8 @@ extension ViewController {
             noteMenu.removeItem(prevHistory)
         }
 
+        configureTrashNoteActions(isTrash: note.isTrash(), viewController: vc)
+
         let moveMenuItem = NSMenuItem()
         moveMenuItem.title = I18n.str("Move")
         moveMenuItem.setIdentifier("noteMenu.move")
@@ -2312,6 +2348,40 @@ extension ViewController {
         }
 
         noteMenu.setSubmenu(moveMenu, for: moveMenuItem)
+    }
+
+    private func configureTrashNoteActions(isTrash: Bool, viewController vc: ViewController) {
+        let restoreIdentifier = NSUserInterfaceItemIdentifier("noteMenu.restore")
+        if let previousRestore = noteMenu.items.first(where: { $0.identifier == restoreIdentifier }) {
+            noteMenu.removeItem(previousRestore)
+        }
+
+        guard
+            let deleteItem = noteMenu.items.first(where: {
+                $0.identifier == NSUserInterfaceItemIdentifier("noteMenu.delete")
+            })
+                ?? noteMenu.items.first(where: {
+                    $0.action == #selector(vc.deleteNote(_:))
+                        || $0.action == #selector(vc.deleteNotesPermanently(_:))
+                })
+        else { return }
+
+        deleteItem.identifier = NSUserInterfaceItemIdentifier("noteMenu.delete")
+        if isTrash {
+            deleteItem.title = I18n.str("Delete Permanently")
+            deleteItem.action = #selector(vc.deleteNotesPermanently(_:))
+
+            let restoreItem = NSMenuItem(
+                title: I18n.str("Restore"),
+                action: #selector(vc.restoreNotesFromTrash(_:)),
+                keyEquivalent: "")
+            restoreItem.identifier = restoreIdentifier
+            restoreItem.target = vc
+            noteMenu.insertItem(restoreItem, at: noteMenu.index(of: deleteItem))
+        } else {
+            deleteItem.title = I18n.str("Delete")
+            deleteItem.action = #selector(vc.deleteNote(_:))
+        }
     }
 
     @IBAction func showVersionHistory(_ sender: Any) {

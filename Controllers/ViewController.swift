@@ -146,6 +146,7 @@ class ViewController:
     @IBOutlet var noteMenu: NSMenu! {
         didSet {
             noteMenu.setMenuItemIdentifier("noteMenu.export", forTitle: I18n.str("Export"))
+            noteMenu.setMenuItemIdentifier("noteMenu.delete", forTitle: I18n.str("Delete"))
         }
     }
     @IBOutlet var storageOutlineView: SidebarProjectView!

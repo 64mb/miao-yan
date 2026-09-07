@@ -410,3 +410,9 @@
 "Checking library location…" = "ライブラリの場所を確認中…";
 "Move the current library out of cloud storage before enabling Git sync." = "Git同期を有効にする前に、現在のライブラリをクラウドストレージの外へ移動します。";
 "The current library is already stored locally." = "現在のライブラリはすでにローカルに保存されています。";
+"Restore" = "復元";
+"Delete Permanently" = "完全に削除";
+"Delete %d note(s) permanently?" = "%d件のノートを完全に削除しますか？";
+"Failed to delete %d note(s) permanently~" = "%d件のノートを完全に削除できませんでした~";
+"Restored %d note(s) from Trash~" = "%d件のノートをゴミ箱から復元しました~";
+"Failed to restore %d note(s) from Trash~" = "%d件のノートをゴミ箱から復元できませんでした~";

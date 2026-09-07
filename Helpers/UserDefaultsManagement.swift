@@ -18,6 +18,7 @@ enum AppIdentifier {
     static var cursorKey: String { "\(bundleID).cursor" }
     static var legacyCursorKey: String { "\(legacyBundleID).cursor" }
     static let removedFromTrashKey = "\(legacyBundleID).removedFromTrash"
+    static let trashOriginKey = "\(legacyBundleID).trashOrigin"
 
     // NSAttributedString.Key (image metadata in attributed strings)
     static var imagePathKey: String { "\(bundleID).image.path" }
