@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">MiaoYan</string>
+    <string name="choose_library">Choose library</string>
+    <string name="choose_another_library">Change library</string>
+    <string name="empty_title">Your Markdown library, without a cloud account</string>
+    <string name="empty_message">Choose one folder. MiaoYan keeps the notes there and asks Android for persistent access only to that folder.</string>
+    <string name="search_notes">Search notes</string>
+    <string name="no_notes">No Markdown notes found</string>
+    <string name="refresh">Refresh</string>
+    <string name="edit">Edit</string>
+    <string name="preview">Preview</string>
+    <string name="save">Save</string>
+    <string name="back">Back</string>
+    <string name="discard">Discard</string>
+    <string name="keep_editing">Keep editing</string>
+    <string name="unsaved_title">Discard unsaved changes?</string>
+    <string name="unsaved_message">The note changed in the editor and has not been saved to the library.</string>
+    <string name="loading">Loading library…</string>
+</resources>

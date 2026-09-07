@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="file" path="git/" />
+    <exclude domain="file" path="recovery/" />
+    <exclude domain="file" path="datastore/" />
+    <exclude domain="database" path="." />
+</full-backup-content>

@@ -2,7 +2,9 @@
 
 Дата актуализации: 2026-09-07
 
-Статус: research завершён, реализация не начата.
+Статус: research завершён; первый исполняемый SAF/editor/preview-прототип находится в `MiaoYanAndroid/`.
+
+Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библиотека через SAF, рекурсивный список и поиск заметок, безопасное UTF-8 редактирование с защитой IME composition, fail-closed сохранение по hash и ограниченный Markdown preview без JavaScript/raw HTML. Прототип собран и проверен на native AVD; production cmark-gfm, attachments, Room, Git и AI остаются следующими этапами.
 
 ## 1. Scope и принятые ограничения
 

@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">MiaoYan</string>
+    <string name="choose_library">Выбрать библиотеку</string>
+    <string name="choose_another_library">Сменить библиотеку</string>
+    <string name="empty_title">Ваша Markdown-библиотека без облачного аккаунта</string>
+    <string name="empty_message">Выберите одну папку. MiaoYan хранит заметки в ней и получает постоянный доступ только к этой папке.</string>
+    <string name="search_notes">Поиск заметок</string>
+    <string name="no_notes">Markdown-заметки не найдены</string>
+    <string name="refresh">Обновить</string>
+    <string name="edit">Редактор</string>
+    <string name="preview">Просмотр</string>
+    <string name="save">Сохранить</string>
+    <string name="back">Назад</string>
+    <string name="discard">Не сохранять</string>
+    <string name="keep_editing">Продолжить</string>
+    <string name="unsaved_title">Отменить несохранённые изменения?</string>
+    <string name="unsaved_message">Текст в редакторе изменён и ещё не сохранён в библиотеку.</string>
+    <string name="loading">Загрузка библиотеки…</string>
+</resources>
