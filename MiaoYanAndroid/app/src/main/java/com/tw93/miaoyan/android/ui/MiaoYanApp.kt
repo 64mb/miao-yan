@@ -525,14 +525,24 @@ private fun NoteNameDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text(stringResource(R.string.note_name)) },
-                supportingText = { error?.let { Text(nameErrorMessage(it)) } },
-                isError = error != null,
-                singleLine = true,
-            )
+            Column(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(stringResource(R.string.note_name)) },
+                    isError = error != null,
+                    singleLine = true,
+                )
+                error?.let {
+                    Text(
+                        nameErrorMessage(it),
+                        modifier = Modifier.padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
         },
         confirmButton = {
             TextButton(
@@ -1266,13 +1276,20 @@ private fun SettingsActionRow(icon: Int, title: String, detail: String, onClick:
 @Composable
 private fun LicenseRow(title: String, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            fontSize = 11.sp,
+            maxLines = 1,
+            softWrap = false,
+        )
         Icon(
             painterResource(R.drawable.ic_chevron_right),
             contentDescription = null,
+            modifier = Modifier.size(18.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

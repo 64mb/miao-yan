@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -67,19 +66,22 @@ fun GitSyncSettingsDialog(
             contentAlignment = Alignment.Center,
         ) {
             Surface(
-                modifier = Modifier.widthIn(max = 680.dp).fillMaxWidth().fillMaxHeight(.9f),
+                modifier = Modifier.widthIn(max = 680.dp).fillMaxWidth(),
                 shape = RoundedCornerShape(26.dp),
-                tonalElevation = 6.dp,
+                color = MaterialTheme.colorScheme.background,
+                tonalElevation = 0.dp,
                 shadowElevation = 12.dp,
             ) {
-                Column(Modifier.padding(horizontal = 24.dp, vertical = 20.dp)) {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp),
+                ) {
                     Text(
                         stringResource(R.string.git_settings_title),
                         style = MaterialTheme.typography.headlineSmall,
                     )
                     Spacer(Modifier.height(14.dp))
                     Column(
-                        Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                        Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedTextField(
