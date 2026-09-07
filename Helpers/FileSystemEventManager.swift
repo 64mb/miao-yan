@@ -51,21 +51,26 @@ class FileSystemEventManager {
     ) async throws {
         let noteExtensions = Set(storage.allowedExtensions)
         let resolvedSnapshotOwnerURL = editorOwnerURL?.standardizedFileURL.resolvingSymlinksInPath()
-        let activeEditorNote = delegate?.editArea.storageNote
-        let activeEditorPlan = GitEditorReconciliationPlan.make(
+        let storageOwnerNote = delegate?.editArea.storageNote
+        let selectedNote = EditTextView.note
+        let editorContext = GitEditorReconciliationContext.make(
             changes: changes,
             rootURL: root.url,
-            ownerURL: activeEditorNote?.url
+            storageOwnerURL: storageOwnerNote?.url,
+            selectedNoteURL: selectedNote?.url
         )
-        if let activeEditorPlan, let activeEditorNote, let editArea = delegate?.editArea {
-            guard activeEditorPlan.ownerURL == resolvedSnapshotOwnerURL,
+        if let storageOwnerPlan = editorContext.storageOwner,
+            let storageOwnerNote,
+            let editArea = delegate?.editArea
+        {
+            guard storageOwnerPlan.ownerURL == resolvedSnapshotOwnerURL,
                 let flushedEditorText,
                 editArea.string == flushedEditorText
             else {
-                writeConflictBackup(for: activeEditorNote, editorContent: editArea.string)
-                throw FileSystemError.updateFailed(activeEditorPlan.ownerURL)
+                writeConflictBackup(for: storageOwnerNote, editorContent: editArea.string)
+                throw FileSystemError.updateFailed(storageOwnerPlan.ownerURL)
             }
-            switch activeEditorPlan.mutation {
+            switch storageOwnerPlan.mutation {
             case .deleted, .renamed:
                 // Detach the buffer synchronously before retiring the old Note.
                 // No lifecycle flush can now write through the removed object.
@@ -74,10 +79,7 @@ class FileSystemEventManager {
                 break
             }
         }
-        let renamedEditorURL: URL? = {
-            guard case .renamed(let destination)? = activeEditorPlan?.mutation else { return nil }
-            return destination
-        }()
+        let preferredSelectionURL = editorContext.preferredSelectionURL
 
         let removedPaths = changes.flatMap { change -> [String] in
             switch change.kind {
@@ -161,12 +163,12 @@ class FileSystemEventManager {
         await withCheckedContinuation { continuation in
             delegate.updateTable {
                 delegate.reloadSideBar()
-                if activeEditorPlan != nil {
-                    if let renamedEditorURL,
-                        let renamedNote = self.storage.getBy(url: renamedEditorURL)
+                if editorContext.requiresSelectionRefresh {
+                    if let preferredSelectionURL,
+                        let preferredNote = self.storage.getBy(url: preferredSelectionURL)
                     {
                         delegate.notesTableView.setSelected(
-                            note: renamedNote,
+                            note: preferredNote,
                             ensureVisible: true,
                             suppressSideEffects: false
                         )

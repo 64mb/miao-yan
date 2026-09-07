@@ -61,8 +61,7 @@ final class GitSyncScheduler: NSObject {
     }
 }
 
-@MainActor
-final class GitSyncTerminationReplyGate {
+final class GitSyncTerminationReplyGate: @unchecked Sendable {
     enum State: Equatable {
         case idle
         case pending
@@ -70,33 +69,49 @@ final class GitSyncTerminationReplyGate {
     }
 
     private let reply: () -> Void
-    private(set) var state: State = .idle
+    private let lock = NSLock()
+    private var storedState: State = .idle
+
+    var state: State {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedState
+    }
 
     init(reply: @escaping () -> Void) {
         self.reply = reply
     }
 
     func begin() -> Bool {
-        guard state == .idle else { return false }
-        state = .pending
+        lock.lock()
+        defer { lock.unlock() }
+        guard storedState == .idle else { return false }
+        storedState = .pending
         return true
     }
 
     @discardableResult
-    func replyOnce() -> Bool {
-        guard state == .pending else { return false }
-        state = .replied
+    func replyOnce(beforeReply: (() -> Void)? = nil) -> Bool {
+        lock.lock()
+        guard storedState == .pending else {
+            lock.unlock()
+            return false
+        }
+        storedState = .replied
+        lock.unlock()
+        beforeReply?()
         reply()
         return true
     }
 }
 
-@MainActor
-final class GitSyncTerminationController {
+final class GitSyncTerminationController: @unchecked Sendable {
     private let timeout: TimeInterval
     private let onTimeout: () -> Void
     private let replyGate: GitSyncTerminationReplyGate
-    private var timeoutTask: Task<Void, Never>?
+    private let timerQueue = DispatchQueue(label: "com.tw93.miaoyan.git-sync-termination")
+    private let timerLock = NSLock()
+    private var timeoutTimer: DispatchSourceTimer?
 
     var state: GitSyncTerminationReplyGate.State { replyGate.state }
 
@@ -108,26 +123,37 @@ final class GitSyncTerminationController {
 
     func begin() -> Bool {
         guard replyGate.begin() else { return false }
-        timeoutTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-            } catch {
-                return
-            }
-            guard state == .pending else { return }
-            onTimeout()
-            _ = finish()
+        let timer = DispatchSource.makeTimerSource(queue: timerQueue)
+        timer.schedule(deadline: .now() + timeout)
+        timer.setEventHandler { [weak self] in
+            self?.timeoutDidFire()
         }
+        timerLock.lock()
+        timeoutTimer = timer
+        timerLock.unlock()
+        timer.resume()
         return true
     }
 
     @discardableResult
     func finish() -> Bool {
-        guard state == .pending else { return false }
-        timeoutTask?.cancel()
-        timeoutTask = nil
-        return replyGate.replyOnce()
+        guard replyGate.replyOnce() else { return false }
+        cancelTimer()
+        return true
+    }
+
+    private func timeoutDidFire() {
+        guard replyGate.replyOnce(beforeReply: onTimeout) else { return }
+        cancelTimer()
+    }
+
+    private func cancelTimer() {
+        timerLock.lock()
+        let timer = timeoutTimer
+        timeoutTimer = nil
+        timerLock.unlock()
+        timer?.setEventHandler {}
+        timer?.cancel()
     }
 }
 

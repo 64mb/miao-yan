@@ -5,6 +5,24 @@ import XCTest
 
 final class SidebarProjectViewTests: XCTestCase {
     @MainActor
+    func testSearchFieldPlaceholderAndEditorRectsShareVerticalCenterInLightAndDarkAppearances() throws {
+        let cell = SearchFieldCell()
+        let bounds = NSRect(x: 0, y: 0, width: 240, height: SearchFieldCell.height)
+
+        for appearanceName in [NSAppearance.Name.aqua, .darkAqua] {
+            let appearance = try XCTUnwrap(NSAppearance(named: appearanceName))
+            appearance.performAsCurrentDrawingAppearance {
+                let editorRect = cell.searchTextRect(forBounds: bounds)
+                let placeholderRect = cell.drawingRect(forBounds: bounds)
+
+                XCTAssertEqual(editorRect.midY, bounds.midY, accuracy: 0.01, appearanceName.rawValue)
+                XCTAssertEqual(placeholderRect.midY, bounds.midY, accuracy: 0.01, appearanceName.rawValue)
+                XCTAssertEqual(editorRect, placeholderRect, appearanceName.rawValue)
+            }
+        }
+    }
+
+    @MainActor
     func testTileRestoresNonScrollableWidthAfterSidebarReload() {
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 127, height: 300))
         scrollView.hasHorizontalScroller = false

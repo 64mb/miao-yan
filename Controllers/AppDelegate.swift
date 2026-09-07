@@ -27,13 +27,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     private lazy var gitSyncTerminationController = GitSyncTerminationController(
         timeout: Self.preQuitGitSyncTimeout,
         onTimeout: {
-            AppDelegate.trackError(
-                GitSyncTerminationError.timedOut,
-                context: "AppDelegate.applicationShouldTerminate.timeout"
-            )
+            DispatchQueue.main.async {
+                AppDelegate.trackError(
+                    GitSyncTerminationError.timedOut,
+                    context: "AppDelegate.applicationShouldTerminate.timeout"
+                )
+            }
         },
         reply: {
-            NSApplication.shared.reply(toApplicationShouldTerminate: true)
+            DispatchQueue.main.async {
+                NSApplication.shared.reply(toApplicationShouldTerminate: true)
+            }
         }
     )
     var isTerminationPending: Bool { gitSyncTerminationController.state == .pending }
@@ -186,14 +190,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
             break
         }
 
-        let flushSucceeded = flushEditorAndPendingSaves()
         guard let viewController = resolveViewController() else {
-            if !flushSucceeded {
-                AppDelegate.trackError(
-                    GitSyncTerminationError.pendingSaveFailed,
-                    context: "AppDelegate.applicationShouldTerminate.flush"
-                )
-            }
             return .terminateNow
         }
 
@@ -202,6 +199,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
         let hasRunningSync = automaticGitSyncScheduler.isSyncRunning || viewController.gitSyncCoordinator.state.isRunning
         let shouldStartPreQuitSync = root != nil && configuration?.automaticSyncEnabled == true
         guard hasRunningSync || shouldStartPreQuitSync else {
+            let flushSucceeded = flushEditorAndPendingSaves()
             if !flushSucceeded {
                 AppDelegate.trackError(
                     GitSyncTerminationError.pendingSaveFailed,
@@ -218,6 +216,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
 
         Task { @MainActor [weak self, weak viewController] in
             guard let self, let viewController else { return }
+            // The independent deadline has already started. This flush is
+            // best-effort and happens before network work, but an individual
+            // synchronous filesystem write cannot be preempted mid-call.
+            let flushSucceeded = flushEditorAndPendingSaves()
             if !flushSucceeded {
                 AppDelegate.trackError(
                     GitSyncTerminationError.pendingSaveFailed,
@@ -226,6 +228,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
                 finishDeferredTermination()
                 return
             }
+            guard isTerminationPending else { return }
 
             if hasRunningSync || automaticGitSyncScheduler.isSyncRunning || viewController.gitSyncCoordinator.state.isRunning {
                 while isTerminationPending,
@@ -472,7 +475,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     }
     @IBAction func openPreferences(_ sender: Any?) {
         if prefsWindowController == nil {
-            prefsWindowController = PrefsWindowController()
+            prefsWindowController = PrefsWindowController(viewControllerProvider: { [weak self] in
+                self?.resolveViewController()
+            })
         }
         prefsWindowController?.show()
     }

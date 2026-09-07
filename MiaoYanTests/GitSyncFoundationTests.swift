@@ -113,6 +113,54 @@ final class GitSyncFoundationTests: XCTestCase {
         )
     }
 
+    func testEditorReconciliationContextTracksBufferOwnerAndPreviewSelectionIndependently() {
+        let root = URL(fileURLWithPath: "/tmp/notes", isDirectory: true)
+        let bufferOwner = root.appendingPathComponent("editing.md")
+        let selected = root.appendingPathComponent("previewed.md")
+        let renamedSelection = root.appendingPathComponent("previewed-renamed.md")
+        let context = GitEditorReconciliationContext.make(
+            changes: [
+                .init(kind: .deleted, path: "editing.md"),
+                .init(kind: .renamed, path: "previewed-renamed.md", previousPath: "previewed.md"),
+            ],
+            rootURL: root,
+            storageOwnerURL: bufferOwner,
+            selectedNoteURL: selected
+        )
+
+        XCTAssertEqual(context.storageOwner?.mutation, .deleted)
+        XCTAssertEqual(context.selectedNote?.mutation, .renamed(to: renamedSelection))
+        XCTAssertEqual(context.preferredSelectionURL, renamedSelection)
+        XCTAssertTrue(context.requiresSelectionRefresh)
+    }
+
+    func testEditorReconciliationContextPreservesIndependentUnchangedPreviewSelection() {
+        let root = URL(fileURLWithPath: "/tmp/notes", isDirectory: true)
+        let bufferOwner = root.appendingPathComponent("editing.md")
+        let selected = root.appendingPathComponent("previewed.md")
+        let context = GitEditorReconciliationContext.make(
+            changes: [
+                .init(kind: .renamed, path: "editing-renamed.md", previousPath: "editing.md")
+            ],
+            rootURL: root,
+            storageOwnerURL: bufferOwner,
+            selectedNoteURL: selected
+        )
+
+        XCTAssertEqual(
+            context.storageOwner?.mutation,
+            .renamed(to: root.appendingPathComponent("editing-renamed.md"))
+        )
+        XCTAssertNil(context.selectedNote)
+        XCTAssertEqual(context.preferredSelectionURL, selected)
+        XCTAssertTrue(context.requiresSelectionRefresh)
+    }
+
+    func testSingleFileModePolicyDisablesGitSyncEntryPoints() {
+        XCTAssertTrue(GitSyncModePolicy.allowsGitSync(isSingleFileMode: false))
+        XCTAssertFalse(GitSyncModePolicy.allowsGitSync(isSingleFileMode: true))
+    }
+
     func testRenameValidatesBothPaths() {
         let change = GitSyncChange(kind: .renamed, path: "safe.md", previousPath: "../outside.md")
         XCTAssertEqual(
@@ -271,22 +319,33 @@ final class GitSyncFoundationTests: XCTestCase {
 
     @MainActor
     func testTerminationTimeoutRepliesAndIgnoresLateCompletion() async throws {
-        var timeoutCount = 0
-        var replyCount = 0
+        let timeoutCount = LockedCounter()
+        let replyCount = LockedCounter()
         let controller = GitSyncTerminationController(
             timeout: 0.01,
-            onTimeout: { timeoutCount += 1 },
-            reply: { replyCount += 1 }
+            onTimeout: { timeoutCount.increment() },
+            reply: { replyCount.increment() }
         )
 
         XCTAssertTrue(controller.begin())
         try await Task.sleep(nanoseconds: 50_000_000)
 
-        XCTAssertEqual(timeoutCount, 1)
-        XCTAssertEqual(replyCount, 1)
+        XCTAssertEqual(timeoutCount.value, 1)
+        XCTAssertEqual(replyCount.value, 1)
         XCTAssertEqual(controller.state, .replied)
         XCTAssertFalse(controller.finish())
-        XCTAssertEqual(replyCount, 1)
+        XCTAssertEqual(replyCount.value, 1)
+    }
+
+    @MainActor
+    func testTerminationDeadlineAdvancesWhileMainActorIsBlocked() {
+        let controller = GitSyncTerminationController(timeout: 0.01, onTimeout: {}, reply: {})
+
+        XCTAssertTrue(controller.begin())
+        Thread.sleep(forTimeInterval: 0.05)
+
+        XCTAssertEqual(controller.state, .replied)
+        XCTAssertFalse(controller.finish())
     }
 
     @MainActor
@@ -508,5 +567,22 @@ final class GitSyncFoundationTests: XCTestCase {
             await Task.yield()
         }
         return false
+    }
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
     }
 }

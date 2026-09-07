@@ -577,6 +577,14 @@ extension ViewController {
     }
 
     func configureGitSync(presentingWindow: NSWindow?, completion: (() -> Void)? = nil) {
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            MiaoYanAlert.show(
+                message: I18n.str("Git sync is unavailable in single-file mode."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
         guard let root = selectedGitSyncRoot() else {
             MiaoYanAlert.show(
                 message: I18n.str("Select a project in the main library first."),
@@ -1120,6 +1128,14 @@ extension ViewController {
     }
 
     private func performGitRepositorySync(_ sender: Any) {
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            MiaoYanAlert.show(
+                message: I18n.str("Git sync is unavailable in single-file mode."),
+                style: .warning,
+                for: view.window
+            )
+            return
+        }
         guard let root = selectedGitSyncRoot(),
             let configuration = gitSyncConfigurationStore.configuration(for: root.url)
         else {
@@ -1225,7 +1241,7 @@ extension ViewController {
     }
 
     func selectedGitSyncRoot() -> Project? {
-        guard !UserDefaultsManagement.isSingleMode,
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode),
             let root = storage.getDefault(),
             root.isDefault
         else { return nil }

@@ -702,6 +702,9 @@ class ViewController:
                     return canUseMenu
                 }
             case "fileMenu":
+                if menuItem.identifier?.rawValue == "fileMenu.gitSync" {
+                    return GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode)
+                }
                 if menuItem.identifier?.rawValue == "fileMenu.delete" {
                     menuItem.keyEquivalentModifierMask = [.command]
                 }

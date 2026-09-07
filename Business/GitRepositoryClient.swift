@@ -300,25 +300,26 @@ actor GitRepositoryClient {
         let commit = try Self.lookupCommit(target, in: repository, operation: "recovery commit lookup")
         defer { git_commit_free(commit) }
         let current = try Self.optionalOID(named: "refs/heads/main", in: repository)
-        if let current, Self.oidsEqual(current, target) { return }
         try Self.checkoutAndReplaceMain(
             commit,
             in: repository,
             oldOID: current,
             newOID: target,
-            reflogMessage: "MiaoYan sync: restore recovery point"
+            reflogMessage: "MiaoYan sync: restore recovery point",
+            checkoutStrategy: UInt32(GIT_CHECKOUT_FORCE.rawValue)
         )
     }
 
     /// Describes the fetched candidate before checkout so policy validation can
     /// reject unsafe paths and entry modes while the live worktree is intact.
-    func incomingChangesFromOriginMain(in repositoryURL: URL) throws -> [GitSyncChange] {
+    func incomingChangesFromOriginMain(in repositoryURL: URL) throws -> GitSyncIncomingSnapshot {
         let repository = try Self.openRepository(at: repositoryURL)
         defer { git_repository_free(repository) }
         let localOID = try Self.optionalOID(named: "refs/heads/main", in: repository)
         guard let remoteOID = try Self.optionalOID(named: "refs/remotes/origin/main", in: repository) else {
-            return []
+            return GitSyncIncomingSnapshot(changes: [], remoteRevision: nil)
         }
+        let remoteRevision = try Self.revisionString(for: remoteOID, operation: "origin/main revision")
 
         var localTree: OpaquePointer?
         if let localOID {
@@ -342,7 +343,10 @@ actor GitRepositoryClient {
         defer { git_diff_free(diff) }
         try Self.check(git_diff_find_similar(diff, nil), operation: "rename detection")
 
-        return try Self.syncChanges(in: diff, repository: repository)
+        return GitSyncIncomingSnapshot(
+            changes: try Self.syncChanges(in: diff, repository: repository),
+            remoteRevision: remoteRevision
+        )
     }
 
     /// Returns the tree changes that were actually applied to `main`. For a
@@ -563,6 +567,7 @@ actor GitRepositoryClient {
     /// update so a concurrently changed HEAD cannot be overwritten.
     func integrateOriginMain(
         in repositoryURL: URL,
+        expectedRemoteRevision: String?,
         authorName: String,
         authorEmail: String
     ) throws -> GitHeadIntegration {
@@ -571,6 +576,11 @@ actor GitRepositoryClient {
 
         let localOID = try Self.optionalOID(named: "refs/heads/main", in: repository)
         let remoteOID = try Self.optionalOID(named: "refs/remotes/origin/main", in: repository)
+        try Self.validateExactExpectedRevision(
+            expectedRemoteRevision,
+            actual: remoteOID,
+            operation: "origin/main integration"
+        )
 
         guard let remoteOID else { return .upToDate }
         guard let localOID else {
@@ -850,6 +860,27 @@ actor GitRepositoryClient {
         }
     }
 
+    private static func validateExactExpectedRevision(_ expected: String?, actual: GitOID?, operation: String) throws {
+        if expected == nil, actual == nil { return }
+        guard let expected else {
+            throw GitRepositoryError.operationFailed(operation: operation, message: "Repository changed after incoming validation; run sync again")
+        }
+        guard var value = actual?.value,
+            let pointer = git_oid_tostr_s(&value),
+            String(cString: pointer) == expected
+        else {
+            throw GitRepositoryError.operationFailed(operation: operation, message: "Repository changed after incoming validation; run sync again")
+        }
+    }
+
+    private static func revisionString(for oid: GitOID, operation: String) throws -> String {
+        var value = oid.value
+        guard let pointer = git_oid_tostr_s(&value) else {
+            throw GitRepositoryError.operationFailed(operation: operation, message: "Revision could not be encoded")
+        }
+        return String(cString: pointer)
+    }
+
     private static func validate(remoteURL: URL, allowFile: Bool = false) throws {
         let scheme = remoteURL.scheme?.lowercased()
         if allowFile, scheme == "file", remoteURL.isFileURL { return }
@@ -1021,7 +1052,8 @@ actor GitRepositoryClient {
         in repository: OpaquePointer,
         oldOID: GitOID?,
         newOID: GitOID,
-        reflogMessage: String
+        reflogMessage: String,
+        checkoutStrategy: UInt32 = UInt32(GIT_CHECKOUT_SAFE.rawValue)
     ) throws {
         var transaction: OpaquePointer?
         try check(git_transaction_new(&transaction, repository), operation: "main update transaction setup")
@@ -1071,10 +1103,10 @@ actor GitRepositoryClient {
             throw GitRepositoryError.operationFailed(operation: "checkout target tree lookup", message: "No tree returned")
         }
 
-        let dryRunStrategy = UInt32(GIT_CHECKOUT_SAFE.rawValue | GIT_CHECKOUT_DRY_RUN.rawValue)
+        let dryRunStrategy = checkoutStrategy | UInt32(GIT_CHECKOUT_DRY_RUN.rawValue)
         try checkout(commit, in: repository, strategy: dryRunStrategy)
         do {
-            try checkout(commit, in: repository)
+            try checkout(commit, in: repository, strategy: checkoutStrategy)
             var newValue = newOID.value
             try check(
                 git_transaction_set_target(
@@ -1104,7 +1136,7 @@ actor GitRepositoryClient {
                 // Using the attempted target as the baseline lets SAFE checkout
                 // reverse completed writes while refusing to overwrite any file
                 // that an external process changed during the operation.
-                try checkout(previousTree, in: repository, baseline: targetTree)
+                try checkout(previousTree, in: repository, strategy: checkoutStrategy, baseline: targetTree)
             } catch let rollbackError {
                 throw GitRepositoryError.operationFailed(
                     operation: "checkout rollback",

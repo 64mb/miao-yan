@@ -51,8 +51,10 @@ final class GitRepositoryClientTests: XCTestCase {
         let emptyCommit = try await commit(emptyClient, at: emptyURL, message: "Must stay unborn")
         XCTAssertFalse(emptyCommit)
         try await emptyClient.fetchOrigin(in: emptyURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        let emptyIncoming = try await emptyClient.incomingChangesFromOriginMain(in: emptyURL)
         let adopted = try await emptyClient.integrateOriginMain(
             in: emptyURL,
+            expectedRemoteRevision: emptyIncoming.remoteRevision,
             authorName: "MiaoYan Tests",
             authorEmail: "tests@localhost"
         )
@@ -78,9 +80,10 @@ final class GitRepositoryClientTests: XCTestCase {
         try await secondClient.pushMain(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
         try await firstClient.fetchOrigin(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
         let incoming = try await firstClient.incomingChangesFromOriginMain(in: firstURL)
-        XCTAssertEqual(incoming.first(where: { $0.path == "i/payload.bin" })?.byteCount, 11)
+        XCTAssertEqual(incoming.changes.first(where: { $0.path == "i/payload.bin" })?.byteCount, 11)
         let fastForward = try await firstClient.integrateOriginMain(
             in: firstURL,
+            expectedRemoteRevision: incoming.remoteRevision,
             authorName: "MiaoYan Tests",
             authorEmail: "tests@localhost"
         )
@@ -99,8 +102,10 @@ final class GitRepositoryClientTests: XCTestCase {
         try await secondClient.pushMain(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
         try await firstClient.fetchOrigin(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
         let revisionBeforeMerge = try await firstClient.headRevision(in: firstURL)
+        let mergeIncoming = try await firstClient.incomingChangesFromOriginMain(in: firstURL)
         let merge = try await firstClient.integrateOriginMain(
             in: firstURL,
+            expectedRemoteRevision: mergeIncoming.remoteRevision,
             authorName: "MiaoYan Tests",
             authorEmail: "tests@localhost"
         )
@@ -114,8 +119,10 @@ final class GitRepositoryClientTests: XCTestCase {
         // Bring the second worktree forward, then edit the same note on both
         // sides. Conflict analysis must leave first/note.md untouched.
         try await secondClient.fetchOrigin(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        let secondIncoming = try await secondClient.incomingChangesFromOriginMain(in: secondURL)
         _ = try await secondClient.integrateOriginMain(
             in: secondURL,
+            expectedRemoteRevision: secondIncoming.remoteRevision,
             authorName: "MiaoYan Tests",
             authorEmail: "tests@localhost"
         )
@@ -129,9 +136,11 @@ final class GitRepositoryClientTests: XCTestCase {
         XCTAssertTrue(remoteConflictCommitted)
         try await secondClient.pushMain(in: secondURL, configuredRemoteURL: remoteURL, authentication: authentication)
         try await firstClient.fetchOrigin(in: firstURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        let conflictIncoming = try await firstClient.incomingChangesFromOriginMain(in: firstURL)
 
         let conflict = try await firstClient.integrateOriginMain(
             in: firstURL,
+            expectedRemoteRevision: conflictIncoming.remoteRevision,
             authorName: "MiaoYan Tests",
             authorEmail: "tests@localhost"
         )
@@ -352,6 +361,88 @@ final class GitRepositoryClientTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: noteURL), "before\n")
     }
 
+    func testRestoreMainRepairsInterruptedCheckoutWhenHeadAlreadyMatchesRecoveryRevision() async throws {
+        let repositoryURL = temporaryDirectory.appendingPathComponent("partial-checkout-worktree", isDirectory: true)
+        let remoteURL = temporaryDirectory.appendingPathComponent("partial-checkout-origin.git", isDirectory: true)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        let client = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await client.prepareRepository(at: repositoryURL, remoteURL: remoteURL)
+        let noteURL = repositoryURL.appendingPathComponent("note.md")
+        try "recovery bytes\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        try await client.stage(relativePaths: ["note.md"], in: repositoryURL)
+        let recoveryCommitted = try await commit(client, at: repositoryURL, message: "Recovery")
+        XCTAssertTrue(recoveryCommitted)
+        let recoveryRevisionValue = try await client.headRevision(in: repositoryURL)
+        let recoveryRevision = try XCTUnwrap(recoveryRevisionValue)
+
+        // Simulate a checkout that changed both the live file and index before
+        // returning an error, while the branch ref still points at recovery.
+        try "partially checked out bytes\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        try await client.stage(relativePaths: ["note.md"], in: repositoryURL)
+        let unchangedRevision = try await client.headRevision(in: repositoryURL)
+        XCTAssertEqual(unchangedRevision, recoveryRevision)
+
+        try await client.restoreMain(to: recoveryRevision, in: repositoryURL)
+
+        XCTAssertEqual(try String(contentsOf: noteURL), "recovery bytes\n")
+        let stagedAfterRecovery = try await client.stagedChanges(in: repositoryURL)
+        let worktreeAfterRecovery = try await client.worktreeChanges(in: repositoryURL)
+        XCTAssertTrue(stagedAfterRecovery.isEmpty)
+        XCTAssertTrue(worktreeAfterRecovery.isEmpty)
+    }
+
+    func testIntegrationRejectsOriginMainSwapAfterIncomingValidation() async throws {
+        let remoteURL = temporaryDirectory.appendingPathComponent("ref-swap-origin.git", isDirectory: true)
+        var bareRepository: OpaquePointer?
+        XCTAssertEqual(git_repository_init(&bareRepository, remoteURL.path, 1), 0)
+        git_repository_free(bareRepository)
+        let authentication = GitHTTPAuthentication(username: "", token: "")
+
+        let publisherURL = temporaryDirectory.appendingPathComponent("ref-swap-publisher", isDirectory: true)
+        try FileManager.default.createDirectory(at: publisherURL, withIntermediateDirectories: true)
+        let publisher = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await publisher.prepareRepository(at: publisherURL, remoteURL: remoteURL)
+        let publishedNoteURL = publisherURL.appendingPathComponent("note.md")
+        try "validated\n".write(to: publishedNoteURL, atomically: true, encoding: .utf8)
+        try await publisher.stage(relativePaths: ["note.md"], in: publisherURL)
+        let validatedCommitted = try await commit(publisher, at: publisherURL, message: "Validated candidate")
+        XCTAssertTrue(validatedCommitted)
+        try await publisher.pushMain(in: publisherURL, configuredRemoteURL: remoteURL, authentication: authentication)
+
+        let consumerURL = temporaryDirectory.appendingPathComponent("ref-swap-consumer", isDirectory: true)
+        try FileManager.default.createDirectory(at: consumerURL, withIntermediateDirectories: true)
+        let consumer = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await consumer.prepareRepository(at: consumerURL, remoteURL: remoteURL)
+        try await consumer.fetchOrigin(in: consumerURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        let validatedIncoming = try await consumer.incomingChangesFromOriginMain(in: consumerURL)
+        XCTAssertNotNil(validatedIncoming.remoteRevision)
+
+        try "swapped\n".write(to: publishedNoteURL, atomically: true, encoding: .utf8)
+        try await publisher.stage(relativePaths: ["note.md"], in: publisherURL)
+        let swappedCommitted = try await commit(publisher, at: publisherURL, message: "Swapped candidate")
+        XCTAssertTrue(swappedCommitted)
+        try await publisher.pushMain(in: publisherURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        try await consumer.fetchOrigin(in: consumerURL, configuredRemoteURL: remoteURL, authentication: authentication)
+
+        do {
+            _ = try await consumer.integrateOriginMain(
+                in: consumerURL,
+                expectedRemoteRevision: validatedIncoming.remoteRevision,
+                authorName: "MiaoYan Tests",
+                authorEmail: "tests@localhost"
+            )
+            XCTFail("A changed origin/main must fail before checkout")
+        } catch let error as GitRepositoryError {
+            guard case .operationFailed(let operation, _) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertEqual(operation, "origin/main integration")
+        }
+        let consumerRevision = try await consumer.headRevision(in: consumerURL)
+        XCTAssertNil(consumerRevision)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: consumerURL.appendingPathComponent("note.md").path))
+    }
+
     func testUnrelatedHistoryCanReplaceLocalWithoutForcePushing() async throws {
         git_libgit2_init()
         defer { git_libgit2_shutdown() }
@@ -389,10 +480,12 @@ final class GitRepositoryClientTests: XCTestCase {
         let localCommitted = try await commit(local, at: localURL, message: "Local root")
         XCTAssertTrue(localCommitted)
         try await local.fetchOrigin(in: localURL, configuredRemoteURL: remoteURL, authentication: authentication)
+        let unrelatedIncoming = try await local.incomingChangesFromOriginMain(in: localURL)
 
         do {
             _ = try await local.integrateOriginMain(
                 in: localURL,
+                expectedRemoteRevision: unrelatedIncoming.remoteRevision,
                 authorName: "MiaoYan Tests",
                 authorEmail: "tests@localhost"
             )

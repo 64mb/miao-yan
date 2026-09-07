@@ -41,6 +41,11 @@ struct GitSyncChange: Equatable, Sendable {
     }
 }
 
+struct GitSyncIncomingSnapshot: Equatable, Sendable {
+    let changes: [GitSyncChange]
+    let remoteRevision: String?
+}
+
 enum GitEditorReconciliationMutation: Equatable, Sendable {
     case updated
     case deleted
@@ -75,11 +80,55 @@ struct GitEditorReconciliationPlan: Equatable, Sendable {
                 if currentURL == resolvedOwner {
                     return Self(ownerURL: resolvedOwner, mutation: .updated)
                 }
-            default:
-                continue
             }
         }
         return nil
+    }
+}
+
+struct GitEditorReconciliationContext: Equatable, Sendable {
+    let storageOwner: GitEditorReconciliationPlan?
+    let selectedNote: GitEditorReconciliationPlan?
+    let selectedNoteURL: URL?
+
+    static func make(
+        changes: [GitSyncChange],
+        rootURL: URL,
+        storageOwnerURL: URL?,
+        selectedNoteURL: URL?
+    ) -> Self {
+        let resolvedSelectedNoteURL = selectedNoteURL?.standardizedFileURL.resolvingSymlinksInPath()
+        return Self(
+            storageOwner: GitEditorReconciliationPlan.make(
+                changes: changes,
+                rootURL: rootURL,
+                ownerURL: storageOwnerURL
+            ),
+            selectedNote: GitEditorReconciliationPlan.make(
+                changes: changes,
+                rootURL: rootURL,
+                ownerURL: resolvedSelectedNoteURL
+            ),
+            selectedNoteURL: resolvedSelectedNoteURL
+        )
+    }
+
+    var requiresSelectionRefresh: Bool {
+        storageOwner != nil || selectedNote != nil
+    }
+
+    var preferredSelectionURL: URL? {
+        if case .renamed(let url)? = selectedNote?.mutation { return url }
+        if case .deleted? = selectedNote?.mutation { return nil }
+        if let selectedNoteURL { return selectedNoteURL }
+        if case .renamed(let url)? = storageOwner?.mutation { return url }
+        return nil
+    }
+}
+
+enum GitSyncModePolicy {
+    static func allowsGitSync(isSingleFileMode: Bool) -> Bool {
+        !isSingleFileMode
     }
 }
 

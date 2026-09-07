@@ -13,7 +13,7 @@ final class PrefsWindowControllerTests: XCTestCase {
 
     @MainActor
     func testGitSyncPreferencesExposeLibraryMigrationButton() {
-        let controller = GitSyncPrefsViewController()
+        let controller = GitSyncPrefsViewController(viewControllerProvider: { nil })
         controller.loadView()
 
         let button = controller.view.recursiveSubviews
@@ -25,7 +25,7 @@ final class PrefsWindowControllerTests: XCTestCase {
 
     @MainActor
     func testGitSyncPreferencesExposeAutomaticSyncOptIn() {
-        let controller = GitSyncPrefsViewController()
+        let controller = GitSyncPrefsViewController(viewControllerProvider: { nil })
         controller.loadView()
 
         let checkbox = controller.view.recursiveSubviews
@@ -78,7 +78,7 @@ final class PrefsWindowControllerTests: XCTestCase {
         let originalValue = UserDefaultsManagement.alwaysOnTop
         UserDefaultsManagement.alwaysOnTop = true
 
-        let controller = PrefsWindowController()
+        let controller = PrefsWindowController(viewControllerProvider: { nil })
         controller.show()
 
         defer {

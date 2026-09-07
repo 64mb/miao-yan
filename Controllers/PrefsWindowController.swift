@@ -1,7 +1,10 @@
 import Cocoa
 
+typealias MainViewControllerProvider = @MainActor () -> ViewController?
+
 @MainActor
 final class PrefsWindowController: NSWindowController, NSWindowDelegate {
+    private let viewControllerProvider: MainViewControllerProvider
     private var splitViewController: NSSplitViewController!
     private var sidebarViewController: NSViewController!
     private var prefsContentViewController: NSViewController!
@@ -10,7 +13,7 @@ final class PrefsWindowController: NSWindowController, NSWindowDelegate {
     private lazy var generalPrefsVC = GeneralPrefsViewController()
     private lazy var editorPrefsVC = EditorPrefsViewController()
     private lazy var typographyPrefsVC = TypographyPrefsViewController()
-    private lazy var gitSyncPrefsVC = GitSyncPrefsViewController()
+    private lazy var gitSyncPrefsVC = GitSyncPrefsViewController(viewControllerProvider: viewControllerProvider)
 
     private var currentCategory: PreferencesCategory = .general
     private var hasPreparedWindowForDisplay = false
@@ -20,7 +23,8 @@ final class PrefsWindowController: NSWindowController, NSWindowDelegate {
         static let sidebarWidth: CGFloat = 176
     }
 
-    convenience init() {
+    init(viewControllerProvider: @escaping MainViewControllerProvider) {
+        self.viewControllerProvider = viewControllerProvider
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: Metrics.windowSize),
             styleMask: [.titled, .closable],
@@ -36,7 +40,7 @@ final class PrefsWindowController: NSWindowController, NSWindowDelegate {
         window.styleMask.insert(.fullSizeContentView)
         window.isReleasedWhenClosed = false
 
-        self.init(window: window)
+        super.init(window: window)
 
         setupUIComponents()
         NotificationCenter.default.addObserver(
@@ -45,6 +49,11 @@ final class PrefsWindowController: NSWindowController, NSWindowDelegate {
             name: .alwaysOnTopChanged,
             object: nil
         )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
     }
 
     deinit {
@@ -200,6 +209,7 @@ final class PrefsWindowController: NSWindowController, NSWindowDelegate {
 
 @MainActor
 final class GitSyncPrefsViewController: BasePrefsViewController {
+    private let viewControllerProvider: MainViewControllerProvider
     private var libraryPathControl: NSPathControl!
     private var remoteField: NSTextField!
     private var usernameField: NSTextField!
@@ -215,6 +225,16 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
     private var promptView: NSTextView!
     private var saveButton: NSButton!
     private var syncButton: NSButton!
+
+    init(viewControllerProvider: @escaping MainViewControllerProvider) {
+        self.viewControllerProvider = viewControllerProvider
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is unavailable")
+    }
 
     override func setupUI() {
         let scrollView = NSScrollView()
@@ -394,12 +414,12 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
     }
 
     @objc private func moveLibrary(_ sender: NSButton) {
-        guard let viewController = ViewController.shared() else { return }
+        guard let viewController = viewControllerProvider() else { return }
         viewController.requestGitLibraryMigration(presentingWindow: view.window)
     }
 
     @objc private func saveSettings(_ sender: NSButton) {
-        guard let viewController = ViewController.shared() else { return }
+        guard let viewController = viewControllerProvider() else { return }
         let input = GitSyncSettingsInput(
             remoteURL: remoteField.stringValue,
             username: usernameField.stringValue,
@@ -421,7 +441,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
     }
 
     @objc private func syncNow(_ sender: NSButton) {
-        guard let viewController = ViewController.shared() else { return }
+        guard let viewController = viewControllerProvider() else { return }
         guard let root = viewController.selectedGitSyncRoot(),
             viewController.gitSyncConfigurationStore.configuration(for: root.url) != nil
         else {
@@ -434,7 +454,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
     }
 
     private func refreshValues() {
-        guard isViewLoaded, let viewController = ViewController.shared(),
+        guard isViewLoaded, let viewController = viewControllerProvider(),
             let root = viewController.selectedGitSyncRoot()
         else {
             libraryPathControl.url = nil

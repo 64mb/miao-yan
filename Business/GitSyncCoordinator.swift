@@ -309,7 +309,9 @@ final class GitSyncCoordinator {
         guard !state.isRunning else {
             return .failed(GitSyncFailure(stage: .preflight, description: "A sync is already running.", recovery: .retry))
         }
-        guard !UserDefaultsManagement.isSingleMode else { return finish(.blocked(.singleFileMode)) }
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            return finish(.blocked(.singleFileMode))
+        }
         guard root.isRoot else { return finish(.blocked(.repositoryUnavailable)) }
         guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
             return finish(.blocked(.cloudBackedRepository))
@@ -368,15 +370,15 @@ final class GitSyncCoordinator {
 
             setState(.validatingIncomingChanges)
             failureStage = .preflight
-            let incomingChanges = try await repository.incomingChangesFromOriginMain(in: root.url)
-            let incomingViolations = pathPolicy.violations(for: incomingChanges)
+            let incomingSnapshot = try await repository.incomingChangesFromOriginMain(in: root.url)
+            let incomingViolations = pathPolicy.violations(for: incomingSnapshot.changes)
             guard incomingViolations.isEmpty else {
                 return finish(.blocked(.disallowedIncomingChanges(incomingViolations)))
             }
 
             let recoveryRevision = try await repository.createRecoveryReference(in: root.url)
             let previousRevision = try await repository.headRevision(in: root.url)
-            let remoteRevision = try await repository.originMainRevision(in: root.url)
+            let remoteRevision = incomingSnapshot.remoteRevision
             setState(.applying)
             failureStage = .apply
             viewController.fsManager?.beginGitMutation()
@@ -385,8 +387,13 @@ final class GitSyncCoordinator {
             var checkoutMayHaveMutated = false
             do {
                 do {
+                    // The client may mutate the worktree before a checkout
+                    // error is returned, so recovery becomes mandatory before
+                    // entering any checkout-capable integration call.
+                    checkoutMayHaveMutated = true
                     integration = try await repository.integrateOriginMain(
                         in: root.url,
+                        expectedRemoteRevision: remoteRevision,
                         authorName: configuration.authorName,
                         authorEmail: configuration.authorEmail
                     )
@@ -417,7 +424,6 @@ final class GitSyncCoordinator {
                 }
 
                 if integration != .upToDate {
-                    checkoutMayHaveMutated = true
                     appliedRevision = try await repository.headRevision(in: root.url)
                     let appliedChanges = try await repository.changesAppliedSince(previousRevision, in: root.url)
                     let currentSnapshot = captureEditorSnapshot(viewController: viewController, root: root)
@@ -524,7 +530,9 @@ final class GitSyncCoordinator {
         guard !state.isRunning else {
             return .failed(GitSyncFailure(stage: .recovery, description: "A sync is already running.", recovery: .retry))
         }
-        guard !UserDefaultsManagement.isSingleMode else { return finish(.blocked(.singleFileMode)) }
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            return finish(.blocked(.singleFileMode))
+        }
         guard root.isRoot else { return finish(.blocked(.repositoryUnavailable)) }
         guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
             return finish(.blocked(.cloudBackedRepository))
@@ -589,7 +597,9 @@ final class GitSyncCoordinator {
         guard !state.isRunning else {
             return .failed(GitSyncFailure(stage: .apply, description: "A sync is already running.", recovery: .retry))
         }
-        guard !UserDefaultsManagement.isSingleMode else { return finish(.blocked(.singleFileMode)) }
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            return finish(.blocked(.singleFileMode))
+        }
         guard root.isRoot else { return finish(.blocked(.repositoryUnavailable)) }
         guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
             return finish(.blocked(.cloudBackedRepository))
@@ -632,6 +642,7 @@ final class GitSyncCoordinator {
             failureStage = .apply
             viewController.fsManager?.beginGitMutation()
             do {
+                checkoutMayHaveMutated = true
                 _ = try await repository.resolveOriginMainConflicts(
                     in: root.url,
                     context: context,
@@ -639,7 +650,6 @@ final class GitSyncCoordinator {
                     authorName: configuration.authorName,
                     authorEmail: configuration.authorEmail
                 )
-                checkoutMayHaveMutated = true
                 appliedRevision = try await repository.headRevision(in: root.url)
                 let changes = try await repository.changesAppliedSince(context.localRevision, in: root.url)
                 setState(.reloading)

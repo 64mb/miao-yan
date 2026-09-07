@@ -58,22 +58,25 @@ Scheduler принадлежит `AppDelegate`, работает на main actor
 
 При выходе с включённым opt-in `applicationShouldTerminate`:
 
-1. синхронно сохраняет editor buffer строго по `EditTextView.storageNote` и вызывает `flushPendingSaves()`;
-2. останавливает timer и возвращает `.terminateLater`;
+1. до pre-sync flush запускает независимый от main actor монотонный deadline и возвращает `.terminateLater`;
+2. синхронно сохраняет editor buffer строго по `EditTextView.storageNote`, вызывает `flushPendingSaves()` и останавливает periodic timer;
 3. если любой sync уже выполняется, не создаёт второй и ограниченно ждёт текущий даже при выключенном opt-in; иначе при включённом opt-in запускает тот же silent automatic path;
 4. ограничивает всё ожидание 8 секундами;
 5. при success, failure, blocked/conflict или timeout ровно один раз вызывает `reply(toApplicationShouldTerminate: true)`.
 
-Failure и timeout никогда не удерживают приложение открытым: локальные файлы и recovery state не заменяются принудительно, причина попадает в diagnostics, блокирующий conflict UI при quit не показывается. `applicationWillTerminate` сохраняет повторный идемпотентный flush и cleanup временных preview-файлов. Отдельный reply gate защищает от гонки completion/timeout и двойного ответа AppKit.
+Deadline работает на отдельной serial queue: через 8 секунд reply gate атомарно разрешает выход даже при занятом main actor, поздний flush/sync completion не может ответить AppKit повторно, а после истечения deadline новый network sync уже не начинается. Практическое ограничение: уже выполняющийся синхронный filesystem syscall нельзя безопасно прервать; если он завис внутри main thread, сам вызов AppKit reply будет обработан после возврата syscall, хотя deadline state и разрешение выхода уже зафиксированы. Network ожидание асинхронно и main actor не удерживает.
+
+Failure и timeout никогда сознательно не удерживают приложение открытым: локальные файлы и recovery state не заменяются принудительно, причина попадает в diagnostics, блокирующий conflict UI при quit не показывается. `applicationWillTerminate` сохраняет повторный идемпотентный flush и cleanup временных preview-файлов. Lock-protected reply gate защищает от гонки completion/timeout и двойного ответа AppKit.
 
 ### Security и recovery hardening
 
 - Existing repository перед каждой network operation обязан иметь effective fetch URL и effective push URL, совпадающие с normalized configured HTTPS remote. Foreign `pushurl` и изменение `origin` блокируются до передачи credentials или данных.
 - PAT callback ограничен HTTPS origin сохранённой конфигурации: exact normalized host и effective port. Redirects запрещены transport options; challenge другого host/port не получает credentials.
 - Fetch выполняется через validated anonymous libgit2 remote и единственный refspec `+refs/heads/main:refs/remotes/origin/main`, поэтому repository-controlled `remote.origin.fetch` не расширяет sync surface.
+- OID `origin/main`, проверенный при построении incoming diff, передаётся в integration как expected revision; checkout/merge fail closed, если tracking ref был подменён между validation и применением.
 - Single-file mode не допускается на UI entry point и повторно блокируется coordinator preflight, включая conflict recovery.
-- Remote delete/rename текущей `storageNote` сначала отсоединяет editor buffer, затем retires старый `Note` и детерминированно выбирает существующую/renamed note. Поздний lifecycle save не может воскресить удалённый путь.
-- Post-checkout reconciliation failure очищает потенциально stale editor, автоматически откатывает worktree к recovery revision и повторно reconciles модели. Если automatic rollback не завершился, ручной flow предлагает явное **Restore Local Revision**; повторная ошибка остаётся в diagnostics и не разрешает stale buffer overwrite.
+- Remote delete/rename отдельно согласует владельца editor buffer (`storageNote`) и текущую выбранную/preview/PPT note. Buffer отсоединяется только по identity владельца, а selection детерминированно обновляется по своей identity; поздний lifecycle save не может воскресить удалённый путь или записать buffer в чужую note.
+- Checkout считается потенциально изменившим worktree до самого вызова libgit2. Любая integration/reconciliation failure запускает recovery; restore принудительно восстанавливает index и worktree по recovery revision даже если `HEAD` уже указывает на неё. Если automatic rollback не завершился, ручной flow предлагает явное **Restore Local Revision**; повторная ошибка остаётся в diagnostics и не разрешает stale buffer overwrite.
 - Disk reload для Git reconciliation, FSEvents import/reload и ручного Reload Note использует detached async read; большие note-файлы не читаются синхронно на AppKit main actor в этих paths.
 
 ### Несвязанные истории
@@ -235,7 +238,7 @@ Git sync нельзя включить в каталоге, которым од�
 
 ## Локальная верификация 2026-09-07
 
-- macOS Debug build (`CODE_SIGNING_ALLOWED=NO`) и полный unit/integration suite: 212 tests, 1 live-HTTPS test skipped без внешнего test remote, 0 failures;
+- macOS Debug build (`CODE_SIGNING_ALLOWED=NO`) и полный unit/integration suite: 219 tests, 1 live-HTTPS test skipped без внешнего test remote, 0 failures;
 - Git conflict и unrelated-history integration scenarios: passed;
 - `xcrun swift-format lint --recursive . --strict`: passed;
 - `git diff --check` и plist/strings validation: passed;
