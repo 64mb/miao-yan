@@ -57,6 +57,10 @@ class GitSyncCoordinator(
         operation: suspend () -> GitSyncResult,
     ): GitSyncResult {
         val attempt = runCatching {
+            // Claim through the shared repository before entering the non-reentrant mutation gate.
+            // Once terminal, the bootstrap state prevents a concurrent/failed Git setup from ever
+            // turning an intentionally empty Git library into a demo library on a later scan.
+            repository.claimForExternalInitialization()
             libraryAccess.withExclusiveAccess { operation() }
         }
         val conflict = attempt.exceptionOrNull() as? GitSyncException.Conflict

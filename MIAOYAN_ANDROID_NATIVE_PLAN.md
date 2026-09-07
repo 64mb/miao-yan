@@ -144,6 +144,13 @@ Git path policy:
 
 При первом запуске приложение создаёт `filesDir/libraries/default`. Пользователь не выбирает live-root и приложению не нужен постоянный broad-storage grant.
 
+До первого Room scan genuinely новая/пустая библиотека атомарно получает те же пять demo-заметок
+из `Resources/Initial`, что и desktop: Chinese filenames/content для первого `zh` locale, English
+для остальных. Versioned `in-progress`/terminal sentinel и staging живут в `noBackupFilesDir`, вне
+Git working tree. Любой существующий путь, Import или Git initialization сначала терминально claim-ит
+bootstrap state; удаление demo-файлов никогда не запускает seed повторно, а interrupted seed
+докладывает только отсутствующие точные assets и ничего не перезаписывает.
+
 Модель:
 
 - `LibraryRepository` работает с относительными путями только внутри канонического root.
@@ -388,6 +395,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 ### Phase 1 — reader, 2–3 недели
 
 - ✅ создание app-private root и явный Import/Export;
+- ✅ одноразовое crash-safe заполнение новой/пустой библиотеки desktop demo-заметками до первого Room scan, с `zh`/English выбором и sentinel вне Git working tree;
 - ✅ scan, Room index, folders и recursive search;
 - ✅ GFM preview, frontmatter, wikilinks/backlinks и `i/`;
 - ✅ safe WebView и external links;

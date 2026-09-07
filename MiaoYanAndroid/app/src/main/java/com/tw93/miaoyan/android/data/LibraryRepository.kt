@@ -7,6 +7,9 @@ import com.tw93.miaoyan.android.model.TrashedNote
 
 /** UI boundary: canonical mutations delegate to LocalLibraryRepository; Room is derived only. */
 interface LibraryRepository {
+    /** Permanently prevents demo seeding before Import or Git claims an empty library. */
+    suspend fun claimForExternalInitialization()
+
     suspend fun scan(): List<LibraryNote>
 
     suspend fun search(query: String): List<LibraryNote>

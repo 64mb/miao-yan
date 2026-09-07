@@ -24,6 +24,8 @@ data class TransferResult(val fileCount: Int)
 class LocalLibraryRepository(
     private val context: Context,
     private val libraryAccess: LibraryAccess = LibraryMutationGate,
+    private val demoLibrarySeeder: DemoLibrarySeeder = context.demoLibrarySeeder(),
+    private val preferredLanguageTags: () -> List<String> = context::preferredLanguageTags,
 ) {
     val rootIdentity: String = RootIdentity
 
@@ -33,6 +35,7 @@ class LocalLibraryRepository(
     private val transport = SafLibraryTransport(context)
 
     suspend fun scan(): List<LibraryNote> = withLibraryAccess {
+        demoLibrarySeeder.seedIfEligible(preferredLanguageTags())
         ensureRoot()
         val notes = mutableListOf<LibraryNote>()
         val pending = ArrayDeque<File>()
@@ -85,6 +88,7 @@ class LocalLibraryRepository(
     }
 
     suspend fun createRootNote(inputName: String): OpenNote = withLibraryAccess {
+        demoLibrarySeeder.claimWithoutSeeding()
         ensureRoot()
         val name = requireValidName(inputName)
         checkNoCollision(root, name)
@@ -198,6 +202,7 @@ class LocalLibraryRepository(
     suspend fun importFrom(treeUri: Uri): TransferResult = withLibraryAccess {
         val staged = transport.stageImport(treeUri)
         try {
+            demoLibrarySeeder.claimWithoutSeeding()
             ensureRoot()
             staged.files.forEach { stagedFile ->
                 val target = safeResolve(stagedFile.relativePath)
@@ -215,6 +220,12 @@ class LocalLibraryRepository(
         } finally {
             staged.directory.deleteRecursively()
         }
+    }
+
+    /** Future Git setup must cross this boundary before creating `.git` in the canonical root. */
+    suspend fun claimForExternalInitialization() = withLibraryAccess {
+        demoLibrarySeeder.claimWithoutSeeding()
+        ensureRoot()
     }
 
     suspend fun exportTo(treeUri: Uri): TransferResult = withLibraryAccess {

@@ -42,6 +42,10 @@ android {
         buildConfig = true
     }
 
+    sourceSets {
+        getByName("main").assets.directories.add(rootProject.file("../Resources/Initial").path)
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -3,19 +3,24 @@
 Native Android 15+ prototype for validating the first local-library flow. The canonical library
 contract is `context.filesDir/libraries/default`; SAF is reserved for explicit Import/Export:
 
-1. Recursively list nested `.md`, `.markdown`, and `.txt` notes while excluding `.git`,
+1. On the first scan of a genuinely new/empty private library, seed the same five demo notes and
+   nested `Guide`/`Examples`/`Notes`/`Ideas` layout as desktop MiaoYan. The first preferred `zh`
+   locale selects the Chinese filenames/content; every other locale selects English. A versioned,
+   atomic state file in `noBackupFilesDir` resumes interrupted copies and permanently prevents
+   seeding over an existing/imported/Git-initialized library or after the demos are deleted.
+2. Recursively list nested `.md`, `.markdown`, and `.txt` notes while excluding `.git`,
    `Trash`/`.Trash`, `i`, `files`, hidden folders, and symlinks.
-2. Create and rename notes with strict path and case/Unicode collision checks; save by expected
+3. Create and rename notes with strict path and case/Unicode collision checks; save by expected
    content hash with atomic replacement.
-3. Move notes into a recoverable app-private `.Trash` and restore them to the original folder or
+4. Move notes into a recoverable app-private `.Trash` and restore them to the original folder or
    a safe root fallback. Settings owns the full-window Trash manager; permanent deletion requires
    a named destructive confirmation and stays inside the validated Trash item.
-4. Keep everyday preview and editing independent from `ContentResolver`. SAF trees are used only
+5. Keep everyday preview and editing independent from `ContentResolver`. SAF trees are used only
    by explicit Import Library and Export Library actions and never become a live root.
-5. Search titles, nested paths, and bodies through a rebuildable Room FTS4 projection. Wikilinks
+6. Search titles, nested paths, and bodies through a rebuildable Room FTS4 projection. Wikilinks
    and backlinks update transactionally; pins stay authoritative in DataStore.
-6. Edit through a platform `EditText` that does not replace text during IME composition.
-7. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript,
+7. Edit through a platform `EditText` that does not replace text during IME composition.
+8. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript,
    raw HTML, frames, and network loads disabled.
    Local `/i/<name>` images are streamed from the `i` directory next to the selected note through a
    restricted synthetic origin. Canonical-path checks keep the loader inside both the selected
@@ -23,19 +28,25 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
    remain explicit tap-to-open links and are never loaded automatically. External video and iframe
    markup stays inert; the shared policy requires user activation and a sandbox for future iframe
    embedding.
-8. Keep Auto/System, Dark, or Light appearance plus editor/preview typography in local DataStore
+9. Keep Auto/System, Dark, or Light appearance plus editor/preview typography in local DataStore
    settings. The selected theme applies consistently to app chrome, editor, preview, and presentation.
-9. Enter a view-only fullscreen continuous Preview from the video-camera action, or a separate
+10. Enter a view-only fullscreen continuous Preview from the video-camera action, or a separate
    Reveal.js slide Presentation split by exact `---` lines.
-10. Format Markdown with pinned Prettier in an isolated local WebView; protected
+11. Format Markdown with pinned Prettier in an isolated local WebView; protected
    syntax and a note-owner/draft-revision guard make the operation fail closed.
-11. Sync the same app-private working tree with an explicitly configured HTTPS `origin/main`,
+12. Sync the same app-private working tree with an explicitly configured HTTPS `origin/main`,
    without replacing the filesystem repository, Room search/backlinks, pins, attachments,
    typesetting, presentation, or SAF transfer flows.
 
+The demo assets are packaged verbatim from the repository's `Resources/Initial` directory and are
+covered by the top-level MIT license. They are read locally; URLs inside demo Markdown remain inert
+under the existing preview content policy and cannot use the Git-only network capability.
+
 Every canonical filesystem operation passes through the process-wide `LibraryMutationGate`.
 Git and attachment coordinators share the same `LibraryAccess` contract instead of introducing
-independent locks. Room remains disposable: no note content can be recovered from it.
+independent locks. Git claims the shared repository's bootstrap state before creating `.git`, so an
+empty Git library cannot later receive demos. Room remains disposable: no note content can be
+recovered from it.
 
 The only network permission is `INTERNET` for configured Git HTTPS sync. There is no camera or
 broad storage/media permission.

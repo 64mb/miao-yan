@@ -25,6 +25,10 @@ class IndexedLibraryRepository(
     private val rootIdentity: String
         get() = canonical.rootIdentity
 
+    override suspend fun claimForExternalInitialization() = serialized {
+        canonical.claimForExternalInitialization()
+    }
+
     override suspend fun scan(): List<LibraryNote> = serialized { scanLocked() }
 
     override suspend fun search(query: String): List<LibraryNote> =
