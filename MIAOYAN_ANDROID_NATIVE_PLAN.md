@@ -2,9 +2,9 @@
 
 Дата актуализации: 2026-09-07
 
-Статус: research завершён; первый исполняемый SAF/editor/preview-прототип находится в `MiaoYanAndroid/`.
+Статус: research завершён; первый исполняемый editor/preview-прототип находится в `MiaoYanAndroid/`. Каноническое хранилище Android подтверждено как app-private; SAF остаётся только границей явного Import/Export.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библиотека через SAF, рекурсивный список и поиск заметок, безопасное UTF-8 редактирование с защитой IME composition, fail-closed сохранение по hash и ограниченный Markdown preview без JavaScript/raw HTML. Прототип собран и проверен на native AVD; production cmark-gfm, attachments, Room и Git входят в следующие этапы. AI для Android исключён.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библиотека, рекурсивный список и поиск заметок, безопасное UTF-8 редактирование с защитой IME composition, fail-closed сохранение по hash и ограниченный Markdown preview без JavaScript/raw HTML. Прототип собран и проверен на native AVD. Следующий checkpoint переводит библиотеку из первоначального SAF-spike в `filesDir/libraries/default`, добавляет production cmark-gfm, attachments, Room и Git. AI для Android исключён.
 
 ## 1. Scope и принятые ограничения
 
@@ -13,7 +13,7 @@ Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библ
 Первая продуктовая версия:
 
 - Kotlin + Android SDK;
-- одна выбранная корневая папка библиотеки;
+- одна app-private корневая папка библиотеки: `filesDir/libraries/default`;
 - вложенные папки и заметки `.md`, `.markdown`, `.txt`;
 - чтение, редактирование, preview, поиск, изображения и Trash;
 - Git-синхронизация по HTTPS вручную и opt-in автоматически каждые 15 минут;
@@ -25,30 +25,31 @@ Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библ
 - Android AI conflict resolver не входит в scope и не планируется в текущем goal;
 - системная light/dark theme, app/action icons и визуальный parity с macOS для editor/preview;
 - локальные настройки шрифта и размера: небольшой лицензируемый набор и не более 10 фиксированных размеров.
+- SAF используется только для явного импорта из выбранной пользователем папки и экспорта в неё; импортированная папка не становится live-library.
 
 Ручной и 15-минутный автоматический sync входят в один Git MVP. Pin/favorite и остальные UI metadata остаются device-local, как на macOS.
 
 ## 2. Главный архитектурный вывод
 
-Android Storage Access Framework (SAF) выдаёт `content://` URI, а не POSIX-путь. Провайдер может быть локальным, облачным, медленным, не поддерживать seek или атомарный rename. libgit2, напротив, требует обычный working tree.
-
-Поэтому нужны два разных хранилища:
+Заметки Android нужны самому MiaoYan, а Git требует настоящий POSIX working tree. Поэтому каноническая библиотека хранится в app-private storage и одновременно является Git working tree:
 
 ```text
-SAF tree — канонические пользовательские документы
-    ⇅ импорт/apply с SHA-256 и recovery journal
-filesDir/git/<library-id>/worktree — приватный Git mirror
+filesDir/libraries/default — канонические пользовательские документы
     └── .git
+
+SAF tree выбранный пользователем — только источник Import или назначение Export
 ```
 
 Инварианты:
 
-- SAF-папка — единственный постоянный источник содержимого заметок.
-- `.git` никогда не копируется в SAF-папку.
+- `filesDir/libraries/default` — единственный live source of truth содержимого заметок.
+- Git работает прямо с этой папкой; отдельной mirror-копии и двустороннего apply нет.
+- `.git`, локальные metadata, Trash и служебные данные никогда не экспортируются через SAF.
 - Room — только перестраиваемый индекс, не источник текста заметок.
-- Git mirror, история версий, черновики, recovery journal, conflict backups и pin/favorite metadata находятся в app-private storage.
+- История версий, черновики, conflict backups и pin/favorite metadata находятся в app-private storage.
 - Все операции записи сериализуются одним `LibraryMutationCoordinator`.
-- Незавершённая операция после process death обнаруживается и докатывается либо откатывается до показа библиотеки.
+- Безопасные записи используют temporary sibling + atomic replace, когда это поддерживается файловой системой; существующий файл не воссоздаётся молча после исчезновения.
+- App update сохраняет библиотеку, но uninstall/clear data удаляет её. Этот риск должен быть явно показан в настройках рядом с Git и Export.
 
 ## 3. Рекомендуемый стек
 
@@ -74,7 +75,7 @@ filesDir/git/<library-id>/worktree — приватный Git mirror
 
 Версии нельзя задавать динамически. Перед началом реализации нужно повторно проверить совместимость AGP/Kotlin/Compose BOM и pin-ить конкретные версии в version catalog.
 
-`minSdk 35` — принятое продуктовое решение. Поддержка начинается с Android 15. Это убирает legacy-ветки Android 8–14, сокращает WebView/IME/device matrix и позволяет использовать актуальные API без compatibility-кода. Ограничение не отменяет provider matrix: SAF-провайдеры по-прежнему отличаются возможностями и атомарностью операций.
+`minSdk 35` — принятое продуктовое решение. Поддержка начинается с Android 15. Это убирает legacy-ветки Android 8–14, сокращает WebView/IME/device matrix и позволяет использовать актуальные API без compatibility-кода. Отличия SAF-провайдеров изолированы в явных Import/Export и не влияют на повседневное редактирование или Git checkout.
 
 ## 4. Модули
 
@@ -86,7 +87,7 @@ MiaoYanAndroid/
 ├── feature/editor      editor, highlighting, attachments
 ├── feature/sync        Git settings, progress, conflicts
 ├── core/model          platform-neutral domain models
-├── core/data           SAF repositories, Room index, journals
+├── core/data           app-private filesystem repository, Room index, SAF import/export
 ├── core/markdown       cmark-gfm JNI, transforms, HTML shell
 ├── core/git            libgit2 JNI, sync state machine
 └── core/security       Keystore and encrypted secret storage
@@ -97,12 +98,12 @@ MiaoYanAndroid/
 Поток состояния:
 
 ```text
-SAF → LibraryRepository → Room derived index → Flow → ViewModel → Compose
-                              ↑
-UI intent → use case → mutation lock → journal → SAF → hash verification
+filesDir library → LibraryRepository → Room derived index → Flow → ViewModel → Compose
+                                           ↑
+UI intent → use case → mutation lock → atomic filesystem mutation → hash verification
 ```
 
-UI никогда не работает с `ContentResolver`, libgit2 или Room DAO напрямую.
+UI никогда не работает с `File`, `ContentResolver`, libgit2 или Room DAO напрямую. `ContentResolver` доступен только Import/Export boundary.
 
 ## 5. Кроссплатформенный файловый контракт
 
@@ -133,32 +134,28 @@ Git path policy:
 - `Trash`/`.Trash` запрещены;
 - 25 MiB проверяются для added/modified attachment, но не для deletion.
 
-## 6. SAF: чтение, индексирование и безопасная запись
+## 6. App-private storage и SAF Import/Export
 
-Корень выбирается через `ACTION_OPEN_DOCUMENT_TREE`. Приложение сохраняет persistable read/write grant и явно обрабатывает его отзыв.
+При первом запуске приложение создаёт `filesDir/libraries/default`. Пользователь не выбирает live-root и приложению не нужен постоянный broad-storage grant.
 
 Модель:
 
-- `LibraryId` генерируется локально и связывается с `treeUri`.
-- Room хранит `relativePath`, document ID/URI, MIME, size, mtime, content hash, title, snippet и backlinks.
-- Полный scan — итеративный BFS вне main thread, с cancellation и ограниченной параллельностью.
-- В hot path использовать `ContentResolver` + `DocumentsContract`; recursive `DocumentFile` оставить только для простых boundary-операций.
-- `ContentObserver` — только сигнал для повторного scan: полагаться на полноту уведомлений cloud-provider нельзя.
-- `lastModified` недостаточно надёжен; перед destructive write сравнивать content hash/generation.
-- Читать и писать streams частями, не предполагая seekable descriptor.
-- До create/rename проверять дубликаты, регистр и Unicode normalization.
+- `LibraryRepository` работает с относительными путями только внутри канонического root.
+- Room хранит `relativePath`, size, mtime, content hash, title, snippet и backlinks.
+- Полный scan — итеративный обход вне main thread, с cancellation и защитой от symlink escape/loops.
+- File observer — лишь сигнал к пересканированию; correctness опирается на hash/generation.
+- До create/rename проверяются дубликаты без учёта регистра, Unicode normalization и лимит UTF-8 имени.
+- Запись существующей заметки выполняется fail-closed по expected hash и owner note ID через temporary sibling + replace.
+- Удаление сначала переносит объект в app-private `Trash/`; restore использует локальный manifest исходного пути и fallback в root при конфликте/исчезновении папки.
+- `Trash`, `.Trash`, `.git`, `i/` и служебные файлы исключены из обычного списка и поискового индекса согласно своему назначению.
 
-Транзакция записи:
+Import/Export:
 
-1. Захватить mutation lock.
-2. Сохранить preimage и intent в app-private recovery journal.
-3. Сверить expected hash/generation.
-4. Выполнить доступную provider-операцию.
-5. Повторно прочитать результат и проверить SHA-256.
-6. Обновить Room только после успешной проверки.
-7. Пометить journal entry завершённой и удалить preimage по retention policy.
-
-Удаление сначала переносит документ в библиотечный `Trash/`. Если `moveDocument` недоступен: copy → verify → delete. При любой ошибке исходный документ и UI row сохраняются.
+- пользователь явно выбирает папку через `ACTION_OPEN_DOCUMENT_TREE` только на время операции;
+- Import валидирует каждый относительный путь, тип, symlink/submodule policy, расширение и лимит 25 MiB до записи;
+- Import по умолчанию не затирает существующие файлы молча: показывает план и требует выбора при коллизиях;
+- Export создаёт согласованный snapshot пользовательских заметок и attachments, исключая `.git`, Trash, Room, secrets и локальные metadata;
+- streams копируются частями и проверяются hash; ошибка оставляет каноническую библиотеку неизменной и сообщает о частичном результате назначения.
 
 ## 7. Редактор и CJK/IME
 
@@ -212,7 +209,7 @@ WebView использует `https://appassets.androidplatform.net` через 
 - неизвестная навигация блокируется;
 - внешние HTTP(S)/mailto links открываются системно;
 - bundled Mermaid/highlight/math scripts pin-ятся;
-- asset handler обслуживает только текущую library session и не раскрывает странице настоящий `content://` URI.
+- asset handler обслуживает только текущую library session и не раскрывает странице настоящий filesystem path.
 
 Asset handler декодирует путь один раз и отклоняет `..`, backslash, encoded slash, absolute path, `file:`, произвольный `content:` и выход за root.
 
@@ -228,24 +225,23 @@ Golden corpus должен прогоняться через Swift и Android re
 
 ## 9. Git sync на Android
 
-Git работает только с приватным mirror. SAF нельзя checkout-ить напрямую.
+Git работает прямо с `filesDir/libraries/default`: это одновременно каноническая библиотека и обычный private POSIX working tree. SAF не участвует в sync.
 
 Sync-транзакция, общая для ручного и фонового запуска:
 
 1. Захватить library mutation lock.
 2. Flush активного editor и pending saves.
-3. Импортировать SAF snapshot в mirror с path-policy validation.
+3. Снять hash snapshot канонической библиотеки и проверить path policy.
 4. Commit локальных изменений.
-5. Fetch `origin/main`.
-6. Повторно проверить SAF hashes и импортировать изменения, возникшие во время fetch.
-7. На короткое окно блокировать редактирование и сделать второй commit при необходимости.
-8. Проверить все incoming paths и sizes до checkout/apply.
-9. Создать `refs/miaoyan/recovery/latest`.
-10. Сделать fast-forward либо merge в mirror.
-11. Применить diff в SAF через recovery journal и проверить hashes.
-12. Обновить Room/UI.
-13. Push `refs/heads/main:refs/heads/main`.
-14. Освободить lock.
+5. Fetch только точного refspec `refs/heads/main:refs/remotes/origin/main`.
+6. На короткое окно блокировать редактирование и убедиться, что snapshot не изменился; при изменении повторить локальный commit.
+7. Проверить все incoming paths, entry types и sizes до изменения working tree.
+8. Создать `refs/miaoyan/recovery/latest` и filesystem backup затрагиваемых незакоммиченных данных.
+9. Сделать fast-forward либо подготовить merge без conflict markers в live working tree.
+10. Применить проверенный результат атомарно и проверить hashes.
+11. Обновить Room/UI.
+12. Push только `refs/heads/main:refs/heads/main`.
+13. Освободить lock.
 
 Ручной запуск доступен из UI. Автоматический запуск — отдельный opt-in toggle с периодом 15 минут через WorkManager, только при наличии сети и валидной конфигурации. Период Android является inexact: Doze и battery policy могут отложить фактический запуск. Повторный запуск не пересекается с активной sync/mutation operation.
 
@@ -259,7 +255,7 @@ Sync-транзакция, общая для ручного и фонового 
 - branch всегда `main`;
 - SSH не входит в scope.
 
-Критический Phase 0 gate: доказать Android CA trust, hostname validation и redirect behavior выбранной libgit2 TLS-сборки. Если это не доказано, нельзя принимать self-signed certificate «временно»; нужен отдельный JGit/custom transport spike.
+Критический Phase 0 gate: доказать Android CA trust, hostname validation и redirect behavior выбранной Git/TLS-реализации. Если это не доказано, нельзя принимать self-signed certificate «временно» или передавать PAT callback-у для другого host.
 
 ### Initial sync
 
@@ -271,11 +267,11 @@ Sync-транзакция, общая для ручного и фонового 
 ### Конфликты
 
 - merge сначала выполняется в in-memory index;
-- conflict markers не попадают ни в SAF, ни в live mirror worktree;
+- conflict markers не попадают в live canonical working tree;
 - показываются путь, local timestamp и remote timestamp;
 - для текста доступны только `Use Local` и `Use Remote`;
 - для binary доступны только local/remote;
-- после ожидания проверяются commit OID и актуальный SAF hash;
+- после ожидания проверяются commit OID и актуальный local-file hash;
 - resolved merge commit имеет двух родителей;
 - отдельного 3-way UI/resolver нет.
 
@@ -287,12 +283,11 @@ AI resolver на Android отсутствует: нет checkbox, endpoint/model
 
 DataStore хранит только несекретные настройки:
 
-- library tree URI;
 - remote URL;
 - author name/email;
 - sync/UI preferences.
 
-Из Auto Backup исключаются secrets, Git mirror, `.git`, recovery/conflict journals, Room index и local version history. Иначе после restore возможны ciphertext без исходного Keystore key и рассинхронизированный Git/SAF state.
+Из Auto Backup исключаются secrets, `.git`, recovery/conflict backups, Room index, local version history и сама библиотека. Канонические заметки восстанавливаются через Git или явный Export/Import; это исключает частичный platform backup без согласованной Git/Keystore state.
 
 Диагностика — локальный JSONL ring buffer на 50 событий без analytics SDK, с единым error funnel по аналогии с macOS.
 
@@ -308,9 +303,9 @@ JVM unit tests:
 - buffer-owner/generation guard;
 - wikilinks и duplicate titles;
 - conflict classification и local/remote resolution validation;
-- recovery journal state machine.
+- Trash/restore manifest и atomic-write state machine.
 
-Instrumented fake `DocumentsProvider` должен моделировать:
+Instrumented fake `DocumentsProvider` для Import/Export boundary должен моделировать:
 
 - slow/cloud streams;
 - `lastModified = 0`;
@@ -326,7 +321,7 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 - WebView CSP, traversal, external navigation и отсутствие horizontal page scroll;
 - Gboard, Chinese Pinyin, Japanese и Korean IME;
 - 1 MiB / 5000 lines / 64 KiB paragraph benchmarks;
-- Git initial push/pull, fast-forward, clean merge, text/binary conflicts, delete/modify, unrelated histories, push rejection, concurrent SAF change, crash на каждом journal transition;
+- Git initial push/pull, fast-forward, clean merge, text/binary conflicts, delete/modify, unrelated histories, push rejection, concurrent local edit и crash на каждом filesystem transition;
 - TLS, redirect и credential-leak tests на контролируемом HTTPS server.
 
 Локальный verification gate до появления CI:
@@ -343,17 +338,17 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 
 ### Phase 0 — feasibility, 1–2 недели
 
-- SAF spike: Files, Google Drive, минимум один сторонний provider;
+- app-private filesystem CRUD/Trash и SAF Import/Export spike;
 - libgit2 Android build, HTTPS trust store, redirect, ABI;
 - cmark-gfm JNI parity;
 - WebView CSP/raw HTML prototype;
-- ADR по mirror, raw HTML и initial sync.
+- ADR по app-private canonical storage, raw HTML и initial sync.
 
-Не продолжать Git-реализацию, если TLS или transactional SAF apply не доказаны.
+Не продолжать Git-реализацию, если TLS/credential binding или безопасное применение incoming tree не доказаны.
 
 ### Phase 1 — reader, 2–3 недели
 
-- выбор root и persistable grant;
+- создание app-private root и явный Import/Export;
 - scan, Room index, folders, recent/search;
 - GFM preview, frontmatter, wikilinks, `i/`;
 - safe WebView и external links;
@@ -370,7 +365,7 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 
 ### Phase 3 — manual + periodic Git MVP, 3–5 недель
 
-- private mirror и import/apply journal;
+- direct app-private Git working tree и recovery snapshot;
 - Keystore PAT;
 - `origin/main`, path policy, 25 MiB;
 - commit/fetch/merge/apply/push;
@@ -394,7 +389,7 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 - backup/privacy validation;
 - Play pre-launch report.
 
-Оценка: 10–16 инженерных недель до уверенной beta для одного опытного Android-разработчика. Главная неопределённость — SAF и TLS libgit2, а не Compose UI.
+Оценка: 8–14 инженерных недель до уверенной beta для одного опытного Android-разработчика. Отказ от SAF как live storage убирает mirror/apply state machine; главные неопределённости теперь — TLS/Git conflict safety, WebView и IME.
 
 ## 13. Вопросы, на которые нужен конкретный продуктовый ответ
 
@@ -405,16 +400,16 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 3. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
 4. Git author identity: какие default name/email показывать до первого push? Рекомендация: обязательные поля без скрытых фиктивных значений.
 
-Уже решено: remote media загружается только по нажатию; Git имеет ручной и opt-in 15-минутный запуск; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
+Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; remote media загружается только по нажатию; Git имеет ручной и opt-in 15-минутный запуск; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
 
 ## 14. Решение о старте
 
 Начинать следует не с полного UI, а с четырёх исполняемых spikes:
 
-1. SAF journal/apply на реальных providers.
+1. App-private atomic filesystem operations и SAF Import/Export на реальных providers.
 2. libgit2 1.9.7 HTTPS/TLS без утечки credentials.
 3. cmark-gfm JNI и общий golden corpus.
-4. WebViewAssetLoader + CSP + локальные `i/` assets.
+4. WebViewAssetLoader + CSP + локальные `i/` assets без раскрытия filesystem paths.
 
 После прохождения этих gates можно создавать production-модули Phase 1.
 
