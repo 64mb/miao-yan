@@ -1,6 +1,7 @@
 package com.tw93.miaoyan.android.ui
 
 import com.tw93.miaoyan.android.data.LocalImagePolicy
+import java.util.Base64
 
 /** GitHub cmark-gfm backed fragment renderer and the preview content-policy boundary. */
 object MarkdownRenderer {
@@ -17,7 +18,9 @@ object MarkdownRenderer {
         return markdown
     }
 
-    fun renderFragment(markdown: String): String = PreviewContentPolicy.rewrite(CmarkGfmNative.render(markdown))
+    fun renderFragment(markdown: String): String = PreviewContentPolicy.rewrite(
+        CmarkGfmNative.render(DeferredIframePolicy.preprocess(markdown)),
+    )
 }
 
 internal object CmarkGfmNative {
@@ -46,7 +49,13 @@ internal object PreviewContentPolicy {
                     "<span class=\"media-placeholder\">[unavailable image: $escapedAlt]</span>"
             }
         }
-        return ActiveMedia.replace(imagesRewritten) { match ->
+        val embedsRewritten = DeferredEmbed.replace(imagesRewritten) { match ->
+            val url = DeferredIframePolicy.urlForToken(match.groupValues[1])
+                ?: return@replace "<span class=\"media-placeholder\">iframe blocked</span>"
+            "<button type=\"button\" class=\"embed-placeholder\" data-embed=\"${escapeHtmlAttribute(url)}\">" +
+                "Embedded content — tap to load</button>"
+        }
+        return ActiveMedia.replace(embedsRewritten) { match ->
             "<span class=\"media-placeholder\">${match.groupValues[1].lowercase()} blocked</span>"
         }
     }
@@ -93,7 +102,79 @@ internal object PreviewContentPolicy {
         """<\s*(iframe|video|audio)\b[^>]*(?:>.*?<\s*/\s*\1\s*>|/\s*>)""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
     )
+    private val DeferredEmbed = Regex(
+        """<a href="https://appassets\.androidplatform\.net/embed/([A-Za-z0-9_-]{1,4096})">[^<]*</a>""",
+        RegexOption.IGNORE_CASE,
+    )
     private val HtmlEntity = Regex("&(#x[0-9a-fA-F]+|#[0-9]+|amp|quot|apos|lt|gt);")
+}
+
+/** Replaces only standalone, empty HTTPS iframe tags outside fenced code with an inert cmark link token. */
+internal object DeferredIframePolicy {
+    fun preprocess(markdown: String): String {
+        var fence: Fence? = null
+        return markdown.split('\n').joinToString("\n") { rawLine ->
+            val hasCarriageReturn = rawLine.endsWith('\r')
+            val line = if (hasCarriageReturn) rawLine.dropLast(1) else rawLine
+            val fenceMarker = FenceMarker.find(line)
+            if (fenceMarker != null) {
+                val marker = fenceMarker.groupValues[1]
+                fence = if (fence == null) {
+                    Fence(marker.first(), marker.length)
+                } else if (fence?.character == marker.first() && marker.length >= requireNotNull(fence).length) {
+                    null
+                } else {
+                    fence
+                }
+                return@joinToString line + if (hasCarriageReturn) "\r" else ""
+            }
+            val replacement = if (fence == null) standaloneReplacement(line) else null
+            (replacement ?: line) + if (hasCarriageReturn) "\r" else ""
+        }
+    }
+
+    fun urlForToken(token: String): String? {
+        if (!Token.matches(token)) return null
+        val decoded = runCatching {
+            Base64.getUrlDecoder().decode(token).toString(Charsets.UTF_8)
+        }.getOrNull() ?: return null
+        val media = LocalImagePolicy.deferredExternalMedia(decoded, LocalImagePolicy.ExternalMediaKind.Iframe)
+            ?: return null
+        return media.url.takeIf { it.startsWith("https://", ignoreCase = true) }
+    }
+
+    fun isAllowedFrameUrl(rawUrl: String): Boolean =
+        LocalImagePolicy.deferredExternalMedia(rawUrl, LocalImagePolicy.ExternalMediaKind.Iframe)
+            ?.url?.startsWith("https://", ignoreCase = true) == true
+
+    private fun standaloneReplacement(line: String): String? {
+        val attributes = StandaloneIframe.matchEntire(line)?.groupValues?.get(1) ?: return null
+        val sources = Source.findAll(attributes).toList()
+        if (sources.size != 1) return "[iframe blocked]"
+        val rawUrl = sources.single().groupValues.drop(1).firstOrNull(String::isNotEmpty)
+            ?.replace("&amp;", "&")
+            ?.replace("&quot;", "\"")
+            ?.replace("&#39;", "'")
+            ?: return "[iframe blocked]"
+        val media = LocalImagePolicy.deferredExternalMedia(rawUrl, LocalImagePolicy.ExternalMediaKind.Iframe)
+            ?: return "[iframe blocked]"
+        if (!media.url.startsWith("https://", ignoreCase = true)) return "[iframe blocked]"
+        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(media.url.toByteArray(Charsets.UTF_8))
+        return "[Embedded content — tap to load](https://appassets.androidplatform.net/embed/$token)"
+    }
+
+    private data class Fence(val character: Char, val length: Int)
+
+    private val FenceMarker = Regex("""^[ ]{0,3}(`{3,}|~{3,})(?:.*)?$""")
+    private val StandaloneIframe = Regex(
+        """[ \t]*<iframe\b([^>\r\n]{0,4096})(?:></iframe\s*>|/>)\s*""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val Source = Regex(
+        """(?:^|\s)src\s*=\s*(?:"([^"]{1,2048})"|'([^']{1,2048})')""",
+        RegexOption.IGNORE_CASE,
+    )
+    private val Token = Regex("[A-Za-z0-9_-]{1,4096}")
 }
 
 internal object PreviewNavigationPolicy {

@@ -74,7 +74,7 @@ class PresentationDocumentTest {
     }
 
     @Test
-    fun continuousPreviewIsOneScrollableScriptlessDocument() {
+    fun continuousPreviewIsOneScrollableDocumentWithOnlyTheSandboxActivationScript() {
         var renderCount = 0
         val html = PresentationDocument.renderContinuous("# One\n---\n# Two", darkMode = false) {
             renderCount += 1
@@ -82,7 +82,13 @@ class PresentationDocumentTest {
         }
 
         assertEquals(1, renderCount)
-        assertTrue(html.contains("script-src 'none'"))
+        assertTrue(html.contains("script-src 'nonce-"))
+        assertTrue(html.contains("frame-src https:"))
+        assertTrue(html.contains("frame.setAttribute('sandbox', '')"))
+        assertFalse(html.contains("allow-scripts"))
+        assertFalse(html.contains("allow-forms"))
+        assertFalse(html.contains("allow-popups"))
+        assertFalse(html.contains("allow-top-navigation"))
         assertTrue(html.contains("overflow-x: hidden"))
         assertTrue(html.contains("<hr />"))
         assertFalse(html.contains("class=\"reveal\""))

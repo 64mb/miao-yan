@@ -74,6 +74,33 @@ class ContinuousPreviewInstrumentedTest {
         }
     }
 
+    @Test
+    fun iframeNeedsATapAndReceivesAnEmptyStrictSandbox() {
+        compose.waitUntil(timeoutMillis = 30_000) {
+            ContinuousPreviewTestActivity.previewController.pageFinishedCount == 1
+        }
+        compose.activityRule.scenario.onActivity { it.showInlinePreview() }
+        val result = AtomicReference<String?>()
+        compose.activityRule.scenario.onActivity { activity ->
+            val webView = requireNotNull(findWebView(activity.window.decorView))
+            webView.evaluateJavascript(
+                """
+                (() => {
+                  const button = document.querySelector('button.embed-placeholder[data-embed]');
+                  if (!button || document.querySelector('iframe')) return false;
+                  button.click();
+                  const frame = document.querySelector('iframe');
+                  return !!frame && frame.hasAttribute('sandbox') && frame.getAttribute('sandbox') === '' &&
+                    frame.getAttribute('referrerpolicy') === 'no-referrer' && !frame.hasAttribute('allow');
+                })()
+                """.trimIndent(),
+            ) { value -> result.set(value) }
+        }
+        compose.waitUntil(timeoutMillis = 5_000) { result.get() != null }
+
+        assertEquals("true", result.get())
+    }
+
     private fun findWebView(view: View): WebView? {
         if (view is WebView) return view
         if (view !is ViewGroup) return null

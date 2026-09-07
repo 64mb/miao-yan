@@ -21,14 +21,21 @@ object PresentationDocument {
         markdown: String,
         darkMode: Boolean,
         editorSettings: EditorSettings = EditorSettings(),
-    ): String = renderContinuous(markdown, darkMode, editorSettings, MarkdownRenderer::renderFragment)
+    ): String = renderContinuous(
+        markdown,
+        darkMode,
+        editorSettings,
+        fragmentRenderer = MarkdownRenderer::renderFragment,
+    )
 
     internal fun renderContinuous(
         markdown: String,
         darkMode: Boolean,
         editorSettings: EditorSettings = EditorSettings(),
+        nonce: String = createNonce(),
         fragmentRenderer: (String) -> String,
     ): String {
+        require(Nonce.matches(nonce)) { "CSP nonce must be URL-safe base64." }
         val fragment = fragmentRenderer(MarkdownRenderer.stripFrontmatter(markdown))
         val colors = PresentationColors(darkMode, editorSettings)
         return """
@@ -36,11 +43,31 @@ object PresentationDocument {
             <html><head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; font-src $AssetOrigin; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce'; style-src 'unsafe-inline'; font-src $AssetOrigin; img-src $AssetOrigin data:; media-src 'none'; frame-src https:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
             <link rel="icon" href="data:,">
             ${colors.fontPreload}
             <style>${continuousStyle(colors)}</style>
-            </head><body>$fragment</body></html>
+            </head><body>$fragment
+            <script nonce="$nonce">
+              (() => {
+                'use strict';
+                document.addEventListener('click', event => {
+                  const button = event.target.closest('button.embed-placeholder[data-embed]');
+                  if (!button) return;
+                  let url;
+                  try { url = new URL(button.dataset.embed); } catch (_) { return; }
+                  if (url.protocol !== 'https:') return;
+                  const frame = document.createElement('iframe');
+                  frame.src = url.href;
+                  frame.setAttribute('sandbox', '');
+                  frame.setAttribute('referrerpolicy', 'no-referrer');
+                  frame.setAttribute('loading', 'lazy');
+                  frame.setAttribute('title', 'Embedded content');
+                  button.replaceWith(frame);
+                });
+              })();
+            </script>
+            </body></html>
         """.trimIndent()
     }
 
@@ -158,6 +185,8 @@ object PresentationDocument {
         table { border-collapse: collapse; table-layout: fixed; width: 100%; }
         th,td { border: 1px solid ${colors.border}; overflow-wrap: anywhere; padding: .35em .65em; }
         .media-placeholder { display: inline-block; max-width: 100%; color: ${colors.muted}; font-style: italic; overflow-wrap: anywhere; }
+        .embed-placeholder { display: block; max-width: 100%; margin: 1em auto; padding: .65em .9em; color: ${colors.link}; background: transparent; border: 1px solid ${colors.border}; border-radius: 8px; font: inherit; cursor: pointer; }
+        iframe { display: block; width: 100%; min-height: min(62vh, 640px); margin: 1em auto; border: 1px solid ${colors.border}; border-radius: 8px; }
     """.trimIndent()
 
     private fun slideStyle(colors: PresentationColors): String = """

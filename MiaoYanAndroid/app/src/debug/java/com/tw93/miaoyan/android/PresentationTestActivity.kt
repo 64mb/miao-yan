@@ -119,6 +119,7 @@ class ContinuousPreviewTestActivity : ComponentActivity() {
         private val TestMarkdown = buildString {
             appendLine("# Retained preview")
             appendLine("![](/i/test.png)")
+            appendLine("<iframe src=\"https://example.com/embed\"></iframe>")
             repeat(120) { appendLine("Paragraph $it keeps this document scrollable.") }
         }
     }

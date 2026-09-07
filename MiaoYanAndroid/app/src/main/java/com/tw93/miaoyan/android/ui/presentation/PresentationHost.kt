@@ -11,6 +11,7 @@ import android.view.View
 import android.view.WindowInsets as AndroidWindowInsets
 import android.view.WindowInsetsController
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -53,6 +54,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.tw93.miaoyan.android.BuildConfig
 import com.tw93.miaoyan.android.R
 import com.tw93.miaoyan.android.data.EditorSettings
+import com.tw93.miaoyan.android.ui.DeferredIframePolicy
 import com.tw93.miaoyan.android.ui.PreviewNavigationPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -264,7 +266,8 @@ internal fun ContinuousPreview(
                     document = WebPreviewDocument(
                         revision = document.request,
                         html = document.html,
-                        javaScriptEnabled = false,
+                        javaScriptEnabled = true,
+                        allowsNetworkFrames = true,
                         maximumSlideIndex = 0,
                         preparationMillis = document.preparationMillis,
                     ),
@@ -351,6 +354,7 @@ fun PresentationHost(
                         current.request,
                         current.html,
                         javaScriptEnabled = true,
+                        allowsNetworkFrames = false,
                         maximumSlideIndex = current.maximumSlideIndex,
                         preparationMillis = current.preparationMillis,
                     ),
@@ -408,7 +412,9 @@ private fun SecureDocumentWebView(
     AndroidView(
         modifier = modifier,
         factory = {
-            val session = PreviewWebViewSession(router, controller, onSlideChanged)
+            val session = PreviewWebViewSession(router, controller, onSlideChanged).apply {
+                allowsNetworkFrames = document.allowsNetworkFrames
+            }
             WebView(context).apply {
                 tag = session
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -419,11 +425,12 @@ private fun SecureDocumentWebView(
                 settings.javaScriptCanOpenWindowsAutomatically = false
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
-                settings.blockNetworkLoads = true
+                settings.blockNetworkLoads = !document.allowsNetworkFrames
                 settings.domStorageEnabled = false
                 settings.cacheMode = WebSettings.LOAD_NO_CACHE
                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 settings.setSupportMultipleWindows(false)
+                CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                 webChromeClient = object : WebChromeClient() {
                     override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                         if (BuildConfig.DEBUG) {
@@ -437,8 +444,14 @@ private fun SecureDocumentWebView(
                         view: WebView,
                         request: WebResourceRequest,
                     ): android.webkit.WebResourceResponse? {
-                        if (request.url.scheme == "data") return null
                         val currentSession = view.tag as PreviewWebViewSession
+                        if (request.url.scheme == "data") return null
+                        if (
+                            request.method == "GET" && currentSession.allowsNetworkFrames &&
+                            DeferredIframePolicy.isAllowedFrameUrl(request.url.toString())
+                        ) {
+                            return null
+                        }
                         return if (request.method == "GET") {
                             currentSession.router.open(request.url)
                         } else {
@@ -452,6 +465,12 @@ private fun SecureDocumentWebView(
                         SlideStateNavigation.reportedIndex(uri.toString(), request.hasGesture())
                             ?.takeIf { it <= currentSession.maximumSlideIndex }
                             ?.let(currentSession.onSlideChanged)
+                        if (
+                            !request.isForMainFrame && currentSession.allowsNetworkFrames &&
+                            DeferredIframePolicy.isAllowedFrameUrl(uri.toString())
+                        ) {
+                            return false
+                        }
                         if (
                             request.isForMainFrame && request.hasGesture() &&
                             currentSession.router.openAttachment(context, uri.toString())
@@ -500,12 +519,14 @@ private fun SecureDocumentWebView(
             session.router = router
             session.onSlideChanged = onSlideChanged
             session.maximumSlideIndex = document.maximumSlideIndex
+            session.allowsNetworkFrames = document.allowsNetworkFrames
             session.active = active
             webView.visibility = if (active) View.VISIBLE else View.INVISIBLE
             if (session.revision != document.revision) {
                 session.revision = document.revision
                 session.expectedRelease = false
                 webView.settings.javaScriptEnabled = document.javaScriptEnabled
+                webView.settings.blockNetworkLoads = !document.allowsNetworkFrames
                 controller.onHtmlLoad(document.html.length, document.preparationMillis)
                 webView.loadDataWithBaseURL(
                     PresentationDocument.AssetOrigin,
@@ -544,6 +565,7 @@ private data class WebPreviewDocument(
     val revision: Any,
     val html: String,
     val javaScriptEnabled: Boolean,
+    val allowsNetworkFrames: Boolean,
     val maximumSlideIndex: Int,
     val preparationMillis: Long,
 )
@@ -556,6 +578,7 @@ private class PreviewWebViewSession(
     var revision: Any? = null
     var maximumSlideIndex = 0
     var active = false
+    var allowsNetworkFrames = false
     var expectedRelease = false
 }
 

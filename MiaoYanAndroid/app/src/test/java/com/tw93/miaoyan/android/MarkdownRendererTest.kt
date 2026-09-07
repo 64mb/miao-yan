@@ -1,6 +1,7 @@
 package com.tw93.miaoyan.android
 
 import com.tw93.miaoyan.android.ui.MarkdownRenderer
+import com.tw93.miaoyan.android.ui.DeferredIframePolicy
 import com.tw93.miaoyan.android.ui.PreviewContentPolicy
 import com.tw93.miaoyan.android.ui.PreviewNavigationPolicy
 import org.junit.Assert.assertEquals
@@ -74,6 +75,42 @@ class MarkdownRendererTest {
                 "<span class=\"media-placeholder\">video blocked</span>",
             rewritten,
         )
+    }
+
+    @Test
+    fun convertsOnlyStandaloneHttpsIframesOutsideCodeToDeferredTokens() {
+        val prepared = DeferredIframePolicy.preprocess(
+            """
+                <iframe src="https://video.example/embed?id=1&amp;mode=clean" allow="camera"></iframe>
+                ```html
+                <iframe src="https://code.example"></iframe>
+                ```
+                <iframe src="http://insecure.example"></iframe>
+            """.trimIndent(),
+        )
+
+        assertTrue(prepared.contains("https://appassets.androidplatform.net/embed/"))
+        assertFalse(prepared.contains("allow=\"camera\""))
+        assertTrue(prepared.contains("<iframe src=\"https://code.example\"></iframe>"))
+        assertTrue(prepared.contains("[iframe blocked]"))
+    }
+
+    @Test
+    fun deferredIframeTokenBecomesAnInertActivationButton() {
+        val prepared = DeferredIframePolicy.preprocess(
+            "<iframe src=\"https://video.example/embed?id=1&amp;mode=clean\"></iframe>",
+        )
+        val tokenUrl = Regex("https://appassets\\.androidplatform\\.net/embed/[A-Za-z0-9_-]+")
+            .find(prepared)?.value.orEmpty()
+        val token = tokenUrl.substringAfterLast('/')
+        val rewritten = PreviewContentPolicy.rewrite(
+            "<p><a href=\"$tokenUrl\">Embedded content — tap to load</a></p>",
+        )
+
+        assertEquals("https://video.example/embed?id=1&mode=clean", DeferredIframePolicy.urlForToken(token))
+        assertTrue(rewritten.contains("button type=\"button\""))
+        assertTrue(rewritten.contains("data-embed=\"https://video.example/embed?id=1&amp;mode=clean\""))
+        assertFalse(rewritten.contains("<iframe"))
     }
 
     @Test
