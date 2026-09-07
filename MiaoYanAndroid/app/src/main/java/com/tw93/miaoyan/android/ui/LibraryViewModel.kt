@@ -16,6 +16,7 @@ import com.tw93.miaoyan.android.git.GitConflictDetails
 import com.tw93.miaoyan.android.git.GitCredentials
 import com.tw93.miaoyan.android.git.GitSyncConfig
 import com.tw93.miaoyan.android.git.GitSyncCoordinator
+import com.tw93.miaoyan.android.git.GitSyncDiagnostics
 import com.tw93.miaoyan.android.git.GitSyncException
 import com.tw93.miaoyan.android.git.GitSyncPreferences
 import com.tw93.miaoyan.android.git.GitSyncRefreshEvents
@@ -26,6 +27,7 @@ import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
 import com.tw93.miaoyan.android.typesetting.MarkdownFormatter
+import com.tw93.miaoyan.android.typesetting.MarkdownFormattingException
 import com.tw93.miaoyan.android.typesetting.TypesettingRequest
 import com.tw93.miaoyan.android.typesetting.TypesettingResultGuard
 import com.tw93.miaoyan.android.typesetting.WebViewMarkdownFormatter
@@ -689,7 +691,7 @@ class LibraryViewModel @JvmOverloads constructor(
 
     private suspend fun finishGitAttempt(attempt: Result<*>) {
         val refreshFailure = runCatching { refreshLibrary() }.exceptionOrNull()
-        val error = attempt.exceptionOrNull() ?: refreshFailure
+        val error = (attempt.exceptionOrNull() ?: refreshFailure)?.let(GitSyncDiagnostics::mapForUser)
         if (error == null) {
             mutableState.update {
                 it.copy(
@@ -779,7 +781,9 @@ class LibraryViewModel @JvmOverloads constructor(
     }
 
     private fun finishManualReload(route: ManualReloadRoute, attempt: Result<Unit>) {
-        val error = attempt.exceptionOrNull()
+        val error = attempt.exceptionOrNull()?.let { failure ->
+            if (route == ManualReloadRoute.Git) GitSyncDiagnostics.mapForUser(failure) else failure
+        }
         mutableState.update { current ->
             current.copy(
                 loading = false,
@@ -865,9 +869,16 @@ class LibraryViewModel @JvmOverloads constructor(
         repository.pinnedNotes().mapTo(mutableSetOf(), LibraryNote::relativePath)
 
     private fun showError(error: Throwable) {
+        GitSyncDiagnostics.rethrowIfFatal(error)
+        val userMessage = when (error) {
+            is GitSyncException,
+            is MarkdownFormattingException,
+            -> error.message
+            else -> null
+        }
         mutableState.update {
             it.copy(
-                message = error.message
+                message = userMessage
                     ?: getApplication<Application>().getString(R.string.private_library_error),
             )
         }

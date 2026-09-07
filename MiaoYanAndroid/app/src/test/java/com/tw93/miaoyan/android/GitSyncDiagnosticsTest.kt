@@ -4,8 +4,10 @@ import com.tw93.miaoyan.android.git.GitSyncDiagnostics
 import com.tw93.miaoyan.android.git.GitSyncException
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CancellationException
 
 class GitSyncDiagnosticsTest {
     @Test
@@ -42,5 +44,34 @@ class GitSyncDiagnosticsTest {
     fun intentionalGitErrorsKeepTheirSpecificUserMessage() {
         val expected = GitSyncException.Configuration("Configure Git sync first.")
         assertSame(expected, GitSyncDiagnostics.mapForUser(expected))
+    }
+
+    @Test
+    fun nonFatalErrorFromJgitIsMappedInsteadOfLeakingItsObfuscatedName() {
+        val internal = Error("lb0")
+
+        val mapped = GitSyncDiagnostics.mapForUser(internal)
+
+        assertFalse(mapped.message.orEmpty().contains("lb0"))
+        assertSame(internal, mapped.cause)
+    }
+
+    @Test
+    fun cancellationAndVirtualMachineErrorsAreNeverConvertedToUserMessages() {
+        val cancellation = CancellationException("cancelled")
+        assertSame(
+            cancellation,
+            assertThrows(CancellationException::class.java) {
+                GitSyncDiagnostics.mapForUser(cancellation)
+            },
+        )
+
+        val fatal = OutOfMemoryError("fatal")
+        assertSame(
+            fatal,
+            assertThrows(OutOfMemoryError::class.java) {
+                GitSyncDiagnostics.mapForUser(fatal)
+            },
+        )
     }
 }

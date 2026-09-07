@@ -2,13 +2,15 @@ package com.tw93.miaoyan.android.git
 
 import android.util.Log
 import com.tw93.miaoyan.android.BuildConfig
+import java.util.concurrent.CancellationException
 
 internal object GitSyncDiagnostics {
     private const val Tag = "MiaoYanGitSync"
 
     fun <T> run(operation: String, vararg sensitiveValues: String, block: () -> T): T = try {
         block()
-    } catch (error: Exception) {
+    } catch (error: Throwable) {
+        rethrowIfFatal(error)
         if (BuildConfig.DEBUG) {
             // Do not hand Throwable directly to Log: transport exceptions can contain the remote
             // URL. Render and redact the complete chain and stacks before it reaches logcat.
@@ -44,12 +46,24 @@ internal object GitSyncDiagnostics {
             .replace(CredentialQuery, "$1<redacted>")
     }
 
-    fun mapForUser(error: Throwable): GitSyncException = when (error) {
-        is GitSyncException -> error
-        else -> GitSyncException.Storage(
-            "Git sync could not prepare the local repository. Your local notes were kept unchanged.",
-            error,
-        )
+    fun mapForUser(error: Throwable): GitSyncException {
+        rethrowIfFatal(error)
+        return when (error) {
+            is GitSyncException -> error
+            else -> GitSyncException.Storage(
+                "Git sync could not prepare the local repository. Your local notes were kept unchanged.",
+                error,
+            )
+        }
+    }
+
+    fun rethrowIfFatal(error: Throwable) {
+        when (error) {
+            is CancellationException,
+            is VirtualMachineError,
+            is ThreadDeath,
+            -> throw error
+        }
     }
 
     private val HttpsUrl = Regex("https://[^\\s)\\]}]+", RegexOption.IGNORE_CASE)
