@@ -10,6 +10,7 @@ import com.tw93.miaoyan.android.model.TrashedNote
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
@@ -150,6 +151,36 @@ class LocalLibraryRepository(
         RestoreResult(restoredToRoot = !originalParentExists && originalParentPath.isNotEmpty())
     }
 
+    suspend fun permanentlyDelete(trashed: TrashedNote) = withLibraryAccess {
+        val itemId = TrashItemPathPolicy.itemId(trashed.trashRelativePath)
+            ?: error("The Trash item path is invalid.")
+        check(trashed.manifestId == null || trashed.manifestId == itemId) {
+            "The Trash item identity no longer matches."
+        }
+        val source = safeResolve(trashed.trashRelativePath)
+        check(source.toPath().normalize().startsWith(trashRoot.toPath().normalize())) {
+            "The Trash path is invalid."
+        }
+        check(!containsSymlink(source)) { "Symbolic links cannot be permanently deleted from Trash." }
+        val exists = Files.exists(source.toPath(), LinkOption.NOFOLLOW_LINKS)
+        val manifestEntry = manifestStore.load().firstOrNull { it.id == itemId }
+        if (manifestEntry != null) {
+            check(manifestEntry.trashRelativePath == trashed.trashRelativePath) {
+                "The Trash manifest path is invalid."
+            }
+        } else if (trashed.manifestId != null && exists) {
+            error("The Trash manifest no longer matches this note.")
+        }
+        if (exists) {
+            check(Files.isRegularFile(source.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                "Only a trashed note can be permanently deleted."
+            }
+            Files.delete(source.toPath())
+        }
+        manifestEntry?.let { manifestStore.remove(it.id) }
+        source.parentFile?.delete()
+    }
+
     suspend fun save(snapshot: OpenNote, newText: String): OpenNote = withLibraryAccess {
         val file = checkedNoteFile(snapshot.note.relativePath)
         val currentBytes = readNoteBytes(file)
@@ -244,6 +275,7 @@ class LocalLibraryRepository(
     }
 
     private fun checkedTrashFile(relativePath: String): File {
+        check(TrashItemPathPolicy.itemId(relativePath) != null) { "The Trash item path is invalid." }
         val file = safeResolve(relativePath)
         check(file.toPath().normalize().startsWith(trashRoot.toPath().normalize())) { "The Trash path is invalid." }
         check(file.isFile && !containsSymlink(file) && NotePathPolicy.isNote(file.name)) {

@@ -23,6 +23,8 @@ interface LibraryRepository {
 
     suspend fun restore(trashed: TrashedNote): RestoreResult
 
+    suspend fun permanentlyDelete(trashed: TrashedNote)
+
     suspend fun save(snapshot: OpenNote, newText: String): OpenNote
 
     suspend fun importFrom(treeUri: Uri): TransferResult

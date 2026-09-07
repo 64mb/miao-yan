@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tw93.miaoyan.android.data.LocalLibraryRepository
+import com.tw93.miaoyan.android.model.TrashedNote
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
@@ -91,6 +92,57 @@ class LocalLibraryRepositoryTest {
         }.exceptionOrNull()
         assertTrue(renameFailure is IllegalStateException)
         assertTrue(File(root, second.note.relativePath).isFile)
+    }
+
+    @Test
+    fun permanentDeleteRemovesOnlyTheValidatedTrashNoteAndIsIdempotent() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val note = repository.createRootNote("Erase.md")
+        repository.moveToTrash(note.note)
+        val trashed = repository.listTrash().single()
+        val trashFile = File(root, trashed.trashRelativePath)
+
+        repository.permanentlyDelete(trashed)
+
+        assertFalse(trashFile.exists())
+        assertTrue(repository.listTrash().isEmpty())
+        repository.permanentlyDelete(trashed)
+    }
+
+    @Test
+    fun permanentDeleteCleansAManifestForAnAlreadyMissingNote() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val note = repository.createRootNote("Missing.md")
+        repository.moveToTrash(note.note)
+        val trashed = repository.listTrash().single()
+        val manifest = File(root, ".Trash/manifest.v1")
+        File(root, trashed.trashRelativePath).delete()
+
+        repository.permanentlyDelete(trashed)
+
+        assertFalse(manifest.readText().contains(requireNotNull(trashed.manifestId)))
+        repository.permanentlyDelete(trashed)
+    }
+
+    @Test
+    fun permanentDeleteRejectsTraversalAndSymlinksWithoutDeletingTheirTargets() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val id = "123e4567-e89b-12d3-a456-426614174000"
+        val traversal = TrashedNote(null, ".Trash/items/$id/../outside.md", "outside.md", null, 0)
+        assertTrue(runCatching { repository.permanentlyDelete(traversal) }.isFailure)
+
+        val note = repository.createRootNote("Linked.md")
+        repository.moveToTrash(note.note)
+        val trashed = repository.listTrash().single()
+        val trashFile = File(root, trashed.trashRelativePath)
+        assertTrue(trashFile.delete())
+        val outside = File(sandbox, "outside-note.md").apply { writeText("keep") }
+        Files.createSymbolicLink(trashFile.toPath(), outside.toPath())
+
+        assertTrue(runCatching { repository.permanentlyDelete(trashed) }.isFailure)
+        assertEquals("keep", outside.readText())
+        assertTrue(Files.isSymbolicLink(trashFile.toPath()))
+        assertTrue(File(root, ".Trash/manifest.v1").readText().contains(requireNotNull(trashed.manifestId)))
     }
 
     private fun write(relativePath: String, content: String) {

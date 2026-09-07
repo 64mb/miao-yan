@@ -8,6 +8,7 @@ import android.graphics.Color as AndroidColor
 import android.graphics.Typeface
 import android.text.Editable
 import android.text.TextWatcher
+import android.os.SystemClock
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
@@ -45,7 +46,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -53,6 +53,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -76,6 +77,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.Font
@@ -91,6 +93,7 @@ import com.tw93.miaoyan.android.data.AttachmentKind
 import com.tw93.miaoyan.android.data.EDITOR_FONT_SIZES
 import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.EditorSettings
+import com.tw93.miaoyan.android.data.ThemeMode
 import com.tw93.miaoyan.android.data.LocalFileImageLoader
 import com.tw93.miaoyan.android.data.LocalImagePolicy
 import com.tw93.miaoyan.android.data.NameError
@@ -108,6 +111,7 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 private val JetBrainsMonoFamily = FontFamily(Font(R.font.jetbrains_mono_regular))
@@ -118,11 +122,15 @@ fun MiaoYanApp(
     editorSettings: EditorSettings,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
+    onThemeModeChanged: (ThemeMode) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val presentationSession = rememberPresentationSession()
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showTrashSettings by rememberSaveable { mutableStateOf(false) }
+    var showGitSettings by rememberSaveable { mutableStateOf(false) }
+    var showGitConflict by rememberSaveable { mutableStateOf(false) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::importFrom)
     }
@@ -138,6 +146,10 @@ fun MiaoYanApp(
             snackbar.showSnackbar(it)
             viewModel.dismissMessage()
         }
+    }
+
+    LaunchedEffect(state.gitConflict?.localCommit, state.gitConflict?.remoteCommit) {
+        if (state.gitConflict != null) showGitConflict = true
     }
 
     val selected = state.selected
@@ -165,13 +177,28 @@ fun MiaoYanApp(
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { insets ->
         Surface(Modifier.fillMaxSize().padding(insets), color = MaterialTheme.colorScheme.background) {
             when {
+                showSettings && showTrashSettings -> TrashSettingsScreen(
+                    state = state,
+                    onRestore = viewModel::restore,
+                    onPermanentlyDelete = viewModel::permanentlyDelete,
+                    onBack = { showTrashSettings = false },
+                )
                 showSettings -> SettingsScreen(
                     settings = editorSettings,
+                    state = state,
                     onFontChanged = onFontChanged,
                     onFontSizeChanged = onFontSizeChanged,
+                    onThemeModeChanged = onThemeModeChanged,
                     onImportLibrary = launchImport,
                     onExportLibrary = launchExport,
-                    onBack = { showSettings = false },
+                    onTrash = { showTrashSettings = true },
+                    onGitSettings = { showGitSettings = true },
+                    onGitSync = viewModel::syncNow,
+                    onResolveConflict = { showGitConflict = true },
+                    onBack = {
+                        showTrashSettings = false
+                        showSettings = false
+                    },
                 )
                 state.selected != null -> EditorScreen(
                     state = state,
@@ -196,24 +223,44 @@ fun MiaoYanApp(
                     onCreateNote = viewModel::createNote,
                     onRenameNote = viewModel::renameNote,
                     onMoveToTrash = viewModel::moveToTrash,
-                    onRestore = viewModel::restore,
-                    onShowTrash = viewModel::showTrash,
                     onTogglePinned = viewModel::togglePinned,
-                    onImport = launchImport,
-                    onExport = launchExport,
+                    onResolveConflict = { showGitConflict = true },
                     onSettings = { showSettings = true },
                 )
             }
-            if (state.loading || state.saving || state.mutating || state.attaching) {
-                val label = when {
-                    state.saving -> stringResource(R.string.save)
-                    state.attaching -> stringResource(R.string.importing_attachment)
-                    state.mutating -> stringResource(R.string.updating_library)
-                    else -> stringResource(R.string.loading)
-                }
-                LoadingOverlay(label)
+            val busy = state.loading || state.saving || state.mutating || state.attaching || state.syncing
+            val busyLabel = when {
+                state.syncing -> stringResource(R.string.git_syncing)
+                state.saving -> stringResource(R.string.save)
+                state.attaching -> stringResource(R.string.importing_attachment)
+                state.mutating -> stringResource(R.string.updating_library)
+                else -> stringResource(R.string.loading)
             }
+            DelayedLoadingOverlay(busy = busy, label = busyLabel)
         }
+    }
+
+    if (showGitSettings) {
+        GitSyncSettingsDialog(
+            current = state.gitConfig,
+            username = state.gitUsername,
+            hasStoredToken = state.hasGitCredentials,
+            onDismiss = { showGitSettings = false },
+            onSave = { config, username, token ->
+                showGitSettings = false
+                viewModel.saveGitSettings(config, username, token)
+            },
+        )
+    }
+    state.gitConflict?.takeIf { showGitConflict }?.let { conflict ->
+        GitConflictDialog(
+            details = conflict,
+            onLater = { showGitConflict = false },
+            onResolve = { choices ->
+                showGitConflict = false
+                viewModel.resolveGitConflict(choices)
+            },
+        )
     }
 }
 
@@ -226,11 +273,8 @@ private fun LibraryScreen(
     onCreateNote: (String) -> Unit,
     onRenameNote: (LibraryNote, String) -> Unit,
     onMoveToTrash: (LibraryNote) -> Unit,
-    onRestore: (TrashedNote) -> Unit,
-    onShowTrash: (Boolean) -> Unit,
     onTogglePinned: (LibraryNote) -> Unit,
-    onImport: () -> Unit,
-    onExport: () -> Unit,
+    onResolveConflict: () -> Unit,
     onSettings: () -> Unit,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -240,98 +284,90 @@ private fun LibraryScreen(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 920.dp).fillMaxWidth().fillMaxHeight()) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "MiaoYan",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Text(
-                        stringResource(R.string.private_library),
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (!state.showingTrash) {
-                    TextButton(onClick = { showCreateDialog = true }) {
-                        Text(stringResource(R.string.new_note))
-                    }
-                }
-                IconButton(onClick = onRefresh) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_bird),
+                    contentDescription = null,
+                    modifier = Modifier.size(30.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    "MiaoYan",
+                    modifier = Modifier.padding(start = 10.dp),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onRefresh, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_refresh), contentDescription = stringResource(R.string.refresh))
                 }
-                IconButton(onClick = onSettings) {
+                IconButton(onClick = onSettings, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
                 }
             }
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onImport) { Text(stringResource(R.string.import_library)) }
-                TextButton(onClick = onExport) { Text(stringResource(R.string.export_library)) }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { onShowTrash(!state.showingTrash) }) {
-                    Text(stringResource(if (state.showingTrash) R.string.notes else R.string.trash))
+            if (state.gitConflict != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.git_conflict_pending),
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    TextButton(onClick = onResolveConflict) {
+                        Text(stringResource(R.string.git_resolve))
+                    }
                 }
             }
-            if (state.showingTrash) {
-                if (state.trash.isEmpty() && !state.loading) {
-                    EmptyLibraryMessage(R.string.trash_empty)
+            OutlinedTextField(
+                value = state.query,
+                onValueChange = onQueryChanged,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                placeholder = { Text(stringResource(R.string.search_notes)) },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+            )
+            if (state.visibleNotes.isEmpty() && !state.loading) {
+                if (state.notes.isEmpty() && state.query.isBlank()) {
+                    EmptyLibraryContent()
                 } else {
-                    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                        items(state.trash, key = { it.trashRelativePath }) { note ->
-                            TrashRow(note = note, onRestore = { onRestore(note) })
-                            HorizontalDivider(
-                                Modifier.padding(start = 20.dp),
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
-                            )
-                        }
-                    }
+                    EmptyLibraryMessage(R.string.no_notes)
                 }
             } else {
-                OutlinedTextField(
-                    value = state.query,
-                    onValueChange = onQueryChanged,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    placeholder = { Text(stringResource(R.string.search_notes)) },
-                    leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                )
-                if (state.visibleNotes.isEmpty() && !state.loading) {
-                    if (state.notes.isEmpty() && state.query.isBlank()) {
-                        EmptyLibraryContent(
-                            onCreate = { showCreateDialog = true },
-                            onImport = onImport,
+                LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
+                    items(state.visibleNotes, key = { it.id }) { note ->
+                        NoteRow(
+                            note = note,
+                            pinned = note.relativePath in state.pinnedPaths,
+                            onClick = { onOpenNote(note) },
+                            onTogglePinned = { onTogglePinned(note) },
+                            onRename = { renamingNote = note },
+                            onTrash = { trashingNote = note },
                         )
-                    } else {
-                        EmptyLibraryMessage(R.string.no_notes)
-                    }
-                } else {
-                    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                        items(state.visibleNotes, key = { it.id }) { note ->
-                            NoteRow(
-                                note = note,
-                                pinned = note.relativePath in state.pinnedPaths,
-                                onClick = { onOpenNote(note) },
-                                onTogglePinned = { onTogglePinned(note) },
-                                onRename = { renamingNote = note },
-                                onTrash = { trashingNote = note },
-                            )
-                            HorizontalDivider(
-                                Modifier.padding(start = 20.dp),
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
-                            )
-                        }
+                        HorizontalDivider(
+                            Modifier.padding(start = 20.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
+                        )
                     }
                 }
+            }
+        }
+        if (!state.loading && !state.mutating && !state.syncing) {
+            FloatingActionButton(
+                onClick = { showCreateDialog = true },
+                modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp).size(56.dp),
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_new_note),
+                    contentDescription = stringResource(R.string.new_note),
+                )
             }
         }
     }
@@ -372,7 +408,7 @@ private fun LibraryScreen(
 }
 
 @Composable
-private fun EmptyLibraryContent(onCreate: () -> Unit, onImport: () -> Unit) {
+private fun EmptyLibraryContent() {
     Column(
         Modifier.fillMaxSize().padding(horizontal = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -396,11 +432,6 @@ private fun EmptyLibraryContent(onCreate: () -> Unit, onImport: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyLarge,
         )
-        Spacer(Modifier.height(24.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = onCreate) { Text(stringResource(R.string.new_note)) }
-            TextButton(onClick = onImport) { Text(stringResource(R.string.import_library)) }
-        }
     }
 }
 
@@ -451,7 +482,7 @@ private fun NoteRow(
 }
 
 @Composable
-private fun TrashRow(note: TrashedNote, onRestore: () -> Unit) {
+private fun TrashRow(note: TrashedNote, onRestore: () -> Unit, onPermanentlyDelete: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -463,6 +494,12 @@ private fun TrashRow(note: TrashedNote, onRestore: () -> Unit) {
             }
         }
         TextButton(onClick = onRestore) { Text(stringResource(R.string.restore)) }
+        TextButton(onClick = onPermanentlyDelete) {
+            Text(
+                stringResource(R.string.delete_permanently),
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
     }
 }
 
@@ -545,7 +582,7 @@ private fun EditorScreen(
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         onAttachmentResult(AttachmentKind.File, uri)
     }
-    val canEditDraft = !state.preview && !state.loading && !state.saving && !state.mutating &&
+    val canEditDraft = !state.preview && !state.loading && !state.saving && !state.mutating && !state.syncing &&
         !state.formatting && !state.attaching && !state.attachmentPickerOpen
     val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
     BackHandler(onBack = requestBack)
@@ -731,7 +768,7 @@ private fun PlatformMarkdownEditor(
     editorSettings: EditorSettings,
     modifier: Modifier = Modifier,
 ) {
-    val darkMode = androidx.compose.foundation.isSystemInDarkTheme()
+    val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
     val contentColor = (if (darkMode) MiaoYanColors.EditorTextDark else MiaoYanColors.EditorTextLight).toArgb()
     val backgroundColor =
         (if (darkMode) MiaoYanColors.EditorBackgroundDark else MiaoYanColors.EditorBackgroundLight).toArgb()
@@ -883,15 +920,97 @@ private fun blockedWebResourceResponse(): WebResourceResponse = WebResourceRespo
 )
 
 @Composable
+internal fun TrashSettingsScreen(
+    state: LibraryUiState,
+    onRestore: (TrashedNote) -> Unit,
+    onPermanentlyDelete: (TrashedNote) -> Unit,
+    onBack: () -> Unit,
+) {
+    var pendingDelete by remember { mutableStateOf<TrashedNote?>(null) }
+    BackHandler(onBack = onBack)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = 840.dp).fillMaxWidth().fillMaxHeight()) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        painterResource(R.drawable.ic_arrow_back),
+                        contentDescription = stringResource(R.string.back),
+                    )
+                }
+                Text(
+                    stringResource(R.string.trash),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            if (state.trash.isEmpty() && !state.loading) {
+                EmptyLibraryMessage(R.string.trash_empty)
+            } else {
+                LazyColumn(contentPadding = PaddingValues(bottom = 32.dp)) {
+                    items(state.trash, key = { it.trashRelativePath }) { note ->
+                        TrashRow(
+                            note = note,
+                            onRestore = { onRestore(note) },
+                            onPermanentlyDelete = { pendingDelete = note },
+                        )
+                        HorizontalDivider(
+                            Modifier.padding(start = 20.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+    pendingDelete?.let { note ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(stringResource(R.string.delete_permanently_title)) },
+            text = { Text(stringResource(R.string.delete_permanently_message, note.displayName)) },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag("trash-delete-confirm"),
+                    onClick = {
+                        pendingDelete = null
+                        onPermanentlyDelete(note)
+                    },
+                ) {
+                    Text(
+                        stringResource(R.string.delete_permanently),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+@Composable
 private fun SettingsScreen(
     settings: EditorSettings,
+    state: LibraryUiState,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
+    onThemeModeChanged: (ThemeMode) -> Unit,
     onImportLibrary: () -> Unit,
     onExportLibrary: () -> Unit,
+    onTrash: () -> Unit,
+    onGitSettings: () -> Unit,
+    onGitSync: () -> Unit,
+    onResolveConflict: () -> Unit,
     onBack: () -> Unit,
 ) {
     var showLicense by remember { mutableStateOf(false) }
+    var showJgitLicense by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -937,6 +1056,50 @@ private fun SettingsScreen(
                         detail = stringResource(R.string.export_library_detail),
                         onClick = onExportLibrary,
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsActionRow(
+                        icon = R.drawable.ic_trash,
+                        title = stringResource(R.string.trash),
+                        detail = stringResource(R.string.trash_detail, state.trash.size),
+                        onClick = onTrash,
+                    )
+                }
+            }
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.git_settings),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+                ) {
+                    SettingsActionRow(
+                        icon = R.drawable.ic_settings,
+                        title = stringResource(R.string.git_settings_title),
+                        detail = stringResource(
+                            if (state.gitConfig != null && state.hasGitCredentials) {
+                                R.string.git_configured_detail
+                            } else {
+                                R.string.git_not_configured_detail
+                            },
+                        ),
+                        onClick = onGitSettings,
+                    )
+                    if (state.gitConfig != null && state.hasGitCredentials) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        SettingsActionRow(
+                            icon = R.drawable.ic_refresh,
+                            title = stringResource(R.string.git_sync_now),
+                            detail = stringResource(R.string.git_sync_now_detail),
+                            onClick = onGitSync,
+                        )
+                    }
+                    if (state.gitConflict != null) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        SettingsActionRow(
+                            icon = R.drawable.ic_storage_warning,
+                            title = stringResource(R.string.git_resolve),
+                            detail = stringResource(R.string.git_conflict_pending),
+                            onClick = onResolveConflict,
+                        )
+                    }
                 }
             }
             item {
@@ -944,10 +1107,11 @@ private fun SettingsScreen(
                     title = stringResource(R.string.appearance),
                     modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
                 ) {
-                    SettingsInfoRow(
-                        icon = R.drawable.ic_theme_system,
-                        title = stringResource(R.string.system_theme),
-                        detail = stringResource(R.string.system_theme_detail),
+                    SettingsDropdown(
+                        label = stringResource(R.string.theme),
+                        selected = themeModeLabel(settings.themeMode),
+                        options = ThemeMode.entries.map { it to themeModeLabel(it) },
+                        onSelected = onThemeModeChanged,
                     )
                 }
             }
@@ -989,8 +1153,19 @@ private fun SettingsScreen(
                 }
             }
             item {
-                TextButton(onClick = { showLicense = true }) {
-                    Text(stringResource(R.string.jetbrains_mono_attribution))
+                SettingsSection(
+                    title = stringResource(R.string.open_source_licenses),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+                ) {
+                    LicenseRow(
+                        title = stringResource(R.string.jetbrains_mono_attribution),
+                        onClick = { showLicense = true },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    LicenseRow(
+                        title = stringResource(R.string.jgit_attribution),
+                        onClick = { showJgitLicense = true },
+                    )
                 }
             }
         }
@@ -1015,6 +1190,27 @@ private fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showLicense = false }) { Text(stringResource(R.string.close)) }
+            },
+        )
+    }
+    if (showJgitLicense) {
+        val resources = LocalResources.current
+        val notice = remember(resources) {
+            resources.openRawResource(R.raw.jgit_notice).bufferedReader().use { it.readText() }
+        }
+        AlertDialog(
+            onDismissRequest = { showJgitLicense = false },
+            title = { Text(stringResource(R.string.jgit_license)) },
+            text = {
+                Text(
+                    notice,
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showJgitLicense = false }) { Text(stringResource(R.string.close)) }
             },
         )
     }
@@ -1068,6 +1264,21 @@ private fun SettingsActionRow(icon: Int, title: String, detail: String, onClick:
 }
 
 @Composable
+private fun LicenseRow(title: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Icon(
+            painterResource(R.drawable.ic_chevron_right),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
 private fun SettingsSection(title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -1077,21 +1288,6 @@ private fun SettingsSection(title: String, modifier: Modifier = Modifier, conten
             color = MaterialTheme.colorScheme.primary,
         )
         Card { content() }
-    }
-}
-
-@Composable
-private fun SettingsInfoRow(icon: Int, title: String, detail: String) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(painterResource(icon), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
     }
 }
 
@@ -1135,6 +1331,13 @@ private fun fontLabel(font: EditorFont): String = when (font) {
     EditorFont.JETBRAINS_MONO -> stringResource(R.string.font_jetbrains_mono)
 }
 
+@Composable
+private fun themeModeLabel(themeMode: ThemeMode): String = when (themeMode) {
+    ThemeMode.AUTO_SYSTEM -> stringResource(R.string.theme_auto_system)
+    ThemeMode.DARK -> stringResource(R.string.theme_dark)
+    ThemeMode.LIGHT -> stringResource(R.string.theme_light)
+}
+
 private fun composeFontFamily(font: EditorFont): FontFamily = when (font) {
     EditorFont.SYSTEM_SANS -> FontFamily.SansSerif
     EditorFont.SYSTEM_SERIF -> FontFamily.Serif
@@ -1174,4 +1377,29 @@ private fun LoadingOverlay(label: String) {
             }
         }
     }
+}
+
+@Composable
+private fun DelayedLoadingOverlay(
+    busy: Boolean,
+    label: String,
+    timing: BusyOverlayTimingController = remember { BusyOverlayTimingController() },
+) {
+    var visible by remember { mutableStateOf(false) }
+    var shownAtMillis by remember { mutableStateOf(0L) }
+    LaunchedEffect(busy) {
+        if (busy) {
+            val wait = timing.delayBeforeShow(visible)
+            if (wait > 0) delay(wait)
+            if (!visible) {
+                shownAtMillis = SystemClock.uptimeMillis()
+                visible = true
+            }
+        } else if (visible) {
+            val wait = timing.delayBeforeHide(shownAtMillis, SystemClock.uptimeMillis())
+            if (wait > 0) delay(wait)
+            visible = false
+        }
+    }
+    if (visible) LoadingOverlay(label)
 }

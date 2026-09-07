@@ -65,6 +65,12 @@ class IndexedLibraryRepository(
         canonical.restore(trashed).also { scanLocked() }
     }
 
+    override suspend fun permanentlyDelete(trashed: TrashedNote) = serialized {
+        canonical.permanentlyDelete(trashed)
+        scanLocked()
+        Unit
+    }
+
     override suspend fun save(snapshot: OpenNote, newText: String): OpenNote = serialized {
         canonical.save(snapshot, newText).also { saved ->
             updateIndexBestEffort(saved)

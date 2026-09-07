@@ -5,9 +5,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.view.WindowCompat
 import com.tw93.miaoyan.android.data.EditorPreferences
 import com.tw93.miaoyan.android.data.EditorSettings
 import com.tw93.miaoyan.android.ui.LibraryViewModel
@@ -25,12 +28,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             val editorSettings by editorPreferences.settings.collectAsStateWithLifecycle(EditorSettings())
             val scope = rememberCoroutineScope()
-            MiaoYanTheme {
+            val effectiveDarkTheme = editorSettings.themeMode.resolveDark(isSystemInDarkTheme())
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !effectiveDarkTheme
+                    isAppearanceLightNavigationBars = !effectiveDarkTheme
+                }
+            }
+            MiaoYanTheme(themeMode = editorSettings.themeMode) {
                 MiaoYanApp(
                     viewModel = viewModel,
                     editorSettings = editorSettings,
                     onFontChanged = { font -> scope.launch { editorPreferences.setFont(font) } },
                     onFontSizeChanged = { size -> scope.launch { editorPreferences.setFontSize(size) } },
+                    onThemeModeChanged = { mode -> scope.launch { editorPreferences.setThemeMode(mode) } },
                 )
             }
         }

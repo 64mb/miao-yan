@@ -24,9 +24,27 @@ enum class EditorFont(val storageValue: String, val cssStack: String) {
     }
 }
 
+enum class ThemeMode(val storageValue: String) {
+    AUTO_SYSTEM("auto_system"),
+    DARK("dark"),
+    LIGHT("light"),
+    ;
+
+    fun resolveDark(systemDark: Boolean): Boolean = when (this) {
+        AUTO_SYSTEM -> systemDark
+        DARK -> true
+        LIGHT -> false
+    }
+
+    companion object {
+        fun fromStorage(value: String?): ThemeMode = entries.firstOrNull { it.storageValue == value } ?: AUTO_SYSTEM
+    }
+}
+
 data class EditorSettings(
     val font: EditorFont = EditorFont.SYSTEM_SANS,
     val fontSizeSp: Int = DEFAULT_EDITOR_FONT_SIZE,
+    val themeMode: ThemeMode = ThemeMode.AUTO_SYSTEM,
 )
 
 const val DEFAULT_EDITOR_FONT_SIZE = 16
@@ -45,6 +63,7 @@ class EditorPreferences(private val context: Context) {
             EditorSettings(
                 font = EditorFont.fromStorage(preferences[FontKey]),
                 fontSizeSp = normalizedEditorFontSize(preferences[FontSizeKey]),
+                themeMode = ThemeMode.fromStorage(preferences[ThemeModeKey]),
             )
         }
 
@@ -57,8 +76,13 @@ class EditorPreferences(private val context: Context) {
         context.editorDataStore.edit { preferences -> preferences[FontSizeKey] = fontSizeSp }
     }
 
+    suspend fun setThemeMode(themeMode: ThemeMode) {
+        context.editorDataStore.edit { preferences -> preferences[ThemeModeKey] = themeMode.storageValue }
+    }
+
     private companion object {
         val FontKey = stringPreferencesKey("editor_font")
         val FontSizeKey = intPreferencesKey("editor_font_size_sp")
+        val ThemeModeKey = stringPreferencesKey("theme_mode")
     }
 }

@@ -3,6 +3,7 @@ package com.tw93.miaoyan.android
 import com.tw93.miaoyan.android.data.RestorePolicy
 import com.tw93.miaoyan.android.data.TrashManifestCodec
 import com.tw93.miaoyan.android.data.TrashManifestEntry
+import com.tw93.miaoyan.android.data.TrashItemPathPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,5 +46,15 @@ class TrashManifestTest {
             RestorePolicy.destinationRelativePath("Projects/2026/plan.md", originalParentExists = false),
         )
         assertEquals("", RestorePolicy.destinationRelativePath(null, originalParentExists = false))
+    }
+
+    @Test
+    fun permanentDeletePathsRequireOneValidatedNoteInsideOneTrashItem() {
+        val id = "123e4567-e89b-12d3-a456-426614174000"
+        assertEquals(id, TrashItemPathPolicy.itemId(".Trash/items/$id/note.md"))
+        assertEquals(null, TrashItemPathPolicy.itemId(".Trash/items/$id/folder/note.md"))
+        assertEquals(null, TrashItemPathPolicy.itemId(".Trash/items/$id/../outside.md"))
+        assertEquals(null, TrashItemPathPolicy.itemId(".Trash/items/not-an-id/note.md"))
+        assertEquals(null, TrashItemPathPolicy.itemId(".Trash/items/$id/file.pdf"))
     }
 }

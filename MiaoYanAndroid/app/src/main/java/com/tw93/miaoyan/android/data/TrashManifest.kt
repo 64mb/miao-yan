@@ -2,6 +2,7 @@ package com.tw93.miaoyan.android.data
 
 import java.io.File
 import java.util.Base64
+import java.util.UUID
 
 data class TrashManifestEntry(
     val id: String,
@@ -72,6 +73,17 @@ class TrashManifestStore(
 
     private fun write(entries: List<TrashManifestEntry>) {
         atomicWriter(file, TrashManifestCodec.encode(entries).toByteArray(Charsets.UTF_8))
+    }
+}
+
+object TrashItemPathPolicy {
+    fun itemId(noteRelativePath: String): String? {
+        val segments = noteRelativePath.split('/')
+        if (segments.size != 4 || segments[0] != ".Trash" || segments[1] != "items") return null
+        if (!NotePathPolicy.isNote(segments[3])) return null
+        return runCatching { UUID.fromString(segments[2]).toString() }
+            .getOrNull()
+            ?.takeIf { it == segments[2].lowercase() }
     }
 }
 

@@ -8,11 +8,19 @@ import com.tw93.miaoyan.android.R
 import com.tw93.miaoyan.android.data.AttachmentImporter
 import com.tw93.miaoyan.android.data.AttachmentKind
 import com.tw93.miaoyan.android.data.ContentUriAttachmentSource
-import com.tw93.miaoyan.android.data.IndexedLibraryRepository
 import com.tw93.miaoyan.android.data.LibraryRepository
-import com.tw93.miaoyan.android.data.LocalLibraryRepository
-import com.tw93.miaoyan.android.data.LocalPinStore
-import com.tw93.miaoyan.android.data.index.RoomLibrarySearchIndex
+import com.tw93.miaoyan.android.data.LibraryRepositoryProvider
+import com.tw93.miaoyan.android.git.ActiveDraftRegistry
+import com.tw93.miaoyan.android.git.GitConflictChoice
+import com.tw93.miaoyan.android.git.GitConflictDetails
+import com.tw93.miaoyan.android.git.GitCredentials
+import com.tw93.miaoyan.android.git.GitSyncConfig
+import com.tw93.miaoyan.android.git.GitSyncCoordinator
+import com.tw93.miaoyan.android.git.GitSyncException
+import com.tw93.miaoyan.android.git.GitSyncPreferences
+import com.tw93.miaoyan.android.git.GitSyncRefreshEvents
+import com.tw93.miaoyan.android.git.GitSyncScheduler
+import com.tw93.miaoyan.android.git.KeystoreCredentialStore
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
@@ -26,6 +34,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -34,7 +44,6 @@ data class LibraryUiState(
     val searchResults: List<LibraryNote> = emptyList(),
     val pinnedPaths: Set<String> = emptySet(),
     val trash: List<TrashedNote> = emptyList(),
-    val showingTrash: Boolean = false,
     val query: String = "",
     val selected: OpenNote? = null,
     val draft: String = "",
@@ -45,11 +54,16 @@ data class LibraryUiState(
     val formatting: Boolean = false,
     val attaching: Boolean = false,
     val attachmentPickerOpen: Boolean = false,
+    val syncing: Boolean = false,
     val dirty: Boolean = false,
     val draftRevision: Long = 0,
     val selectionStart: Int = 0,
     val selectionEnd: Int = 0,
     val message: String? = null,
+    val gitConfig: GitSyncConfig? = null,
+    val gitUsername: String = "",
+    val hasGitCredentials: Boolean = false,
+    val gitConflict: GitConflictDetails? = null,
 ) {
     val visibleNotes: List<LibraryNote>
         get() = if (query.isBlank()) notes else searchResults
@@ -59,10 +73,13 @@ class LibraryViewModel @JvmOverloads constructor(
     application: Application,
     private val markdownFormatter: MarkdownFormatter = WebViewMarkdownFormatter(application),
 ) : AndroidViewModel(application) {
-    private val repository: LibraryRepository = IndexedLibraryRepository(
-        canonical = LocalLibraryRepository(application),
-        index = RoomLibrarySearchIndex(application),
-        pins = LocalPinStore(application),
+    private val repository: LibraryRepository = LibraryRepositoryProvider.get(application)
+    private val gitPreferences = GitSyncPreferences(application)
+    private val credentialStore = KeystoreCredentialStore(application)
+    private val syncCoordinator = GitSyncCoordinator(
+        context = application,
+        repository = repository,
+        publishRefreshEvents = false,
     )
     private val attachmentImporter = AttachmentImporter()
     private val libraryRoot = File(application.filesDir, "libraries/default")
@@ -76,10 +93,34 @@ class LibraryViewModel @JvmOverloads constructor(
 
     init {
         reload()
+        viewModelScope.launch {
+            gitPreferences.config.distinctUntilChanged().collectLatest { config ->
+                val credentials = config?.let { value ->
+                    runCatching { credentialStore.load(value.repositoryUrl) }.getOrNull()
+                }
+                mutableState.update {
+                    it.copy(
+                        gitConfig = config,
+                        gitUsername = credentials?.username.orEmpty(),
+                        hasGitCredentials = credentials != null,
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            gitPreferences.pendingConflict.distinctUntilChanged().collectLatest { conflict ->
+                mutableState.update { it.copy(gitConflict = conflict) }
+            }
+        }
+        viewModelScope.launch {
+            GitSyncRefreshEvents.events.collectLatest {
+                runCatching { refreshAfterGit() }.onFailure(::showError)
+            }
+        }
     }
 
     fun reload() {
-        if (mutableState.value.loading || mutableState.value.mutating) return
+        if (isBusy()) return
         viewModelScope.launch {
             mutableState.update { it.copy(loading = true, message = null) }
             runCatching {
@@ -102,11 +143,6 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
-    fun showTrash(show: Boolean) {
-        searchJob?.cancel()
-        mutableState.update { it.copy(showingTrash = show, query = "", searchResults = emptyList()) }
-    }
-
     fun updateQuery(query: String) {
         mutableState.update { it.copy(query = query, searchResults = emptyList()) }
         refreshSearch()
@@ -118,6 +154,7 @@ class LibraryViewModel @JvmOverloads constructor(
             mutableState.update { it.copy(loading = true, message = null) }
             runCatching { repository.open(note) }
                 .onSuccess { opened ->
+                    ActiveDraftRegistry.update(opened.note.relativePath, false)
                     mutableState.update {
                         it.copy(
                             selected = opened,
@@ -145,6 +182,7 @@ class LibraryViewModel @JvmOverloads constructor(
             mutableState.update { it.copy(mutating = true, message = null) }
             runCatching { repository.createRootNote(name) }
                 .onSuccess { opened ->
+                    ActiveDraftRegistry.update(opened.note.relativePath, false)
                     val notes = repository.scan()
                     mutableState.update {
                         it.copy(
@@ -156,7 +194,6 @@ class LibraryViewModel @JvmOverloads constructor(
                             formatting = false,
                             draftRevision = nextDraftRevision(),
                             mutating = false,
-                            showingTrash = false,
                             selectionStart = opened.text.length,
                             selectionEnd = opened.text.length,
                         )
@@ -234,6 +271,28 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
+    fun permanentlyDelete(trashed: TrashedNote) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching {
+                repository.permanentlyDelete(trashed)
+                repository.listTrash()
+            }.onSuccess { trash ->
+                mutableState.update {
+                    it.copy(
+                        trash = trash,
+                        mutating = false,
+                        message = getApplication<Application>().getString(R.string.deleted_permanently),
+                    )
+                }
+            }.onFailure { error ->
+                mutableState.update { it.copy(mutating = false) }
+                showError(error)
+            }
+        }
+    }
+
     fun importFrom(treeUri: Uri) {
         if (isBusy()) return
         viewModelScope.launch {
@@ -246,7 +305,6 @@ class LibraryViewModel @JvmOverloads constructor(
                             trash = repository.listTrash(),
                             pinnedPaths = loadPinnedPaths(),
                             mutating = false,
-                            showingTrash = false,
                             message = getApplication<Application>().getString(R.string.imported_files, result.fileCount),
                         )
                     }
@@ -291,9 +349,11 @@ class LibraryViewModel @JvmOverloads constructor(
         mutableState.update { current ->
             val selected = current.selected ?: return@update current
             if (current.draft == text) return@update current
+            val dirty = text != selected.text
+            ActiveDraftRegistry.update(selected.note.relativePath, dirty)
             current.copy(
                 draft = text,
-                dirty = text != selected.text,
+                dirty = dirty,
                 draftRevision = nextDraftRevision(),
                 selectionStart = current.selectionStart.coerceIn(0, text.length),
                 selectionEnd = current.selectionEnd.coerceIn(0, text.length),
@@ -326,6 +386,7 @@ class LibraryViewModel @JvmOverloads constructor(
             kind,
         )
         pendingAttachmentRequest = request
+        ActiveDraftRegistry.update(note.relativePath, true)
         mutableState.value = current.copy(attachmentPickerOpen = true)
         return request
     }
@@ -334,11 +395,15 @@ class LibraryViewModel @JvmOverloads constructor(
         val request = pendingAttachmentRequest
         pendingAttachmentRequest = null
         mutableState.update { it.copy(attachmentPickerOpen = false) }
-        if (uri == null) return
+        if (uri == null) {
+            updateActiveDraftRegistry()
+            return
+        }
         if (request == null || request.kind != kind) {
             mutableState.update {
                 it.copy(message = getApplication<Application>().getString(R.string.attachment_stale))
             }
+            updateActiveDraftRegistry()
             return
         }
         insertAttachment(request, uri)
@@ -381,11 +446,13 @@ class LibraryViewModel @JvmOverloads constructor(
                             selectionEnd = insertion.cursor,
                             attaching = false,
                         )
+                        ActiveDraftRegistry.update(request.ownerNoteId, true)
                     }
                     AttachmentInsertionResult.Stale -> {
                         runCatching {
                             attachmentImporter.discard(libraryRoot, request.ownerNoteId, attachment)
                         }
+                        updateActiveDraftRegistry()
                         mutableState.update {
                             it.copy(
                                 attaching = false,
@@ -396,6 +463,7 @@ class LibraryViewModel @JvmOverloads constructor(
                 }
             }.onFailure { error ->
                 mutableState.update { it.copy(attaching = false) }
+                updateActiveDraftRegistry()
                 showError(error)
             }
         }
@@ -422,6 +490,7 @@ class LibraryViewModel @JvmOverloads constructor(
                             current.copy(selected = saved, dirty = current.draft != saved.text, saving = false)
                         }
                     }
+                    updateActiveDraftRegistry()
                     onSaved?.invoke()
                     mutableState.update { it.copy(notes = repository.scan()) }
                     refreshSearch()
@@ -438,7 +507,7 @@ class LibraryViewModel @JvmOverloads constructor(
         val selected = snapshot.selected ?: return
         if (
             snapshot.preview || snapshot.formatting || snapshot.loading || snapshot.saving || snapshot.mutating ||
-            snapshot.attaching || snapshot.attachmentPickerOpen
+            snapshot.attaching || snapshot.attachmentPickerOpen || snapshot.syncing
         ) {
             return
         }
@@ -454,6 +523,9 @@ class LibraryViewModel @JvmOverloads constructor(
             } else {
                 current
             }
+        }
+        if (mutableState.value.formatting) {
+            ActiveDraftRegistry.update(selected.note.relativePath, true)
         }
         formatJob = viewModelScope.launch {
             runCatching { markdownFormatter.format(request.markdown) }
@@ -497,6 +569,7 @@ class LibraryViewModel @JvmOverloads constructor(
                         }
                     }
                 }
+            updateActiveDraftRegistry()
             formatJob = null
         }
     }
@@ -504,6 +577,7 @@ class LibraryViewModel @JvmOverloads constructor(
     fun closeNote() {
         formatJob?.cancel()
         formatJob = null
+        ActiveDraftRegistry.update(null, false)
         mutableState.update {
             it.copy(
                 selected = null,
@@ -522,6 +596,144 @@ class LibraryViewModel @JvmOverloads constructor(
 
     fun dismissMessage() {
         mutableState.update { it.copy(message = null) }
+    }
+
+    fun saveGitSettings(config: GitSyncConfig, username: String, newToken: String) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching {
+                val validatedConfig = config.validated()
+                val existing = if (newToken.isBlank()) {
+                    credentialStore.load(validatedConfig.repositoryUrl)
+                } else {
+                    null
+                }
+                val credentials = if (newToken.isNotBlank()) {
+                    GitCredentials(username, newToken)
+                } else {
+                    existing?.copy(username = username)
+                        ?: throw GitSyncException.Configuration(
+                            "Enter a personal access token for this repository URL.",
+                        )
+                }.validated()
+                credentialStore.save(validatedConfig.repositoryUrl, credentials)
+                gitPreferences.save(validatedConfig)
+                gitPreferences.setPendingConflict(null)
+                GitSyncScheduler.updatePeriodic(
+                    getApplication(),
+                    validatedConfig.periodicEnabled,
+                )
+                validatedConfig to credentials
+            }.onSuccess { (validatedConfig, credentials) ->
+                mutableState.update {
+                    it.copy(
+                        mutating = false,
+                        gitConfig = validatedConfig,
+                        gitUsername = credentials.username,
+                        hasGitCredentials = true,
+                        gitConflict = null,
+                        message = getApplication<Application>().getString(R.string.git_settings_saved),
+                    )
+                }
+            }.onFailure { error ->
+                mutableState.update { it.copy(mutating = false) }
+                showError(error)
+            }
+        }
+    }
+
+    fun syncNow() {
+        if (isBusy()) return
+        if (mutableState.value.dirty) {
+            mutableState.update {
+                it.copy(message = getApplication<Application>().getString(R.string.git_save_before_sync))
+            }
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(syncing = true, message = null) }
+            finishGitAttempt(runCatching { syncCoordinator.sync() })
+        }
+    }
+
+    fun resolveGitConflict(choices: Map<String, GitConflictChoice>) {
+        val conflict = mutableState.value.gitConflict ?: return
+        if (isBusy()) return
+        if (mutableState.value.dirty) {
+            mutableState.update {
+                it.copy(message = getApplication<Application>().getString(R.string.git_save_before_sync))
+            }
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(syncing = true, message = null) }
+            finishGitAttempt(runCatching { syncCoordinator.resolve(conflict, choices) })
+        }
+    }
+
+    private suspend fun finishGitAttempt(attempt: Result<*>) {
+        val refreshFailure = runCatching { refreshAfterGit() }.exceptionOrNull()
+        val error = attempt.exceptionOrNull() ?: refreshFailure
+        if (error == null) {
+            mutableState.update {
+                it.copy(
+                    syncing = false,
+                    gitConflict = null,
+                    message = getApplication<Application>().getString(R.string.git_sync_complete),
+                )
+            }
+        } else {
+            mutableState.update { current ->
+                current.copy(
+                    syncing = false,
+                    gitConflict = (error as? GitSyncException.Conflict)?.details ?: current.gitConflict,
+                )
+            }
+            showError(error)
+        }
+    }
+
+    private suspend fun refreshAfterGit() {
+        val before = mutableState.value
+        val ownerPath = before.selected?.note?.relativePath
+        val ownerRevision = before.draftRevision
+        val notes = repository.scan()
+        val trash = repository.listTrash()
+        val pinnedPaths = loadPinnedPaths()
+        val reopened = if (before.dirty || before.formatting || before.attaching || before.attachmentPickerOpen) {
+            null
+        } else {
+            ownerPath
+                ?.let { path -> notes.firstOrNull { it.relativePath == path } }
+                ?.let { note -> repository.open(note) }
+        }
+        mutableState.update { current ->
+            val sameEditor = current.selected?.note?.relativePath == ownerPath &&
+                current.draftRevision == ownerRevision
+            if (
+                !sameEditor || current.dirty || current.formatting || current.attaching ||
+                current.attachmentPickerOpen
+            ) {
+                current.copy(notes = notes, trash = trash, pinnedPaths = pinnedPaths)
+            } else {
+                val cursor = reopened?.text?.length ?: 0
+                current.copy(
+                    notes = notes,
+                    trash = trash,
+                    pinnedPaths = pinnedPaths,
+                    selected = reopened,
+                    draft = reopened?.text.orEmpty(),
+                    dirty = false,
+                    preview = if (reopened == null) false else current.preview,
+                    draftRevision = nextDraftRevision(),
+                    selectionStart = cursor,
+                    selectionEnd = cursor,
+                )
+            }
+        }
+        updateActiveDraftRegistry()
+        refreshSearch()
     }
 
     private fun refreshSearch() {
@@ -560,7 +772,12 @@ class LibraryViewModel @JvmOverloads constructor(
     }
 
     private fun isBusy(): Boolean = mutableState.value.run {
-        loading || saving || mutating || formatting || attaching
+        loading || saving || mutating || formatting || attaching || attachmentPickerOpen || syncing
+    }
+
+    private fun updateActiveDraftRegistry() {
+        val current = mutableState.value
+        ActiveDraftRegistry.update(current.selected?.note?.relativePath, current.dirty)
     }
 
     private suspend fun loadPinnedPaths(): Set<String> =
@@ -586,6 +803,7 @@ class LibraryViewModel @JvmOverloads constructor(
     override fun onCleared() {
         formatJob?.cancel()
         markdownFormatter.close()
+        ActiveDraftRegistry.update(null, false)
         super.onCleared()
     }
 

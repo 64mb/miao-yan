@@ -6,6 +6,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import com.tw93.miaoyan.android.data.ThemeMode
 
 /** Colors copied from the macOS editor assets and Markdown preview CSS. */
 object MiaoYanColors {
@@ -74,9 +75,13 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun MiaoYanTheme(content: @Composable () -> Unit) {
+fun MiaoYanTheme(
+    themeMode: ThemeMode = ThemeMode.AUTO_SYSTEM,
+    content: @Composable () -> Unit,
+) {
+    val darkTheme = themeMode.resolveDark(isSystemInDarkTheme())
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        colorScheme = if (darkTheme) DarkColors else LightColors,
         content = content,
     )
 }

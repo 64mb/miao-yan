@@ -3,6 +3,7 @@
     <exclude domain="file" path="git/" />
     <exclude domain="file" path="recovery/" />
     <exclude domain="file" path="datastore/" />
+    <exclude domain="file" path="libraries/default/.git/" />
     <!-- Room contains only a rebuildable search/link projection. -->
     <exclude domain="database" path="." />
 </full-backup-content>

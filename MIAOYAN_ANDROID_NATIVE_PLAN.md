@@ -4,7 +4,7 @@
 
 Статус: research завершён; первый исполняемый editor/preview-прототип находится в `MiaoYanAndroid/`. Каноническое хранилище Android подтверждено как app-private; SAF остаётся только границей явного Import/Export.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, строгие CRUD/Trash/Restore и явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI и безопасные локальные `/i/` assets. Прототип собирается и покрыт JVM/instrumentation tests; следующий checkpoint — Git и расширение editor/attachment flows. AI для Android исключён.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, строгие CRUD/Trash/Restore и явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting, permissionless Photo Picker/OpenDocument attachments и secure Git HTTPS sync на Eclipse JGit. Прототип собирается и покрыт JVM/instrumentation tests; adaptive tablet layout и дальнейший device hardening остаются отдельными checkpoint. AI для Android исключён.
 
 ## 1. Scope и принятые ограничения
 
@@ -15,15 +15,16 @@ Checkpoint прототипа: Android 15+ (`minSdk 35`), единственна
 - Kotlin + Android SDK;
 - одна app-private корневая папка библиотеки: `filesDir/libraries/default`;
 - вложенные папки и заметки `.md`, `.markdown`, `.txt`;
-- чтение, редактирование, preview, поиск, изображения и Trash;
+- чтение, редактирование, preview, поиск, изображения и Settings-owned Trash management с явным подтверждением permanent delete;
 - Git-синхронизация по HTTPS вручную и opt-in автоматически каждые 15 минут;
 - только `origin/main`;
 - авторизация Git: username + PAT;
+- identity Git-коммита: отдельные обязательные author name + author email, как в macOS;
 - максимальный размер добавляемого или изменяемого вложения — 25 MiB;
 - пользовательские метаданные, Git-служебные данные и секреты остаются локальными;
 - CI/CD пока не входит в scope;
 - Android AI conflict resolver не входит в scope и не планируется в текущем goal;
-- системная light/dark theme, app/action icons и визуальный parity с macOS для editor/preview;
+- локальная Auto/System, Dark или Light theme, app/action icons и визуальный parity с macOS для editor/preview;
 - локальные настройки шрифта и размера: небольшой лицензируемый набор и не более 10 фиксированных размеров.
 - SAF используется только для явного импорта из выбранной пользователем папки и экспорта в неё; импортированная папка не становится live-library.
 - отдельные toolbar actions: Typesetting, полноэкранный непрерывный Preview со значком видеокамеры как на macOS и послайдовый Presentation;
@@ -71,7 +72,7 @@ SAF tree выбранный пользователем — только исто
 | Индекс | Room, только stable channel |
 | Фоновые задачи | WorkManager: opt-in periodic Git sync, минимум 15 минут |
 | Markdown | cmark-gfm 0.29.0.gfm.13 через узкий JNI API |
-| Git | libgit2 1.9.7 через узкий JNI API |
+| Git | Eclipse JGit `7.7.1.202607240634-r` (EDL-1.0 / BSD-3-Clause), Gradle lockfile |
 | Preview | Android WebView + `WebViewAssetLoader` |
 | Секреты | Android Keystore + AES-256-GCM blobs в `noBackupFilesDir` |
 | Шрифты | системные equivalents; JetBrains Mono как bundled open alternative с license attribution |
@@ -94,7 +95,7 @@ MiaoYanAndroid/
 ├── core/model          platform-neutral domain models
 ├── core/data           app-private filesystem repository, Room index, SAF import/export
 ├── core/markdown       cmark-gfm JNI, transforms, HTML shell
-├── core/git            libgit2 JNI, sync state machine
+├── core/git            JGit adapter, sync state machine
 └── core/security       Keystore and encrypted secret storage
 ```
 
@@ -108,7 +109,7 @@ filesDir library → LibraryRepository → Room derived index → Flow → ViewM
 UI intent → use case → mutation lock → atomic filesystem mutation → hash verification
 ```
 
-UI никогда не работает с `File`, `ContentResolver`, libgit2 или Room DAO напрямую. `ContentResolver` доступен только Import/Export boundary.
+UI никогда не работает с `File`, `ContentResolver`, JGit transport API или Room DAO напрямую. `ContentResolver` доступен только Import/Export boundary.
 
 ## 5. Кроссплатформенный файловый контракт
 
@@ -250,18 +251,18 @@ Git работает прямо с `filesDir/libraries/default`: это одно
 Sync-транзакция, общая для ручного и фонового запуска:
 
 1. Захватить library mutation lock.
-2. Flush активного editor и pending saves.
+2. Отказаться от sync, если у активного editor есть несохранённый draft; фон не блокирует уход приложения и повторит работу только по правилам WorkManager.
 3. Снять hash snapshot канонической библиотеки и проверить path policy.
 4. Commit локальных изменений.
-5. Fetch только точного refspec `refs/heads/main:refs/remotes/origin/main`.
-6. На короткое окно блокировать редактирование и убедиться, что snapshot не изменился; при изменении повторить локальный commit.
-7. Проверить все incoming paths, entry types и sizes до изменения working tree.
-8. Создать `refs/miaoyan/recovery/latest` и filesystem backup затрагиваемых незакоммиченных данных.
-9. Сделать fast-forward либо подготовить merge без conflict markers в live working tree.
-10. Применить проверенный результат атомарно и проверить hashes.
-11. Обновить Room/UI.
-12. Push только `refs/heads/main:refs/heads/main`.
-13. Освободить lock.
+5. Fetch только точного refspec `+refs/heads/main:refs/remotes/origin/main`, без tags.
+6. Классифицировать history как same tree, local ahead, remote ahead или diverged.
+7. Проверить все incoming paths, entry types и added/modified attachment sizes до изменения working tree.
+8. Перед hard checkout создать recoverable ref `refs/miaoyan/checkout-recovery` на прежний commit.
+9. Для fast-forward применить проверенное remote tree; для divergence отложить apply до полного набора whole-file Local/Remote choices.
+10. Проверить итоговый working tree и только после этого удалить recovery ref.
+11. Push только точного refspec `refs/heads/main:refs/heads/main` с lease.
+12. Освободить общий `LibraryMutationGate`.
+13. Пересканировать canonical filesystem, перестроить Room projection и безопасно переоткрыть либо закрыть текущую UI note.
 
 Ручной запуск доступен из UI. Автоматический запуск — отдельный opt-in toggle с периодом 15 минут через WorkManager, только при наличии сети и валидной конфигурации. Период Android является inexact: Doze и battery policy могут отложить фактический запуск. Повторный запуск не пересекается с активной sync/mutation operation.
 
@@ -271,17 +272,33 @@ Sync-транзакция, общая для ручного и фонового 
 - embedded credentials в URL запрещены;
 - PAT не записывается в URL, Git config или logs;
 - certificate validation нельзя отключать;
-- cross-host redirects запрещены;
+- redirects полностью запрещены;
+- credential provider отвечает только для exact HTTPS host + effective port;
 - branch всегда `main`;
 - SSH не входит в scope.
 
 Критический Phase 0 gate: доказать Android CA trust, hostname validation и redirect behavior выбранной Git/TLS-реализации. Если это не доказано, нельзя принимать self-signed certificate «временно» или передавать PAT callback-у для другого host.
 
+### Почему JGit в MVP
+
+Реализованный MVP использует Eclipse JGit `7.7.1.202607240634-r`, закреплённый в
+`MiaoYanAndroid/app/gradle.lockfile`. JGit и его bundled notices распространяются по Eclipse
+Distribution License 1.0 (`SPDX: BSD-3-Clause`); точный EDL и дополнительный MIT notice из
+артефакта включены в `app/src/main/res/raw/jgit_notice.txt` и доступны из Settings.
+
+Это сознательный MVP-выбор: pure-Java реализация использует текущий JVM/Gradle toolchain и Android
+TLS stack, не добавляет ещё одну NDK/JNI ABI matrix и позволяет держать HTTPS redirect/credential
+policy в узком Kotlin adapter. Цена выбора — больший JVM artifact, GC/Java IO overhead и меньший
+контроль над native transport internals по сравнению с libgit2. libgit2 остаётся только возможной
+будущей миграцией, если измеримые performance/pack-memory/transport требования оправдают отдельные
+reproducible NDK builds, TLS dependency audit, per-ABI packaging и новый JNI lifecycle. Он не
+является текущей реализацией.
+
 ### Initial sync
 
 - пустой remote + непустая библиотека → preview initial commit, затем push;
 - пустая библиотека + непустой remote → preview файлов, затем apply;
-- обе стороны непусты и имеют unrelated histories → ничего не объединять автоматически; показать только «Оставить локальную библиотеку» или «Заменить локальную библиотеку удалённой», предварительно создав recovery snapshot;
+- обе стороны непусты и имеют unrelated histories → ничего не объединять автоматически; показать whole-file Local/Remote выбор для каждого отличающегося пути;
 - одинаковая история → обычный fast-forward/merge flow.
 
 ### Конфликты
@@ -354,14 +371,14 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 ./gradlew :benchmark:connectedCheck
 ```
 
-Плюс native cmark/libgit2 tests и ручная provider/IME matrix.
+Плюс native cmark tests, JGit policy/history/recovery JVM tests и ручная provider/IME matrix.
 
 ## 12. Этапы
 
 ### Phase 0 — feasibility, 1–2 недели
 
 - ✅ app-private filesystem CRUD/Trash и SAF Import/Export spike;
-- libgit2 Android build, HTTPS trust store, redirect, ABI;
+- ✅ JGit HTTPS trust store, redirect prohibition и exact host/port credential binding;
 - ✅ cmark-gfm JNI parity;
 - ✅ WebView CSP/raw HTML prototype;
 - ADR по app-private canonical storage, raw HTML и initial sync.
@@ -388,13 +405,13 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 
 ### Phase 3 — manual + periodic Git MVP, 3–5 недель
 
-- direct app-private Git working tree и recovery snapshot;
-- Keystore PAT;
-- `origin/main`, path policy, 25 MiB;
-- commit/fetch/merge/apply/push;
-- recovery ref;
-- local/remote conflict UI;
-- ручная кнопка Sync и opt-in WorkManager каждые 15 минут.
+- ✅ direct app-private Git working tree и recovery snapshot;
+- ✅ Keystore AES-GCM username/PAT blob в `noBackupFilesDir`, привязанный к normalized repository URL;
+- ✅ `origin/main`, root `.gitignore`, path policy, per-changed-attachment 25 MiB;
+- ✅ commit/fetch/classify/apply/push без content merge;
+- ✅ recovery ref;
+- ✅ local/remote whole-file conflict UI с timestamps и choose-all;
+- ✅ ручная кнопка Sync и opt-in WorkManager каждые 15 минут плюс bounded best-effort background enqueue.
 
 ### Phase 4 — visual/settings и platform polish, 2–3 недели
 
@@ -413,7 +430,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - backup/privacy validation;
 - Play pre-launch report.
 
-Оценка: 8–14 инженерных недель до уверенной beta для одного опытного Android-разработчика. Отказ от SAF как live storage убирает mirror/apply state machine; главные неопределённости теперь — TLS/Git conflict safety, WebView и IME.
+Оценка: 8–14 инженерных недель до уверенной beta для одного опытного Android-разработчика. Отказ от SAF как live storage убирает mirror/apply state machine; Git MVP закрывает базовый transport/conflict flow, а главные оставшиеся неопределённости — provider/device hardening, WebView и IME.
 
 ## 13. Вопросы, на которые нужен конкретный продуктовый ответ
 
@@ -422,20 +439,18 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 1. Iframe: после явного нажатия загружать внутри preview в жёстком sandbox без scripts/forms/popups/top-navigation или открывать системный браузер?
 2. PlantUML: локальный renderer, пользовательский endpoint или не включать в MVP? Рекомендация: не включать в MVP, пока нет локального renderer.
 3. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
-4. Git author identity: какие default name/email показывать до первого push? Рекомендация: обязательные поля без скрытых фиктивных значений.
+Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; remote media загружается только по нажатию; Git имеет ручной и opt-in 15-минутный запуск; username + PAT используются только для HTTPS-аутентификации, а обязательные отдельные author name/email формируют JGit `PersonIdent`, как в macOS; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
 
-Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; remote media загружается только по нажатию; Git имеет ручной и opt-in 15-минутный запуск; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
+## 14. Реализованные feasibility decisions
 
-## 14. Решение о старте
-
-Начинать следует не с полного UI, а с четырёх исполняемых spikes:
+Первые четыре исполняемых spikes дали текущие решения:
 
 1. App-private atomic filesystem operations и SAF Import/Export на реальных providers.
-2. libgit2 1.9.7 HTTPS/TLS без утечки credentials.
+2. JGit `7.7.1.202607240634-r` HTTPS/TLS с отключёнными redirects, exact host/port credential provider и URL-bound Keystore blob; libgit2 не реализован.
 3. cmark-gfm JNI и общий golden corpus.
 4. WebViewAssetLoader + CSP + локальные `i/` assets без раскрытия filesystem paths.
 
-После прохождения этих gates можно создавать production-модули Phase 1.
+Эти gates позволяют продолжать hardening существующих production-направлений без смены canonical storage.
 
 ## 15. Основные источники
 
@@ -452,5 +467,6 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - [Kotlin releases](https://kotlinlang.org/docs/releases.html)
 - [Compose BOM](https://developer.android.com/develop/ui/compose/bom)
 - [cmark-gfm releases](https://github.com/github/cmark-gfm/releases)
-- [libgit2 repository and Android build notes](https://github.com/libgit2/libgit2)
-- [libgit2 build guide](https://libgit2.org/docs/guides/build-and-link/)
+- [Eclipse JGit project](https://www.eclipse.org/jgit/)
+- [Eclipse JGit repository](https://github.com/eclipse-jgit/jgit)
+- [libgit2 repository and Android build notes](https://github.com/libgit2/libgit2) — только reference для возможной будущей миграции
