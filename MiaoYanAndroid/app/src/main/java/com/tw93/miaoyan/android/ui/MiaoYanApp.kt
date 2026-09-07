@@ -13,6 +13,9 @@ import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputConnectionWrapper
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -101,6 +104,9 @@ import com.tw93.miaoyan.android.data.NameResult
 import com.tw93.miaoyan.android.data.NotePathPolicy
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.TrashedNote
+import com.tw93.miaoyan.android.ui.editor.MarkdownEditorPalettes
+import com.tw93.miaoyan.android.ui.editor.MarkdownSyntaxHighlighter
+import com.tw93.miaoyan.android.ui.editor.MarkdownSyntaxPalette
 import com.tw93.miaoyan.android.ui.presentation.AppPrivatePresentationImageHandler
 import com.tw93.miaoyan.android.ui.presentation.PresentationHost
 import com.tw93.miaoyan.android.ui.presentation.PresentationImageHandler
@@ -779,7 +785,8 @@ private fun PlatformMarkdownEditor(
     modifier: Modifier = Modifier,
 ) {
     val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
-    val contentColor = (if (darkMode) MiaoYanColors.EditorTextDark else MiaoYanColors.EditorTextLight).toArgb()
+    val syntaxPalette = MarkdownEditorPalettes.forDarkMode(darkMode)
+    val contentColor = syntaxPalette.body
     val backgroundColor =
         (if (darkMode) MiaoYanColors.EditorBackgroundDark else MiaoYanColors.EditorBackgroundLight).toArgb()
     AndroidView(
@@ -797,11 +804,18 @@ private fun PlatformMarkdownEditor(
                 setText(text)
                 setSelection(selectionStart.coerceIn(0, text.length), selectionEnd.coerceIn(0, text.length))
                 selectionListener = onSelectionChanged
+                updateSyntaxPalette(syntaxPalette)
                 addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(value: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                    override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) = Unit
-                    override fun afterTextChanged(value: Editable?) = onTextChanged(value?.toString().orEmpty())
+                    override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) {
+                        noteSyntaxChange(start, count)
+                    }
+                    override fun afterTextChanged(value: Editable?) {
+                        onTextChanged(value?.toString().orEmpty())
+                        scheduleSyntaxHighlight()
+                    }
                 })
+                scheduleSyntaxHighlight()
             }
         },
         update = { editor ->
@@ -811,11 +825,13 @@ private fun PlatformMarkdownEditor(
             editor.typeface = editorTypeface(editorSettings.font, editor)
             editor.letterSpacing = 0.5f / editorSettings.fontSizeSp
             editor.setLineSpacing(3f * editor.resources.displayMetrics.density, 1.3f)
+            editor.updateSyntaxPalette(syntaxPalette)
             val composing = BaseInputConnection.getComposingSpanStart(editor.text) >= 0
             if (!composing && editor.text.toString() != text) {
                 val selection = editor.selectionStart.coerceIn(0, text.length)
                 editor.setText(text)
                 editor.setSelection(selection)
+                editor.scheduleSyntaxHighlight()
             }
             if (!composing) {
                 val start = selectionStart.coerceIn(0, editor.text.length)
@@ -828,10 +844,76 @@ private fun PlatformMarkdownEditor(
 
 private class SelectionAwareEditText(context: Context) : EditText(context) {
     var selectionListener: ((Int, Int) -> Unit)? = null
+    private var syntaxPalette: MarkdownSyntaxPalette = MarkdownEditorPalettes.Light
+    private var textVersion = 0
+    private var highlightedVersion = -1
+    private var paletteNeedsRefresh = true
+    private var pendingHighlightStart: Int? = null
+    private var pendingHighlightEnd: Int? = null
+    private val syntaxHighlightRunnable = Runnable {
+        val editable = text ?: return@Runnable
+        if (BaseInputConnection.getComposingSpanStart(editable) >= 0) return@Runnable
+        if (highlightedVersion == textVersion && !paletteNeedsRefresh) return@Runnable
+        val start = pendingHighlightStart ?: selectionStart.coerceAtLeast(0)
+        val end = pendingHighlightEnd ?: selectionEnd.coerceAtLeast(start)
+        if (
+            MarkdownSyntaxHighlighter.highlight(
+                editable = editable,
+                palette = syntaxPalette,
+                changedStart = start,
+                changedEndExclusive = end,
+                clearAll = paletteNeedsRefresh,
+            )
+        ) {
+            highlightedVersion = textVersion
+            paletteNeedsRefresh = false
+            pendingHighlightStart = null
+            pendingHighlightEnd = null
+        }
+    }
+
+    fun updateSyntaxPalette(value: MarkdownSyntaxPalette) {
+        if (syntaxPalette == value) return
+        syntaxPalette = value
+        paletteNeedsRefresh = true
+        scheduleSyntaxHighlight()
+    }
+
+    fun noteSyntaxChange(start: Int, count: Int) {
+        textVersion++
+        val end = (start + count).coerceAtLeast(start)
+        pendingHighlightStart = minOf(pendingHighlightStart ?: start, start)
+        pendingHighlightEnd = maxOf(pendingHighlightEnd ?: end, end)
+    }
+
+    fun scheduleSyntaxHighlight() {
+        removeCallbacks(syntaxHighlightRunnable)
+        postDelayed(syntaxHighlightRunnable, SYNTAX_HIGHLIGHT_DELAY_MILLIS)
+    }
 
     override fun onSelectionChanged(selectionStart: Int, selectionEnd: Int) {
         super.onSelectionChanged(selectionStart, selectionEnd)
         selectionListener?.invoke(selectionStart, selectionEnd)
+    }
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        val inputConnection = super.onCreateInputConnection(outAttrs) ?: return null
+        return object : InputConnectionWrapper(inputConnection, false) {
+            override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean =
+                super.commitText(text, newCursorPosition).also { scheduleSyntaxHighlight() }
+
+            override fun finishComposingText(): Boolean =
+                super.finishComposingText().also { scheduleSyntaxHighlight() }
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        removeCallbacks(syntaxHighlightRunnable)
+        super.onDetachedFromWindow()
+    }
+
+    private companion object {
+        const val SYNTAX_HIGHLIGHT_DELAY_MILLIS = 32L
     }
 }
 
