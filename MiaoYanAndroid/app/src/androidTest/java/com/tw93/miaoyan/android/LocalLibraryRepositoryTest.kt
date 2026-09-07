@@ -5,6 +5,9 @@ import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tw93.miaoyan.android.data.LocalLibraryRepository
+import com.tw93.miaoyan.android.data.TrashManifestCodec
+import com.tw93.miaoyan.android.model.LibraryFolder
+import com.tw93.miaoyan.android.model.LibraryItemKind
 import com.tw93.miaoyan.android.model.TrashedNote
 import java.io.File
 import java.nio.file.Files
@@ -77,6 +80,92 @@ class LocalLibraryRepositoryTest {
     }
 
     @Test
+    fun listsFoldersAndCreatesNotesInTheCurrentNestedFolder() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val projects = repository.createFolder("", "Projects")
+        val nested = repository.createFolder(projects.relativePath, "2026")
+        repository.createNote(nested.relativePath, "Plan")
+
+        val rootListing = repository.listDirectory("")
+        assertEquals(listOf("Projects"), rootListing.folders.map { it.displayName })
+        assertTrue(rootListing.notes.isEmpty())
+
+        val nestedListing = repository.listDirectory("Projects/2026")
+        assertEquals("Projects/2026", nestedListing.currentFolder.relativePath)
+        assertEquals(listOf("Projects/2026/Plan.md"), nestedListing.notes.map { it.relativePath })
+        assertFalse(File(root, "Plan.md").exists())
+    }
+
+    @Test
+    fun folderRenameIsAtomicAndRootCannotBeRenamedOrTrashed() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val projects = repository.createFolder("", "Projects")
+        repository.createNote(projects.relativePath, "Plan")
+
+        val mutation = repository.renameFolder(projects, "Archive")
+
+        assertEquals("Projects", mutation.oldRelativePath)
+        assertEquals("Archive", mutation.newRelativePath)
+        assertFalse(File(root, "Projects").exists())
+        assertEquals("", File(root, "Archive/Plan.md").readText())
+        val rootFolder = repository.listDirectory("").currentFolder
+        assertTrue(runCatching { repository.renameFolder(rootFolder, "Other") }.isFailure)
+        assertTrue(runCatching { repository.moveFolderToTrash(rootFolder) }.isFailure)
+    }
+
+    @Test
+    fun folderTrashRestoreAndPermanentDeleteAreRecoverableAndContained() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val folder = repository.createFolder("", "Projects")
+        repository.createFolder(folder.relativePath, "Empty")
+        repository.createNote(folder.relativePath, "Plan")
+
+        repository.moveFolderToTrash(folder)
+        assertFalse(File(root, "Projects").exists())
+        val trashed = repository.listTrash().single()
+        assertEquals(LibraryItemKind.FOLDER, trashed.kind)
+        assertTrue(File(root, trashed.trashRelativePath + "/Empty").isDirectory)
+
+        val restored = repository.restore(trashed)
+        assertEquals("Projects", restored.restoredRelativePath)
+        assertTrue(File(root, "Projects/Empty").isDirectory)
+
+        repository.moveFolderToTrash(repository.listDirectory("").folders.single())
+        val trashedAgain = repository.listTrash().single()
+        repository.permanentlyDelete(trashedAgain)
+        assertFalse(File(root, trashedAgain.trashRelativePath).exists())
+        assertTrue(repository.listTrash().isEmpty())
+    }
+
+    @Test
+    fun folderOperationsRejectTraversalReservedNamesAndSymlinkTrees() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        assertTrue(runCatching { repository.createFolder("", "../outside") }.isFailure)
+        listOf(".git", ".Trash", "Trash", "i", "files").forEach { reserved ->
+            assertTrue(runCatching { repository.createFolder("", reserved) }.isFailure)
+        }
+
+        root.mkdirs()
+        val outside = File(sandbox, "outside-folder").apply { mkdirs() }
+        File(outside, "Keep.md").writeText("keep")
+        Files.createSymbolicLink(File(root, "Linked").toPath(), outside.toPath())
+        val linked = LibraryFolder("Linked", "Linked", "Linked")
+
+        assertTrue(runCatching { repository.listDirectory("Linked") }.isFailure)
+        assertTrue(runCatching { repository.renameFolder(linked, "Renamed") }.isFailure)
+        assertTrue(runCatching { repository.moveFolderToTrash(linked) }.isFailure)
+        assertEquals("keep", File(outside, "Keep.md").readText())
+    }
+
+    @Test
+    fun directoryListingRejectsExistingCaseOrUnicodeCollisions() = runBlocking {
+        write("Projects/Café.md", "one")
+        write("Projects/CAFE\u0301.MD", "two")
+
+        assertTrue(runCatching { LocalLibraryRepository(context).listDirectory("Projects") }.isFailure)
+    }
+
+    @Test
     fun saveFailsClosedAfterExternalChangeAndRenameRejectsNormalizedCollision() = runBlocking {
         val repository = LocalLibraryRepository(context)
         val first = repository.createRootNote("Café.md")
@@ -142,7 +231,10 @@ class LocalLibraryRepositoryTest {
         assertTrue(runCatching { repository.permanentlyDelete(trashed) }.isFailure)
         assertEquals("keep", outside.readText())
         assertTrue(Files.isSymbolicLink(trashFile.toPath()))
-        assertTrue(File(root, ".Trash/manifest.v1").readText().contains(requireNotNull(trashed.manifestId)))
+        assertTrue(
+            TrashManifestCodec.decode(File(root, ".Trash/manifest.v1").readText())
+                .any { it.id == requireNotNull(trashed.manifestId) },
+        )
     }
 
     private fun write(relativePath: String, content: String) {

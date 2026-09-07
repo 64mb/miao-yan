@@ -20,6 +20,7 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -91,6 +92,8 @@ import com.tw93.miaoyan.android.data.NameError
 import com.tw93.miaoyan.android.data.NameResult
 import com.tw93.miaoyan.android.data.NotePathPolicy
 import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.model.LibraryFolder
+import com.tw93.miaoyan.android.model.LibraryItemKind
 import com.tw93.miaoyan.android.model.TrashedNote
 import com.tw93.miaoyan.android.ui.editor.MarkdownEditorPalettes
 import com.tw93.miaoyan.android.ui.editor.MarkdownSyntaxHighlighter
@@ -236,9 +239,15 @@ fun MiaoYanApp(
                     onRefresh = viewModel::reload,
                     onQueryChanged = viewModel::updateQuery,
                     onOpenNote = viewModel::openNote,
+                    onOpenFolder = viewModel::openFolder,
+                    onOpenFolderPath = viewModel::openFolderPath,
+                    onNavigateUp = viewModel::navigateUp,
                     onCreateNote = viewModel::createNote,
+                    onCreateFolder = viewModel::createFolder,
                     onRenameNote = viewModel::renameNote,
+                    onRenameFolder = viewModel::renameFolder,
                     onMoveToTrash = viewModel::moveToTrash,
+                    onMoveFolderToTrash = viewModel::moveFolderToTrash,
                     onTogglePinned = viewModel::togglePinned,
                     onResolveConflict = { showGitConflict = true },
                     onSettings = { showSettings = true },
@@ -281,21 +290,32 @@ fun MiaoYanApp(
 }
 
 @Composable
-private fun LibraryScreen(
+internal fun LibraryScreen(
     state: LibraryUiState,
     onRefresh: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onOpenNote: (LibraryNote) -> Unit,
+    onOpenFolder: (LibraryFolder) -> Unit,
+    onOpenFolderPath: (String) -> Unit,
+    onNavigateUp: () -> Unit,
     onCreateNote: (String) -> Unit,
+    onCreateFolder: (String) -> Unit,
     onRenameNote: (LibraryNote, String) -> Unit,
+    onRenameFolder: (LibraryFolder, String) -> Unit,
     onMoveToTrash: (LibraryNote) -> Unit,
+    onMoveFolderToTrash: (LibraryFolder) -> Unit,
     onTogglePinned: (LibraryNote) -> Unit,
     onResolveConflict: () -> Unit,
     onSettings: () -> Unit,
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
     var renamingNote by remember { mutableStateOf<LibraryNote?>(null) }
+    var renamingFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var trashingNote by remember { mutableStateOf<LibraryNote?>(null) }
+    var trashingFolder by remember { mutableStateOf<LibraryFolder?>(null) }
+
+    BackHandler(enabled = !state.currentFolder.isRoot, onBack = onNavigateUp)
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 920.dp).fillMaxWidth().fillMaxHeight()) {
@@ -318,6 +338,15 @@ private fun LibraryScreen(
                     maxLines = 1,
                 )
                 Spacer(Modifier.weight(1f))
+                IconButton(
+                    onClick = { showCreateFolderDialog = true },
+                    modifier = Modifier.size(48.dp).testTag("create-folder"),
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_create_folder),
+                        contentDescription = stringResource(R.string.new_folder),
+                    )
+                }
                 IconButton(onClick = onRefresh, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_refresh), contentDescription = stringResource(R.string.refresh))
                 }
@@ -341,6 +370,11 @@ private fun LibraryScreen(
                     }
                 }
             }
+            FolderBreadcrumb(
+                relativePath = state.currentFolder.relativePath,
+                onNavigateUp = onNavigateUp,
+                onOpenFolderPath = onOpenFolderPath,
+            )
             OutlinedTextField(
                 value = state.query,
                 onValueChange = onQueryChanged,
@@ -350,14 +384,26 @@ private fun LibraryScreen(
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
             )
-            if (state.visibleNotes.isEmpty() && !state.loading) {
-                if (state.notes.isEmpty() && state.query.isBlank()) {
-                    EmptyLibraryContent()
+            if (state.visibleFolders.isEmpty() && state.visibleNotes.isEmpty() && !state.loading) {
+                if (state.folders.isEmpty() && state.notes.isEmpty() && state.query.isBlank()) {
+                    if (state.currentFolder.isRoot) EmptyLibraryContent() else EmptyLibraryMessage(R.string.folder_empty)
                 } else {
                     EmptyLibraryMessage(R.string.no_notes)
                 }
             } else {
                 LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
+                    items(state.visibleFolders, key = { "folder:${it.id}" }) { folder ->
+                        FolderRow(
+                            folder = folder,
+                            onClick = { onOpenFolder(folder) },
+                            onRename = { renamingFolder = folder },
+                            onTrash = { trashingFolder = folder },
+                        )
+                        HorizontalDivider(
+                            Modifier.padding(start = 20.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
+                        )
+                    }
                     items(state.visibleNotes, key = { it.id }) { note ->
                         NoteRow(
                             note = note,
@@ -397,6 +443,15 @@ private fun LibraryScreen(
             onConfirm = { name -> showCreateDialog = false; onCreateNote(name) },
         )
     }
+    if (showCreateFolderDialog) {
+        FolderNameDialog(
+            title = stringResource(R.string.new_folder),
+            initialName = "",
+            confirmLabel = stringResource(R.string.create),
+            onDismiss = { showCreateFolderDialog = false },
+            onConfirm = { name -> showCreateFolderDialog = false; onCreateFolder(name) },
+        )
+    }
     renamingNote?.let { note ->
         NoteNameDialog(
             title = stringResource(R.string.rename_note),
@@ -404,6 +459,15 @@ private fun LibraryScreen(
             confirmLabel = stringResource(R.string.rename),
             onDismiss = { renamingNote = null },
             onConfirm = { name -> renamingNote = null; onRenameNote(note, name) },
+        )
+    }
+    renamingFolder?.let { folder ->
+        FolderNameDialog(
+            title = stringResource(R.string.rename_folder),
+            initialName = folder.displayName,
+            confirmLabel = stringResource(R.string.rename),
+            onDismiss = { renamingFolder = null },
+            onConfirm = { name -> renamingFolder = null; onRenameFolder(folder, name) },
         )
     }
     trashingNote?.let { note ->
@@ -420,6 +484,96 @@ private fun LibraryScreen(
                 TextButton(onClick = { trashingNote = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+    trashingFolder?.let { folder ->
+        AlertDialog(
+            onDismissRequest = { trashingFolder = null },
+            title = { Text(stringResource(R.string.move_folder_to_trash_title)) },
+            text = { Text(stringResource(R.string.move_folder_to_trash_message, folder.displayName)) },
+            confirmButton = {
+                TextButton(
+                    modifier = Modifier.testTag("folder-trash-confirm"),
+                    onClick = { trashingFolder = null; onMoveFolderToTrash(folder) },
+                ) {
+                    Text(stringResource(R.string.move_to_trash))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { trashingFolder = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun FolderBreadcrumb(
+    relativePath: String,
+    onNavigateUp: () -> Unit,
+    onOpenFolderPath: (String) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (relativePath.isNotEmpty()) {
+            IconButton(onClick = onNavigateUp, modifier = Modifier.size(40.dp).testTag("folder-back")) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
+            }
+        } else {
+            Spacer(Modifier.size(8.dp))
+        }
+        TextButton(onClick = { onOpenFolderPath("") }) {
+            Text(stringResource(R.string.library_root), maxLines = 1)
+        }
+        var accumulated = ""
+        relativePath.split('/').filter(String::isNotEmpty).forEach { segment ->
+            accumulated = if (accumulated.isEmpty()) segment else "$accumulated/$segment"
+            val destination = accumulated
+            Icon(
+                painterResource(R.drawable.ic_chevron_right),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            TextButton(onClick = { onOpenFolderPath(destination) }) {
+                Text(segment, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FolderRow(
+    folder: LibraryFolder,
+    onClick: () -> Unit,
+    onRename: () -> Unit,
+    onTrash: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().testTag("folder-row:${folder.relativePath}")
+            .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_folder_open),
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                folder.displayName,
+                modifier = Modifier.padding(start = 12.dp),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(onClick = onRename) { Text(stringResource(R.string.rename)) }
+        TextButton(onClick = onTrash) { Text(stringResource(R.string.trash)) }
     }
 }
 
@@ -452,6 +606,65 @@ private fun EmptyLibraryContent() {
 }
 
 @Composable
+private fun FolderNameDialog(
+    title: String,
+    initialName: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    val result = NotePathPolicy.validateFolderName(name)
+    val error = (result as? NameResult.Invalid)?.error
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier.fillMaxWidth().testTag("folder-name"),
+                    label = { Text(stringResource(R.string.folder_name)) },
+                    isError = error != null,
+                    singleLine = true,
+                )
+                error?.let {
+                    Text(
+                        folderNameErrorMessage(it),
+                        modifier = Modifier.padding(top = 4.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                modifier = Modifier.testTag("folder-name-confirm"),
+                onClick = { onConfirm((result as NameResult.Valid).name) },
+                enabled = result is NameResult.Valid,
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun folderNameErrorMessage(error: NameError): String = stringResource(
+    when (error) {
+        NameError.EMPTY -> R.string.folder_name_error_empty
+        NameError.RESERVED -> R.string.folder_name_error_reserved
+        NameError.HIDDEN -> R.string.folder_name_error_hidden
+        NameError.INVALID_CHARACTERS -> R.string.folder_name_error_characters
+        NameError.UNSUPPORTED_EXTENSION -> R.string.folder_name_error_characters
+        NameError.TOO_LONG -> R.string.folder_name_error_too_long
+    },
+)
+
+@Composable
 private fun NoteRow(
     note: LibraryNote,
     pinned: Boolean,
@@ -460,7 +673,10 @@ private fun NoteRow(
     onRename: () -> Unit,
     onTrash: () -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
+    Row(
+        Modifier.fillMaxWidth().testTag("note-row:${note.relativePath}")
+            .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+    ) {
         Column(Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 6.dp)) {
             Text(
                 note.displayName.substringBeforeLast('.'),
@@ -503,6 +719,14 @@ private fun TrashRow(note: TrashedNote, onRestore: () -> Unit, onPermanentlyDele
         Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (note.kind == LibraryItemKind.FOLDER) {
+            Icon(
+                painterResource(R.drawable.ic_folder_open),
+                contentDescription = stringResource(R.string.folder),
+                modifier = Modifier.padding(end = 12.dp).size(24.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         Column(Modifier.weight(1f)) {
             Text(note.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             note.originalRelativePath?.let {
@@ -1007,8 +1231,29 @@ internal fun TrashSettingsScreen(
     pendingDelete?.let { note ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text(stringResource(R.string.delete_permanently_title)) },
-            text = { Text(stringResource(R.string.delete_permanently_message, note.displayName)) },
+            title = {
+                Text(
+                    stringResource(
+                        if (note.kind == LibraryItemKind.FOLDER) {
+                            R.string.delete_folder_permanently_title
+                        } else {
+                            R.string.delete_permanently_title
+                        },
+                    ),
+                )
+            },
+            text = {
+                Text(
+                    stringResource(
+                        if (note.kind == LibraryItemKind.FOLDER) {
+                            R.string.delete_folder_permanently_message
+                        } else {
+                            R.string.delete_permanently_message
+                        },
+                        note.displayName,
+                    ),
+                )
+            },
             confirmButton = {
                 TextButton(
                     modifier = Modifier.testTag("trash-delete-confirm"),

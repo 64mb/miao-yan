@@ -2,25 +2,40 @@ package com.tw93.miaoyan.android.data
 
 import android.net.Uri
 import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.model.LibraryDirectoryListing
+import com.tw93.miaoyan.android.model.LibraryFolder
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
 
 /** UI boundary: canonical mutations delegate to LocalLibraryRepository; Room is derived only. */
+data class FolderMutationResult(
+    val oldRelativePath: String,
+    val newRelativePath: String?,
+)
+
 interface LibraryRepository {
     /** Permanently prevents demo seeding before Import or Git claims an empty library. */
     suspend fun claimForExternalInitialization()
 
     suspend fun scan(): List<LibraryNote>
 
+    suspend fun listDirectory(relativePath: String): LibraryDirectoryListing
+
     suspend fun search(query: String): List<LibraryNote>
 
     suspend fun open(note: LibraryNote): OpenNote
 
-    suspend fun createRootNote(inputName: String): OpenNote
+    suspend fun createNote(folderRelativePath: String, inputName: String): OpenNote
+
+    suspend fun createFolder(parentRelativePath: String, inputName: String): LibraryFolder
 
     suspend fun rename(note: LibraryNote, inputName: String): LibraryNote
 
+    suspend fun renameFolder(folder: LibraryFolder, inputName: String): FolderMutationResult
+
     suspend fun moveToTrash(note: LibraryNote)
+
+    suspend fun moveFolderToTrash(folder: LibraryFolder)
 
     suspend fun listTrash(): List<TrashedNote>
 

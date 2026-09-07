@@ -4,7 +4,7 @@
 
 Статус: research завершён; первый исполняемый editor/preview-прототип находится в `MiaoYanAndroid/`. Каноническое хранилище Android подтверждено как app-private; SAF остаётся только границей явного Import/Export.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, note CRUD/Trash/Restore, явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting и permissionless Photo Picker/OpenDocument attachments уже находятся в target. Git HTTPS и preview реализованы, но не считаются принятыми до закрытия release-only `lb0`, интеграции единого preview pipeline и повторного device smoke. Folder CRUD подготовлен отдельно и также требует интеграции. Adaptive tablet layout, iframe и корректный короткий exit-sync ещё не реализованы. AI для Android исключён.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, полноценная навигация и CRUD вложенных папок, строгие CRUD/Trash/Restore заметок и папок, явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting и permissionless Photo Picker/OpenDocument attachments уже находятся в target. Git HTTPS и preview реализованы, но требуют release/device regression gates; folder CRUD интегрирован с Room, pins и owner metadata. Adaptive tablet layout, iframe и корректный короткий exit-sync ещё не реализованы. AI для Android исключён.
 
 ## Текущий объединённый goal и Definition of Done
 
@@ -33,7 +33,7 @@ Android-версия доводится одним цельным локальн
 |---|---|---|---|
 | P0 | `Sync Now` / Reload с Git | Исправляется release-only сбой `lb0`; debug API и JVM policy уже существуют | minified `localRelease` smoke с настоящим JGit init/sync path, стабильные пользовательские ошибки без обфусцированных имён |
 | P0 | Inline Preview | Отдельный hotfix подготовлен: reusable continuous WebView, renderer recovery, font-before-first-frame | rebase на текущий target, JVM/lint/build и один изолированный device smoke без crash/FOUT |
-| P1 | Nested folder CRUD | Полная реализация подготовлена в отдельной ветке | интеграция, затем create/rename/navigation/trash/restore/permanent-delete smoke с Room/pins/draft remap |
+| P1 | Nested folder CRUD | Интегрирован: create/rename/navigation и recoverable Trash/restore/permanent delete с Room/pins/draft remap | targeted device smoke и дальнейший filesystem hardening |
 | P1 | Tablet | Реального list-detail/two-pane branching пока нет | phone/tablet, rotation и multi-window tests от 840 dp |
 | P1 | Best-effort exit sync | Текущий worker ошибочно зависит от periodic toggle и допускает длинный timeout | отдельный от periodic запускающий путь, короткий timeout, выход не блокируется, local commit остаётся восстановимым |
 | P1 | Click-to-load iframe | Ещё отсутствует; raw HTML сейчас безопасно удаляется cmark без unsafe mode | явное нажатие, изолированный in-app iframe без scripts/forms/popups/top-navigation и security tests |
@@ -108,7 +108,7 @@ SAF tree выбранный пользователем — только исто
 | Редактор | `AppCompatEditText`/`EditText` внутри `AndroidView` |
 | Состояние | ViewModel + coroutines + Flow/StateFlow, UDF |
 | Настройки | Preferences DataStore 1.2.1 |
-| Индекс | Room, только stable channel |
+| Индекс | Room 2.8.4 |
 | Фоновые задачи | WorkManager: opt-in periodic Git sync, минимум 15 минут |
 | Markdown | cmark-gfm 0.29.0.gfm.13 через узкий JNI API |
 | Git | Eclipse JGit `7.7.1.202607240634-r` (EDL-1.0 / BSD-3-Clause), Gradle lockfile |
@@ -197,9 +197,28 @@ bootstrap state; удаление demo-файлов никогда не запу
 - Полный scan — итеративный обход вне main thread, с cancellation и защитой от symlink escape/loops.
 - File observer — лишь сигнал к пересканированию; correctness опирается на hash/generation.
 - До create/rename проверяются дубликаты без учёта регистра, Unicode normalization и лимит UTF-8 имени.
+- Directory listing возвращает отдельно текущую папку, дочерние папки и заметки; UI всегда показывает
+  папки первыми, поддерживает breadcrumb/Back и создаёт заметку/FAB в текущей папке.
+- Имена папок отклоняют traversal, `/`/`\\`, control/DEL, leading dot и зарезервированные `.git`,
+  `.Trash`, `Trash`, `i`, `files` без учёта регистра после NFC normalization. Root нельзя rename или
+  переместить в Trash; symlink-компоненты и symlink внутри удаляемого дерева fail closed.
+- Создание пустой папки не добавляет `.gitkeep`: пустые директории намеренно остаются локальными и
+  не меняют существующий Git allowlist/`origin/main` контракт.
 - Запись существующей заметки выполняется fail-closed по expected hash и owner note ID через temporary sibling + replace.
-- Удаление сначала переносит объект в app-private `Trash/`; restore использует локальный manifest исходного пути и fallback в root при конфликте/исчезновении папки.
+- Удаление сначала переносит заметку или целую папку same-volume `ATOMIC_MOVE` в app-private
+  `.Trash/items/<uuid>/`; restore использует локальный manifest исходного пути и fallback в root при
+  конфликте/исчезновении родительской папки. Permanent delete доступен только из Settings Trash и
+  удаляет ровно проверенный item после именованного destructive confirm.
 - `Trash`, `.Trash`, `.git`, `i/` и служебные файлы исключены из обычного списка и поискового индекса согласно своему назначению.
+
+Folder rename/trash проходят через общий `LibraryRepositoryProvider` и process-wide
+`LibraryMutationGate`, затем единым scan перестраивают Room paths/wikilinks/backlinks. DataStore pins
+remap-ятся при rename и retire-ятся при Trash; pending операция заранее пишется атомарно в
+`noBackupFilesDir/library-path-mutation.v1`, поэтому следующий scan идемпотентно завершает metadata
+transition после crash. ViewModel remap-ит current folder, selected/open note и
+`ActiveDraftRegistry`; dirty draft продолжает принадлежать тому же файлу после rename. Folder
+mutation не стартует во время save/typesetting/attachment picker/import/Git sync, а Trash папки,
+владеющей dirty draft, требует сначала Save или Discard.
 
 Import/Export:
 
@@ -435,7 +454,8 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 
 - ✅ создание app-private root и явный Import/Export;
 - ✅ одноразовое crash-safe заполнение новой/пустой библиотеки desktop demo-заметками до первого Room scan, с `zh`/English выбором и sentinel вне Git working tree;
-- ✅ scan, Room index, folders и recursive search;
+- ✅ safe directory listing, breadcrumb/Back, nested folder/note creation, folder rename и folders-first UI;
+- ✅ recursive scan, Room index и search;
 - ✅ GFM preview, frontmatter, wikilinks/backlinks и `i/`;
 - ✅ safe WebView и external links;
 - large-file skeleton/read-only behavior.
@@ -447,8 +467,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - ✅ autosave с owner/hash generation;
 - ✅ image/file picker, `i/` и базовая вставка `files/`;
 - ✅ Typesetting action;
-- ✅ note Trash/restore/permanent delete;
-- folder CRUD подготовлен отдельно и ожидает интеграции;
+- ✅ recoverable note/folder Trash/restore/permanent delete с named confirm и folder-owner dirty guard;
 - `/files/` preview/open policy, local history и external-change conflicts остаются открыты.
 
 ### Phase 3 — manual + periodic Git MVP, 3–5 недель

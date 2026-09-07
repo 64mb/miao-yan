@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.tw93.miaoyan.android.model.TrashedNote
+import com.tw93.miaoyan.android.model.LibraryItemKind
 import com.tw93.miaoyan.android.ui.LibraryUiState
 import com.tw93.miaoyan.android.ui.TrashSettingsScreen
 import com.tw93.miaoyan.android.ui.theme.MiaoYanTheme
@@ -66,6 +67,40 @@ class TrashSettingsScreenTest {
         compose.onNodeWithText(label).performClick()
         compose.onNodeWithTag("trash-delete-confirm").performClick()
         assertEquals(note, deleted.get())
+    }
+
+    @Test
+    fun folderRowsSupportRestoreAndNamedPermanentDelete() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val folder = trashedNote().copy(
+            trashRelativePath = ".Trash/items/123e4567-e89b-12d3-a456-426614174000/Projects",
+            displayName = "Projects",
+            originalRelativePath = "Work/Projects",
+            kind = LibraryItemKind.FOLDER,
+        )
+        val restored = AtomicReference<TrashedNote?>()
+        val deleted = AtomicReference<TrashedNote?>()
+        compose.setContent {
+            MiaoYanTheme {
+                TrashSettingsScreen(
+                    state = LibraryUiState(trash = listOf(folder)),
+                    onRestore = restored::set,
+                    onPermanentlyDelete = deleted::set,
+                    onBack = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText(context.getString(R.string.restore)).performClick()
+        assertEquals(folder, restored.get())
+        compose.onNodeWithText(context.getString(R.string.delete_permanently)).performClick()
+        compose.onNodeWithText(context.getString(R.string.delete_folder_permanently_title)).assertIsDisplayed()
+        compose.onNodeWithText(
+            context.getString(R.string.delete_folder_permanently_message, folder.displayName),
+        ).assertIsDisplayed()
+        assertNull(deleted.get())
+        compose.onNodeWithTag("trash-delete-confirm").performClick()
+        assertEquals(folder, deleted.get())
     }
 
     private fun trashedNote() = TrashedNote(

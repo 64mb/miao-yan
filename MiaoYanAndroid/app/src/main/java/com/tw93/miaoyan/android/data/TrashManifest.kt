@@ -3,6 +3,7 @@ package com.tw93.miaoyan.android.data
 import java.io.File
 import java.util.Base64
 import java.util.UUID
+import com.tw93.miaoyan.android.model.LibraryItemKind
 
 data class TrashManifestEntry(
     val id: String,
@@ -77,10 +78,14 @@ class TrashManifestStore(
 }
 
 object TrashItemPathPolicy {
-    fun itemId(noteRelativePath: String): String? {
-        val segments = noteRelativePath.split('/')
+    fun itemId(itemRelativePath: String, kind: LibraryItemKind = LibraryItemKind.NOTE): String? {
+        val segments = itemRelativePath.split('/')
         if (segments.size != 4 || segments[0] != ".Trash" || segments[1] != "items") return null
-        if (!NotePathPolicy.isNote(segments[3])) return null
+        val validPayload = when (kind) {
+            LibraryItemKind.NOTE -> NotePathPolicy.isNote(segments[3])
+            LibraryItemKind.FOLDER -> NotePathPolicy.validateFolderName(segments[3]) is NameResult.Valid
+        }
+        if (!validPayload) return null
         return runCatching { UUID.fromString(segments[2]).toString() }
             .getOrNull()
             ?.takeIf { it == segments[2].lowercase() }

@@ -8,13 +8,17 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
    locale selects the Chinese filenames/content; every other locale selects English. A versioned,
    atomic state file in `noBackupFilesDir` resumes interrupted copies and permanently prevents
    seeding over an existing/imported/Git-initialized library or after the demos are deleted.
-2. Recursively list nested `.md`, `.markdown`, and `.txt` notes while excluding `.git`,
-   `Trash`/`.Trash`, `i`, `files`, hidden folders, and symlinks.
-3. Create and rename notes with strict path and case/Unicode collision checks; save by expected
-   content hash with atomic replacement.
-4. Move notes into a recoverable app-private `.Trash` and restore them to the original folder or
-   a safe root fallback. Settings owns the full-window Trash manager; permanent deletion requires
-   a named destructive confirmation and stays inside the validated Trash item.
+2. Browse safe directory listings with folders first and notes second, including breadcrumb/Back
+   navigation. Nested `.md`, `.markdown`, and `.txt` notes exclude `.git`, `Trash`/`.Trash`, `i`,
+   `files`, hidden folders, and symlinks.
+3. Create folders and notes in the current folder, and rename either with strict traversal,
+   separator/control-character, reserved-name, symlink, containment, and case/Unicode collision
+   checks. Empty folders remain local-only without `.gitkeep`; note saves still use expected
+   content hashes and atomic replacement.
+4. Move notes or whole folders into recoverable app-private `.Trash` entries with same-volume
+   atomic moves, then restore them to their original folder or a safe root fallback. Settings owns
+   the full-window Trash manager; permanent deletion requires a confirmation naming the exact item
+   and stays inside the validated Trash entry.
 5. Keep everyday preview and editing independent from `ContentResolver`. SAF trees are used only
    by explicit Import Library and Export Library actions and never become a live root.
 6. Search titles, nested paths, and bodies through a rebuildable Room FTS4 projection. Wikilinks
@@ -46,7 +50,11 @@ Every canonical filesystem operation passes through the process-wide `LibraryMut
 Git and attachment coordinators share the same `LibraryAccess` contract instead of introducing
 independent locks. Git claims the shared repository's bootstrap state before creating `.git`, so an
 empty Git library cannot later receive demos. Room remains disposable: no note content can be
-recovered from it.
+recovered from it. Folder moves rescan Room and remap or retire path-owned editor state and pins;
+a small atomic journal in `noBackupFilesDir` completes interrupted pin remaps after process restart.
+Folder mutations are blocked during save, typesetting, attachment picking/import, and Git sync. A
+dirty draft follows an atomic folder rename, while moving its owning folder to Trash requires the
+draft to be saved or discarded first.
 
 The only network permission is `INTERNET` for configured Git HTTPS sync. There is no camera or
 broad storage/media permission.
@@ -101,6 +109,7 @@ dependency versions, including JGit, JavaEWAH, Commons Codec, and SLF4J, are rec
 ```bash
 cd MiaoYanAndroid
 ./gradlew test lint assembleDebug
+./gradlew assembleDebugAndroidTest
 ```
 
 The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compose BOM
@@ -128,6 +137,7 @@ See `PRESENTATION.md` for the subsystem boundaries and narrow integration points
 
 - Import/Export can leave already copied, non-conflicting files when a provider fails partway
   through. Existing canonical files are never overwritten.
-- Full crash journaling is not included. Android AI is explicitly out of scope; Git conflicts are
+- General-purpose crash journaling is not included; the path/pin remap needed by atomic folder
+  rename and Trash is journaled narrowly. Android AI is explicitly out of scope; Git conflicts are
   whole-file user choices only.
 - Native APKs are currently produced for `arm64-v8a` devices and `x86_64` emulators only.

@@ -9,10 +9,18 @@ object LibraryRepositoryProvider {
     private var instance: LibraryRepository? = null
 
     fun get(context: Context): LibraryRepository = instance ?: synchronized(this) {
-        instance ?: IndexedLibraryRepository(
-            canonical = LocalLibraryRepository(context.applicationContext),
-            index = RoomLibrarySearchIndex(context.applicationContext),
-            pins = LocalPinStore(context.applicationContext),
-        ).also { instance = it }
+        instance ?: run {
+            val application = context.applicationContext
+            val pins = LocalPinStore(application)
+            val pathMetadata = CrashSafeLibraryPathMetadata(
+                pins = pins,
+                journalFile = java.io.File(application.noBackupFilesDir, "library-path-mutation.v1"),
+            )
+            IndexedLibraryRepository(
+                canonical = LocalLibraryRepository(application, pathMetadata = pathMetadata),
+                index = RoomLibrarySearchIndex(application),
+                pins = pins,
+            )
+        }.also { instance = it }
     }
 }

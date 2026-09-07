@@ -10,6 +10,7 @@ import com.tw93.miaoyan.android.data.AttachmentKind
 import com.tw93.miaoyan.android.data.ContentUriAttachmentSource
 import com.tw93.miaoyan.android.data.LibraryRepository
 import com.tw93.miaoyan.android.data.LibraryRepositoryProvider
+import com.tw93.miaoyan.android.data.FolderMutationResult
 import com.tw93.miaoyan.android.git.ActiveDraftRegistry
 import com.tw93.miaoyan.android.git.GitConflictChoice
 import com.tw93.miaoyan.android.git.GitConflictDetails
@@ -24,6 +25,8 @@ import com.tw93.miaoyan.android.git.GitSyncScheduler
 import com.tw93.miaoyan.android.git.GitSyncStatus
 import com.tw93.miaoyan.android.git.KeystoreCredentialStore
 import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.model.LibraryFolder
+import com.tw93.miaoyan.android.model.LibraryItemKind
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
 import com.tw93.miaoyan.android.typesetting.MarkdownFormatter
@@ -44,6 +47,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class LibraryUiState(
+    val currentFolder: LibraryFolder = RootLibraryFolder,
+    val folders: List<LibraryFolder> = emptyList(),
     val notes: List<LibraryNote> = emptyList(),
     val searchResults: List<LibraryNote> = emptyList(),
     val pinnedPaths: Set<String> = emptySet(),
@@ -77,7 +82,16 @@ data class LibraryUiState(
         get() = hasGitCredentials && gitConfig?.let { config ->
             runCatching { config.validated() }.isSuccess
         } == true
+
+    val visibleFolders: List<LibraryFolder>
+        get() = if (query.isBlank()) folders else emptyList()
 }
+
+private val RootLibraryFolder = LibraryFolder(
+    id = "app-private://libraries/default",
+    relativePath = "",
+    displayName = "MiaoYan",
+)
 
 class LibraryViewModel @JvmOverloads constructor(
     application: Application,
@@ -171,6 +185,10 @@ class LibraryViewModel @JvmOverloads constructor(
 
     fun openNote(note: LibraryNote) {
         if (isBusy()) return
+        if (mutableState.value.dirty && mutableState.value.selected?.note?.relativePath != note.relativePath) {
+            showDraftGuardMessage()
+            return
+        }
         viewModelScope.launch {
             mutableState.update { it.copy(loading = true, message = null) }
             runCatching { repository.open(note) }
@@ -197,17 +215,63 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
-    fun createNote(name: String) {
+    fun openFolder(folder: LibraryFolder) {
         if (isBusy()) return
         viewModelScope.launch {
-            mutableState.update { it.copy(mutating = true, message = null) }
-            runCatching { repository.createRootNote(name) }
-                .onSuccess { opened ->
-                    ActiveDraftRegistry.update(opened.note.relativePath, false)
-                    val notes = repository.scan()
+            mutableState.update { it.copy(loading = true, query = "", searchResults = emptyList(), message = null) }
+            runCatching { repository.listDirectory(folder.relativePath) }
+                .onSuccess { listing ->
                     mutableState.update {
                         it.copy(
-                            notes = notes,
+                            currentFolder = listing.currentFolder,
+                            folders = listing.folders,
+                            notes = listing.notes,
+                            loading = false,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    mutableState.update { it.copy(loading = false) }
+                    showError(error)
+                }
+        }
+    }
+
+    fun openFolderPath(relativePath: String) {
+        openFolder(
+            LibraryFolder(
+                id = relativePath.ifEmpty { RootLibraryFolder.id },
+                relativePath = relativePath,
+                displayName = relativePath.substringAfterLast('/').ifEmpty { "MiaoYan" },
+            ),
+        )
+    }
+
+    fun navigateUp() {
+        val current = mutableState.value.currentFolder.relativePath
+        if (current.isEmpty()) return
+        openFolderPath(current.substringBeforeLast('/', ""))
+    }
+
+    fun createNote(name: String) {
+        if (isBusy()) return
+        if (mutableState.value.dirty) {
+            showDraftGuardMessage()
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            val folderPath = mutableState.value.currentFolder.relativePath
+            runCatching { repository.createNote(folderPath, name) }
+                .onSuccess { opened ->
+                    ActiveDraftRegistry.update(opened.note.relativePath, false)
+                    repository.scan()
+                    val listing = repository.listDirectory(folderPath)
+                    mutableState.update {
+                        it.copy(
+                            currentFolder = listing.currentFolder,
+                            folders = listing.folders,
+                            notes = listing.notes,
                             selected = opened,
                             draft = opened.text,
                             dirty = false,
@@ -226,19 +290,45 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
+    fun createFolder(name: String) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            val parentPath = mutableState.value.currentFolder.relativePath
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching {
+                repository.createFolder(parentPath, name)
+                repository.listDirectory(parentPath)
+            }.onSuccess { listing ->
+                mutableState.update {
+                    it.copy(folders = listing.folders, notes = listing.notes, mutating = false)
+                }
+                markLocalChanges()
+            }.onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
     fun renameNote(note: LibraryNote, name: String) {
         if (isBusy()) return
         viewModelScope.launch {
             mutableState.update { it.copy(mutating = true, message = null) }
             runCatching { repository.rename(note, name) }
                 .onSuccess { renamed ->
+                    val listing = repository.listDirectory(mutableState.value.currentFolder.relativePath)
                     mutableState.update { state ->
+                        val selected = if (state.selected?.note?.relativePath == note.relativePath) {
+                            state.selected.copy(note = renamed)
+                        } else {
+                            state.selected
+                        }
                         state.copy(
-                            notes = repository.scan(),
+                            folders = listing.folders,
+                            notes = listing.notes,
+                            selected = selected,
                             pinnedPaths = loadPinnedPaths(),
                             mutating = false,
                         )
                     }
+                    updateActiveDraftRegistry()
                     refreshSearch()
                     if (renamed.relativePath != note.relativePath) markLocalChanges()
                 }
@@ -246,21 +336,116 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
-    fun moveToTrash(note: LibraryNote) {
+    fun renameFolder(folder: LibraryFolder, name: String) {
         if (isBusy()) return
         viewModelScope.launch {
             mutableState.update { it.copy(mutating = true, message = null) }
-            runCatching { repository.moveToTrash(note) }
-                .onSuccess {
-                    val (notes, trash) = repository.scan() to repository.listTrash()
-                    mutableState.update {
-                        it.copy(
-                            notes = notes,
-                            trash = trash,
+            runCatching { repository.renameFolder(folder, name) }
+                .onSuccess { mutation ->
+                    val current = mutableState.value
+                    val remappedCurrentPath = LibraryViewModelFolderPolicy.remapPath(
+                        current.currentFolder.relativePath,
+                        mutation,
+                    )
+                    val listing = repository.listDirectory(remappedCurrentPath)
+                    mutableState.update { state ->
+                        val selected = LibraryViewModelFolderPolicy.remapOpenNote(state.selected, mutation)
+                        state.copy(
+                            currentFolder = listing.currentFolder,
+                            folders = listing.folders,
+                            notes = listing.notes,
+                            selected = selected,
                             pinnedPaths = loadPinnedPaths(),
                             mutating = false,
                         )
                     }
+                    updateActiveDraftRegistry()
+                    refreshSearch()
+                    if (mutation.newRelativePath != mutation.oldRelativePath) markLocalChanges()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun moveToTrash(note: LibraryNote) {
+        if (isBusy()) return
+        val before = mutableState.value
+        if (before.dirty && before.selected?.note?.relativePath == note.relativePath) {
+            showDraftGuardMessage()
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.moveToTrash(note) }
+                .onSuccess {
+                    repository.scan()
+                    val listing = repository.listDirectory(mutableState.value.currentFolder.relativePath)
+                    val trash = repository.listTrash()
+                    val selectedWasRemoved = mutableState.value.selected?.note?.relativePath == note.relativePath
+                    mutableState.update {
+                        it.copy(
+                            folders = listing.folders,
+                            notes = listing.notes,
+                            trash = trash,
+                            selected = if (selectedWasRemoved) null else it.selected,
+                            draft = if (selectedWasRemoved) "" else it.draft,
+                            dirty = if (selectedWasRemoved) false else it.dirty,
+                            preview = if (selectedWasRemoved) false else it.preview,
+                            pinnedPaths = loadPinnedPaths(),
+                            mutating = false,
+                            draftRevision = if (selectedWasRemoved) nextDraftRevision() else it.draftRevision,
+                        )
+                    }
+                    updateActiveDraftRegistry()
+                    refreshSearch()
+                    markLocalChanges()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun moveFolderToTrash(folder: LibraryFolder) {
+        if (isBusy()) return
+        val current = mutableState.value
+        if (!LibraryViewModelFolderPolicy.canTrashFolder(current.selected, current.dirty, folder.relativePath)) {
+            mutableState.update {
+                it.copy(message = getApplication<Application>().getString(R.string.folder_save_before_trash))
+            }
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.moveFolderToTrash(folder) }
+                .onSuccess {
+                    repository.scan()
+                    val state = mutableState.value
+                    val currentPath = if (
+                        LibraryViewModelFolderPolicy.isWithin(state.currentFolder.relativePath, folder.relativePath)
+                    ) {
+                        folder.relativePath.substringBeforeLast('/', "")
+                    } else {
+                        state.currentFolder.relativePath
+                    }
+                    val listing = repository.listDirectory(currentPath)
+                    val selectedInside = state.selected?.note?.relativePath?.let { path ->
+                        LibraryViewModelFolderPolicy.isWithin(path, folder.relativePath)
+                    } == true
+                    mutableState.update {
+                        it.copy(
+                            currentFolder = listing.currentFolder,
+                            folders = listing.folders,
+                            notes = listing.notes,
+                            trash = repository.listTrash(),
+                            selected = if (selectedInside) null else it.selected,
+                            draft = if (selectedInside) "" else it.draft,
+                            dirty = if (selectedInside) false else it.dirty,
+                            preview = if (selectedInside) false else it.preview,
+                            pinnedPaths = loadPinnedPaths(),
+                            mutating = false,
+                            draftRevision = if (selectedInside) nextDraftRevision() else it.draftRevision,
+                        )
+                    }
+                    updateActiveDraftRegistry()
                     refreshSearch()
                     markLocalChanges()
                 }
@@ -274,15 +459,21 @@ class LibraryViewModel @JvmOverloads constructor(
             mutableState.update { it.copy(mutating = true, message = null) }
             runCatching { repository.restore(trashed) }
                 .onSuccess { result ->
-                    val (notes, trash) = repository.scan() to repository.listTrash()
+                    repository.scan()
+                    val currentPath = mutableState.value.currentFolder.relativePath
+                    val listing = repository.listDirectory(currentPath)
+                    val trash = repository.listTrash()
                     val message = if (result.restoredToRoot) {
                         getApplication<Application>().getString(R.string.restored_to_root)
                     } else {
-                        getApplication<Application>().getString(R.string.note_restored)
+                        getApplication<Application>().getString(
+                            if (result.kind == LibraryItemKind.FOLDER) R.string.folder_restored else R.string.note_restored,
+                        )
                     }
                     mutableState.update {
                         it.copy(
-                            notes = notes,
+                            folders = listing.folders,
+                            notes = listing.notes,
                             trash = trash,
                             pinnedPaths = loadPinnedPaths(),
                             mutating = false,
@@ -324,9 +515,12 @@ class LibraryViewModel @JvmOverloads constructor(
             mutableState.update { it.copy(mutating = true, message = null) }
             runCatching { repository.importFrom(treeUri) }
                 .onSuccess { result ->
+                    val listing = repository.listDirectory(mutableState.value.currentFolder.relativePath)
                     mutableState.update {
                         it.copy(
-                            notes = repository.scan(),
+                            currentFolder = listing.currentFolder,
+                            folders = listing.folders,
+                            notes = listing.notes,
                             trash = repository.listTrash(),
                             pinnedPaths = loadPinnedPaths(),
                             mutating = false,
@@ -520,7 +714,9 @@ class LibraryViewModel @JvmOverloads constructor(
                     }
                     updateActiveDraftRegistry()
                     onSaved?.invoke()
-                    mutableState.update { it.copy(notes = repository.scan()) }
+                    repository.scan()
+                    val listing = repository.listDirectory(mutableState.value.currentFolder.relativePath)
+                    mutableState.update { it.copy(folders = listing.folders, notes = listing.notes) }
                     refreshSearch()
                     if (contentChanged) markLocalChanges()
                 }
@@ -716,6 +912,8 @@ class LibraryViewModel @JvmOverloads constructor(
         val ownerPath = before.selected?.note?.relativePath
         val ownerRevision = before.draftRevision
         val notes = repository.scan()
+        val listing = runCatching { repository.listDirectory(before.currentFolder.relativePath) }
+            .getOrElse { repository.listDirectory("") }
         val trash = repository.listTrash()
         val pinnedPaths = loadPinnedPaths()
         val reopened = if (before.dirty || before.formatting || before.attaching || before.attachmentPickerOpen) {
@@ -732,11 +930,19 @@ class LibraryViewModel @JvmOverloads constructor(
                 !sameEditor || current.dirty || current.formatting || current.attaching ||
                 current.attachmentPickerOpen
             ) {
-                current.copy(notes = notes, trash = trash, pinnedPaths = pinnedPaths)
+                current.copy(
+                    currentFolder = listing.currentFolder,
+                    folders = listing.folders,
+                    notes = listing.notes,
+                    trash = trash,
+                    pinnedPaths = pinnedPaths,
+                )
             } else {
                 val cursor = reopened?.text?.length ?: 0
                 current.copy(
-                    notes = notes,
+                    currentFolder = listing.currentFolder,
+                    folders = listing.folders,
+                    notes = listing.notes,
                     trash = trash,
                     pinnedPaths = pinnedPaths,
                     selected = reopened,
@@ -842,13 +1048,15 @@ class LibraryViewModel @JvmOverloads constructor(
 
     private suspend fun finishFailedMutation(error: Throwable) {
         val refreshed = runCatching {
-            Triple(repository.scan(), repository.listTrash(), loadPinnedPaths())
+            loadLibrarySnapshot(mutableState.value.currentFolder.relativePath)
         }.getOrNull()
         mutableState.update {
             it.copy(
-                notes = refreshed?.first ?: it.notes,
-                trash = refreshed?.second ?: it.trash,
-                pinnedPaths = refreshed?.third ?: it.pinnedPaths,
+                currentFolder = refreshed?.currentFolder ?: it.currentFolder,
+                folders = refreshed?.folders ?: it.folders,
+                notes = refreshed?.notes ?: it.notes,
+                trash = refreshed?.trash ?: it.trash,
+                pinnedPaths = refreshed?.pinnedPaths ?: it.pinnedPaths,
                 mutating = false,
             )
         }
@@ -868,6 +1076,19 @@ class LibraryViewModel @JvmOverloads constructor(
     private suspend fun loadPinnedPaths(): Set<String> =
         repository.pinnedNotes().mapTo(mutableSetOf(), LibraryNote::relativePath)
 
+    private suspend fun loadLibrarySnapshot(preferredFolderPath: String): LibrarySnapshot {
+        repository.scan()
+        val listing = runCatching { repository.listDirectory(preferredFolderPath) }
+            .getOrElse { repository.listDirectory("") }
+        return LibrarySnapshot(
+            currentFolder = listing.currentFolder,
+            folders = listing.folders,
+            notes = listing.notes,
+            trash = repository.listTrash(),
+            pinnedPaths = loadPinnedPaths(),
+        )
+    }
+
     private fun showError(error: Throwable) {
         GitSyncDiagnostics.rethrowIfFatal(error)
         val userMessage = when (error) {
@@ -881,6 +1102,12 @@ class LibraryViewModel @JvmOverloads constructor(
                 message = userMessage
                     ?: getApplication<Application>().getString(R.string.private_library_error),
             )
+        }
+    }
+
+    private fun showDraftGuardMessage() {
+        mutableState.update {
+            it.copy(message = getApplication<Application>().getString(R.string.save_before_library_mutation))
         }
     }
 
@@ -902,4 +1129,38 @@ class LibraryViewModel @JvmOverloads constructor(
     private companion object {
         const val SearchDebounceMillis = 120L
     }
+}
+
+private data class LibrarySnapshot(
+    val currentFolder: LibraryFolder,
+    val folders: List<LibraryFolder>,
+    val notes: List<LibraryNote>,
+    val trash: List<TrashedNote>,
+    val pinnedPaths: Set<String>,
+)
+
+internal object LibraryViewModelFolderPolicy {
+    fun isWithin(path: String, folderPath: String): Boolean =
+        path == folderPath || path.startsWith("$folderPath/")
+
+    fun remapPath(path: String, mutation: FolderMutationResult): String {
+        val destination = mutation.newRelativePath ?: return path
+        return when {
+            path == mutation.oldRelativePath -> destination
+            path.startsWith("${mutation.oldRelativePath}/") -> destination + path.removePrefix(mutation.oldRelativePath)
+            else -> path
+        }
+    }
+
+    fun remapOpenNote(openNote: OpenNote?, mutation: FolderMutationResult): OpenNote? {
+        val opened = openNote ?: return null
+        val newPath = remapPath(opened.note.relativePath, mutation)
+        if (newPath == opened.note.relativePath) return opened
+        return opened.copy(
+            note = opened.note.copy(id = newPath, relativePath = newPath),
+        )
+    }
+
+    fun canTrashFolder(openNote: OpenNote?, dirty: Boolean, folderPath: String): Boolean =
+        !dirty || openNote?.note?.relativePath?.let { !isWithin(it, folderPath) } != false
 }

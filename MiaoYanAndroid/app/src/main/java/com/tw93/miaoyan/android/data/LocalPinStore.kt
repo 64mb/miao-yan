@@ -21,7 +21,31 @@ class LocalPinStore(private val context: Context) {
         }
     }
 
+    suspend fun remapPrefix(oldPrefix: String, newPrefix: String) {
+        context.pinDataStore.edit { preferences ->
+            preferences[PinnedPaths] = preferences[PinnedPaths].orEmpty().remapPinnedPrefix(oldPrefix, newPrefix)
+        }
+    }
+
+    suspend fun retirePrefix(prefix: String) {
+        context.pinDataStore.edit { preferences ->
+            preferences[PinnedPaths] = preferences[PinnedPaths].orEmpty().retirePinnedPrefix(prefix)
+        }
+    }
+
     private companion object {
         val PinnedPaths = stringSetPreferencesKey("relative_paths")
     }
 }
+
+internal fun Set<String>.remapPinnedPrefix(oldPrefix: String, newPrefix: String): Set<String> =
+    mapTo(mutableSetOf()) { path ->
+        when {
+            path == oldPrefix -> newPrefix
+            path.startsWith("$oldPrefix/") -> newPrefix + path.removePrefix(oldPrefix)
+            else -> path
+        }
+    }
+
+internal fun Set<String>.retirePinnedPrefix(prefix: String): Set<String> =
+    filterNotTo(mutableSetOf()) { path -> path == prefix || path.startsWith("$prefix/") }

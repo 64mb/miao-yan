@@ -7,6 +7,8 @@ import com.tw93.miaoyan.android.data.index.IndexText
 import com.tw93.miaoyan.android.data.index.IndexReconciliationResult
 import com.tw93.miaoyan.android.data.index.LibrarySearchIndex
 import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.model.LibraryDirectoryListing
+import com.tw93.miaoyan.android.model.LibraryFolder
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
 import java.util.concurrent.CancellationException
@@ -33,6 +35,10 @@ class IndexedLibraryRepository(
 
     override suspend fun scan(): List<LibraryNote> = serialized { scanLocked() }
 
+    override suspend fun listDirectory(relativePath: String): LibraryDirectoryListing = serialized {
+        canonical.listDirectory(relativePath)
+    }
+
     override suspend fun search(query: String): List<LibraryNote> =
         index.search(rootIdentity, query)
 
@@ -40,10 +46,14 @@ class IndexedLibraryRepository(
         canonical.open(note).also { updateIndexBestEffort(it) }
     }
 
-    override suspend fun createRootNote(inputName: String): OpenNote = serialized {
-        canonical.createRootNote(inputName).also { created ->
+    override suspend fun createNote(folderRelativePath: String, inputName: String): OpenNote = serialized {
+        canonical.createNote(folderRelativePath, inputName).also { created ->
             updateIndexBestEffort(created)
         }
+    }
+
+    override suspend fun createFolder(parentRelativePath: String, inputName: String): LibraryFolder = serialized {
+        canonical.createFolder(parentRelativePath, inputName)
     }
 
     override suspend fun rename(note: LibraryNote, inputName: String): LibraryNote = serialized {
@@ -57,8 +67,19 @@ class IndexedLibraryRepository(
         }
     }
 
+    override suspend fun renameFolder(folder: LibraryFolder, inputName: String): FolderMutationResult = serialized {
+        canonical.renameFolder(folder, inputName).also { scanLocked() }
+    }
+
     override suspend fun moveToTrash(note: LibraryNote) = serialized {
         canonical.moveToTrash(note)
+        pins.setPinned(note.relativePath, false)
+        scanLocked()
+        Unit
+    }
+
+    override suspend fun moveFolderToTrash(folder: LibraryFolder) = serialized {
+        canonical.moveFolderToTrash(folder)
         scanLocked()
         Unit
     }

@@ -8,7 +8,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tw93.miaoyan.android.data.index.IndexText
 import com.tw93.miaoyan.android.data.index.IndexedNoteEntity
 import com.tw93.miaoyan.android.data.index.LibraryIndexDatabase
+import com.tw93.miaoyan.android.data.index.RoomLibrarySearchIndex
 import com.tw93.miaoyan.android.data.index.WikilinkEntity
+import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.model.OpenNote
 import java.io.IOException
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -93,6 +96,41 @@ class RoomLibrarySearchIndexTest {
         assertEquals(listOf("Pinned.md"), dao.pinnedNotes().map { it.relativePath })
     }
 
+    @Test
+    fun folderPathRemapRebuildsRoomPathsAndBacklinks() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val index = RoomLibrarySearchIndex(context)
+        val rootIdentity = "test://folder-remap"
+        val old = openNote("Work/Source.md", "See [[Target]]")
+        val renamed = openNote("Archive/Source.md", old.text)
+        try {
+            index.clear()
+            index.reconcileScan(
+                rootIdentity,
+                listOf(old.note),
+                listOf(IndexText.document(old)),
+                emptySet(),
+            )
+            assertEquals(listOf("Work/Source.md"), index.backlinks(rootIdentity, "Target").map { it.relativePath })
+
+            index.reconcileScan(
+                rootIdentity,
+                listOf(renamed.note),
+                listOf(IndexText.document(renamed)),
+                emptySet(),
+            )
+
+            assertEquals(emptyList<String>(), index.search(rootIdentity, "Work").map { it.relativePath })
+            assertEquals(listOf("Archive/Source.md"), index.search(rootIdentity, "Archive").map { it.relativePath })
+            assertEquals(
+                listOf("Archive/Source.md"),
+                index.backlinks(rootIdentity, "Target").map { it.relativePath },
+            )
+        } finally {
+            index.clear()
+        }
+    }
+
     private fun note(
         rowId: Long = 0,
         path: String,
@@ -114,4 +152,10 @@ class RoomLibrarySearchIndexTest {
     }
 
     private fun query(raw: String): String = requireNotNull(IndexText.ftsQuery(raw))
+
+    private fun openNote(path: String, body: String): OpenNote = OpenNote(
+        note = LibraryNote(path, path, path.substringAfterLast('/'), 1, body.length.toLong()),
+        text = body,
+        contentHash = "hash-${path.hashCode()}-${body.hashCode()}",
+    )
 }

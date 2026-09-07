@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.Uri
 import com.tw93.miaoyan.android.data.core.LibraryAccess
 import com.tw93.miaoyan.android.data.core.LibraryMutationGate
+import com.tw93.miaoyan.android.model.LibraryDirectoryListing
+import com.tw93.miaoyan.android.model.LibraryFolder
+import com.tw93.miaoyan.android.model.LibraryItemKind
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
@@ -12,12 +15,19 @@ import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
+import java.nio.file.FileVisitResult
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-data class RestoreResult(val restoredToRoot: Boolean)
+data class RestoreResult(
+    val restoredToRoot: Boolean,
+    val restoredRelativePath: String = "",
+    val kind: LibraryItemKind = LibraryItemKind.NOTE,
+)
 
 data class TransferResult(val fileCount: Int)
 
@@ -26,6 +36,7 @@ class LocalLibraryRepository(
     private val libraryAccess: LibraryAccess = LibraryMutationGate,
     private val demoLibrarySeeder: DemoLibrarySeeder = context.demoLibrarySeeder(),
     private val preferredLanguageTags: () -> List<String> = context::preferredLanguageTags,
+    private val pathMetadata: LibraryPathMetadata = NoOpLibraryPathMetadata,
 ) {
     val rootIdentity: String = RootIdentity
 
@@ -37,12 +48,15 @@ class LocalLibraryRepository(
     suspend fun scan(): List<LibraryNote> = withLibraryAccess {
         demoLibrarySeeder.seedIfEligible(preferredLanguageTags())
         ensureRoot()
+        pathMetadata.recoverPending(root)
         val notes = mutableListOf<LibraryNote>()
         val pending = ArrayDeque<File>()
         pending.add(root)
         while (pending.isNotEmpty()) {
             val directory = pending.removeFirst()
-            directory.listFiles().orEmpty().sortedBy { it.name.lowercase() }.forEach { child ->
+            val children = directory.listFiles().orEmpty()
+            checkNoExistingCollisions(children)
+            children.sortedBy { it.name.lowercase() }.forEach { child ->
                 if (Files.isSymbolicLink(child.toPath())) return@forEach
                 if (child.isDirectory && NotePathPolicy.isNoteDirectory(child.name)) {
                     pending.add(child)
@@ -55,6 +69,35 @@ class LocalLibraryRepository(
         notes.sortedWith(compareByDescending<LibraryNote> { it.modifiedAtMillis }.thenBy { it.relativePath.lowercase() })
     }
 
+    suspend fun listDirectory(relativePath: String): LibraryDirectoryListing = withLibraryAccess {
+        demoLibrarySeeder.seedIfEligible(preferredLanguageTags())
+        ensureRoot()
+        pathMetadata.recoverPending(root)
+        val directory = checkedFolder(relativePath, allowRoot = true)
+        val folders = mutableListOf<LibraryFolder>()
+        val notes = mutableListOf<LibraryNote>()
+        val children = directory.listFiles().orEmpty()
+        checkNoExistingCollisions(children)
+        children.forEach { child ->
+            if (Files.isSymbolicLink(child.toPath())) return@forEach
+            val childPath = relativePath(child)
+            when {
+                child.isDirectory && NotePathPolicy.isNoteDirectory(child.name) -> {
+                    folders += child.toLibraryFolder(childPath)
+                }
+                child.isFile && NotePathPolicy.isNote(childPath) -> notes += child.toLibraryNote(childPath)
+            }
+        }
+        LibraryDirectoryListing(
+            currentFolder = directory.toLibraryFolder(relativePath),
+            folders = folders.sortedBy { NotePathPolicy.collisionKey(it.displayName) },
+            notes = notes.sortedWith(
+                compareByDescending<LibraryNote> { it.modifiedAtMillis }
+                    .thenBy { NotePathPolicy.collisionKey(it.displayName) },
+            ),
+        )
+    }
+
     suspend fun listTrash(): List<TrashedNote> = withLibraryAccess {
         if (!trashRoot.isDirectory) return@withLibraryAccess emptyList()
         val entries = manifestStore.load().associateBy { it.trashRelativePath }
@@ -62,18 +105,21 @@ class LocalLibraryRepository(
         if (!itemsRoot.isDirectory) return@withLibraryAccess emptyList()
         buildList {
             itemsRoot.listFiles().orEmpty().filter { it.isDirectory && !Files.isSymbolicLink(it.toPath()) }.forEach { item ->
-                item.listFiles().orEmpty().filter { file ->
-                    file.isFile && !Files.isSymbolicLink(file.toPath()) && NotePathPolicy.isNote(file.name)
-                }.forEach { file ->
-                    val trashPath = relativePath(file)
+                item.listFiles().orEmpty().filter { payload ->
+                    !Files.isSymbolicLink(payload.toPath()) &&
+                        ((payload.isFile && NotePathPolicy.isNote(payload.name)) ||
+                            (payload.isDirectory && NotePathPolicy.validateFolderName(payload.name) is NameResult.Valid))
+                }.forEach { payload ->
+                    val trashPath = relativePath(payload)
                     val entry = entries[trashPath]
                     add(
                         TrashedNote(
                             manifestId = entry?.id,
                             trashRelativePath = trashPath,
-                            displayName = entry?.originalRelativePath?.substringAfterLast('/') ?: file.name,
+                            displayName = entry?.originalRelativePath?.substringAfterLast('/') ?: payload.name,
                             originalRelativePath = entry?.originalRelativePath,
-                            deletedAtMillis = entry?.deletedAtMillis ?: file.lastModified(),
+                            deletedAtMillis = entry?.deletedAtMillis ?: payload.lastModified(),
+                            kind = if (payload.isDirectory) LibraryItemKind.FOLDER else LibraryItemKind.NOTE,
                         ),
                     )
                 }
@@ -87,15 +133,32 @@ class LocalLibraryRepository(
         OpenNote(note = file.toLibraryNote(note.relativePath), text = bytes.toString(Charsets.UTF_8), contentHash = sha256(bytes))
     }
 
-    suspend fun createRootNote(inputName: String): OpenNote = withLibraryAccess {
+    suspend fun createNote(folderRelativePath: String, inputName: String): OpenNote = withLibraryAccess {
         demoLibrarySeeder.claimWithoutSeeding()
         ensureRoot()
+        pathMetadata.recoverPending(root)
+        val directory = checkedFolder(folderRelativePath, allowRoot = true)
         val name = requireValidName(inputName)
-        checkNoCollision(root, name)
-        val target = File(root, name)
+        checkNoCollision(directory, name)
+        val target = File(directory, name)
         atomicCreate(target, ByteArray(0))
-        val note = target.toLibraryNote(name)
+        val note = target.toLibraryNote(relativePath(target))
         OpenNote(note = note, text = "", contentHash = sha256(ByteArray(0)))
+    }
+
+    suspend fun createRootNote(inputName: String): OpenNote = createNote("", inputName)
+
+    suspend fun createFolder(parentRelativePath: String, inputName: String): LibraryFolder = withLibraryAccess {
+        demoLibrarySeeder.claimWithoutSeeding()
+        ensureRoot()
+        pathMetadata.recoverPending(root)
+        val parent = checkedFolder(parentRelativePath, allowRoot = true)
+        val name = requireValidFolderName(inputName)
+        checkNoCollision(parent, name)
+        val target = File(parent, name)
+        check(Files.notExists(target.toPath(), LinkOption.NOFOLLOW_LINKS)) { "The destination already exists." }
+        Files.createDirectory(target.toPath())
+        target.toLibraryFolder(relativePath(target))
     }
 
     suspend fun rename(note: LibraryNote, inputName: String): LibraryNote = withLibraryAccess {
@@ -108,6 +171,33 @@ class LocalLibraryRepository(
         val parentPath = note.relativePath.substringBeforeLast('/', "")
         val relativePath = if (parentPath.isEmpty()) name else "$parentPath/$name"
         target.toLibraryNote(relativePath)
+    }
+
+    suspend fun renameFolder(folder: LibraryFolder, inputName: String): FolderMutationResult = withLibraryAccess {
+        ensureRoot()
+        pathMetadata.recoverPending(root)
+        val source = checkedFolder(folder.relativePath, allowRoot = false)
+        val name = requireValidFolderName(inputName)
+        if (source.name == name) {
+            return@withLibraryAccess FolderMutationResult(folder.relativePath, folder.relativePath)
+        }
+        val parent = source.parentFile ?: error("The library root cannot be renamed.")
+        checkNoCollision(parent, name, excluding = source)
+        val target = File(parent, name)
+        val newPath = relativePath(target)
+        pathMetadata.prepareRemap(folder.relativePath, newPath)
+        try {
+            atomicMove(source, target)
+        } catch (error: Throwable) {
+            if (Files.exists(source.toPath(), LinkOption.NOFOLLOW_LINKS) &&
+                Files.notExists(target.toPath(), LinkOption.NOFOLLOW_LINKS)
+            ) {
+                pathMetadata.cancelPending()
+            }
+            throw error
+        }
+        pathMetadata.completePending()
+        FolderMutationResult(folder.relativePath, newPath)
     }
 
     suspend fun moveToTrash(note: LibraryNote) = withLibraryAccess {
@@ -134,29 +224,81 @@ class LocalLibraryRepository(
         check(sha256File(target) == expectedHash) { "The moved note failed verification but remains in Trash." }
     }
 
+    suspend fun moveFolderToTrash(folder: LibraryFolder) = withLibraryAccess {
+        ensureRoot()
+        pathMetadata.recoverPending(root)
+        val source = checkedFolder(folder.relativePath, allowRoot = false)
+        check(!containsSymlinkDescendant(source)) { "Folders containing symbolic links cannot be moved to Trash." }
+        val operationId = UUID.randomUUID().toString()
+        val itemDirectory = File(File(trashRoot, TrashItemsDirectoryName), operationId)
+        check(itemDirectory.mkdirs()) { "Could not create a recoverable Trash entry." }
+        val target = File(itemDirectory, source.name)
+        val trashRelativePath = relativePath(target)
+        val entry = TrashManifestEntry(
+            id = operationId,
+            originalRelativePath = folder.relativePath,
+            trashRelativePath = trashRelativePath,
+            deletedAtMillis = System.currentTimeMillis(),
+        )
+        manifestStore.upsert(entry)
+        pathMetadata.prepareRetire(folder.relativePath)
+        try {
+            atomicMove(source, target)
+        } catch (error: Throwable) {
+            if (Files.exists(source.toPath(), LinkOption.NOFOLLOW_LINKS) &&
+                Files.notExists(target.toPath(), LinkOption.NOFOLLOW_LINKS)
+            ) {
+                pathMetadata.cancelPending()
+                manifestStore.remove(entry.id)
+                itemDirectory.delete()
+            }
+            throw error
+        }
+        pathMetadata.completePending()
+        check(target.isDirectory && !source.exists()) { "The folder move to Trash could not be verified." }
+    }
+
     suspend fun restore(trashed: TrashedNote): RestoreResult = withLibraryAccess {
-        val source = checkedTrashFile(trashed.trashRelativePath)
+        val source = checkedTrashPayload(trashed)
         val manifestEntry = trashed.manifestId?.let { id -> manifestStore.load().firstOrNull { it.id == id } }
+        if (manifestEntry != null) {
+            check(manifestEntry.trashRelativePath == trashed.trashRelativePath) {
+                "The Trash manifest path is invalid."
+            }
+        }
         val originalPath = manifestEntry?.originalRelativePath ?: trashed.originalRelativePath
         val originalParentPath = originalPath?.substringBeforeLast('/', "").orEmpty()
         val originalParent = if (originalParentPath.isEmpty()) root else safeResolve(originalParentPath)
         val originalParentExists = originalParent.isDirectory && !containsSymlink(originalParent)
         val destinationPath = RestorePolicy.destinationRelativePath(originalPath, originalParentExists)
             .ifEmpty { source.name }
-        check(NotePathPolicy.isNote(destinationPath)) { "The original note path is no longer safe to restore." }
+        val validDestination = when (trashed.kind) {
+            LibraryItemKind.NOTE -> NotePathPolicy.isNote(destinationPath)
+            LibraryItemKind.FOLDER -> NotePathPolicy.isFolderPath(destinationPath, allowRoot = false)
+        }
+        check(validDestination) { "The original item path is no longer safe to restore." }
         val target = safeResolve(destinationPath)
         val targetParent = target.parentFile ?: root
         check(targetParent.isDirectory && !containsSymlink(targetParent)) { "The restore folder is not safe." }
         checkNoCollision(targetParent, target.name)
-        val expectedHash = sha256File(source)
+        val expectedHash = source.takeIf { it.isFile }?.let(::sha256File)
         atomicMove(source, target)
-        check(sha256File(target) == expectedHash) { "The restored note failed content verification." }
+        if (expectedHash != null) {
+            check(sha256File(target) == expectedHash) { "The restored note failed content verification." }
+        } else {
+            check(target.isDirectory && !source.exists()) { "The restored folder move could not be verified." }
+        }
         manifestEntry?.let { manifestStore.remove(it.id) }
-        RestoreResult(restoredToRoot = !originalParentExists && originalParentPath.isNotEmpty())
+        source.parentFile?.delete()
+        RestoreResult(
+            restoredToRoot = !originalParentExists && originalParentPath.isNotEmpty(),
+            restoredRelativePath = destinationPath,
+            kind = trashed.kind,
+        )
     }
 
-    suspend fun permanentlyDelete(trashed: TrashedNote) = withLibraryAccess {
-        val itemId = TrashItemPathPolicy.itemId(trashed.trashRelativePath)
+    suspend fun permanentlyDelete(trashed: TrashedNote): Unit = withLibraryAccess {
+        val itemId = TrashItemPathPolicy.itemId(trashed.trashRelativePath, trashed.kind)
             ?: error("The Trash item path is invalid.")
         check(trashed.manifestId == null || trashed.manifestId == itemId) {
             "The Trash item identity no longer matches."
@@ -165,7 +307,9 @@ class LocalLibraryRepository(
         check(source.toPath().normalize().startsWith(trashRoot.toPath().normalize())) {
             "The Trash path is invalid."
         }
-        check(!containsSymlink(source)) { "Symbolic links cannot be permanently deleted from Trash." }
+        check(!containsSymlink(source) && !containsSymlinkDescendant(source)) {
+            "Symbolic links cannot be permanently deleted from Trash."
+        }
         val exists = Files.exists(source.toPath(), LinkOption.NOFOLLOW_LINKS)
         val manifestEntry = manifestStore.load().firstOrNull { it.id == itemId }
         if (manifestEntry != null) {
@@ -176,10 +320,18 @@ class LocalLibraryRepository(
             error("The Trash manifest no longer matches this note.")
         }
         if (exists) {
-            check(Files.isRegularFile(source.toPath(), LinkOption.NOFOLLOW_LINKS)) {
-                "Only a trashed note can be permanently deleted."
+            val validType = when (trashed.kind) {
+                LibraryItemKind.NOTE -> Files.isRegularFile(source.toPath(), LinkOption.NOFOLLOW_LINKS)
+                LibraryItemKind.FOLDER -> Files.isDirectory(source.toPath(), LinkOption.NOFOLLOW_LINKS)
             }
-            Files.delete(source.toPath())
+            check(validType) {
+                "The Trash item type no longer matches."
+            }
+            if (trashed.kind == LibraryItemKind.FOLDER) {
+                deleteDirectoryTree(source)
+            } else {
+                Files.delete(source.toPath())
+            }
         }
         manifestEntry?.let { manifestStore.remove(it.id) }
         source.parentFile?.delete()
@@ -285,18 +437,33 @@ class LocalLibraryRepository(
         return file
     }
 
-    private fun checkedTrashFile(relativePath: String): File {
-        check(TrashItemPathPolicy.itemId(relativePath) != null) { "The Trash item path is invalid." }
-        val file = safeResolve(relativePath)
+    private fun checkedFolder(relativePath: String, allowRoot: Boolean): File {
+        check(NotePathPolicy.isFolderPath(relativePath, allowRoot)) { "The folder path is not valid." }
+        val directory = if (relativePath.isEmpty()) root else safeResolve(relativePath)
+        check(directory.isDirectory && !containsSymlink(directory)) {
+            "The folder no longer exists in the private library."
+        }
+        return directory
+    }
+
+    private fun checkedTrashPayload(trashed: TrashedNote): File {
+        check(TrashItemPathPolicy.itemId(trashed.trashRelativePath, trashed.kind) != null) {
+            "The Trash item path is invalid."
+        }
+        val file = safeResolve(trashed.trashRelativePath)
         check(file.toPath().normalize().startsWith(trashRoot.toPath().normalize())) { "The Trash path is invalid." }
-        check(file.isFile && !containsSymlink(file) && NotePathPolicy.isNote(file.name)) {
-            "The note is no longer present in Trash."
+        val validType = when (trashed.kind) {
+            LibraryItemKind.NOTE -> file.isFile && NotePathPolicy.isNote(file.name)
+            LibraryItemKind.FOLDER -> file.isDirectory && NotePathPolicy.validateFolderName(file.name) is NameResult.Valid
+        }
+        check(validType && !containsSymlink(file) && !containsSymlinkDescendant(file)) {
+            "The item is no longer safely present in Trash."
         }
         return file
     }
 
     private fun safeResolve(relativePath: String): File {
-        check(!relativePath.startsWith('/') && relativePath.none { it == '\\' || it.code < 0x20 }) {
+        check(!relativePath.startsWith('/') && relativePath.none { it == '\\' || it.code < 0x20 || it.code == 0x7f }) {
             "The relative path is invalid."
         }
         val target = File(root, relativePath).toPath().normalize()
@@ -314,6 +481,37 @@ class LocalLibraryRepository(
         return false
     }
 
+    private fun containsSymlinkDescendant(file: File): Boolean {
+        if (!Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return false
+        if (Files.isSymbolicLink(file.toPath())) return true
+        if (!Files.isDirectory(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return false
+        val paths = Files.walk(file.toPath())
+        try {
+            return paths.anyMatch(Files::isSymbolicLink)
+        } finally {
+            paths.close()
+        }
+    }
+
+    private fun deleteDirectoryTree(directory: File) {
+        Files.walkFileTree(directory.toPath(), object : SimpleFileVisitor<java.nio.file.Path>() {
+            override fun visitFile(file: java.nio.file.Path, attrs: BasicFileAttributes): FileVisitResult {
+                check(!attrs.isSymbolicLink) { "Symbolic links cannot be permanently deleted from Trash." }
+                Files.delete(file)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(
+                directory: java.nio.file.Path,
+                error: java.io.IOException?,
+            ): FileVisitResult {
+                error?.let { throw it }
+                Files.delete(directory)
+                return FileVisitResult.CONTINUE
+            }
+        })
+    }
+
     private fun checkNoCollision(directory: File, name: String, excluding: File? = null) {
         val existingNames = directory.listFiles().orEmpty().filterNot { it == excluding }.map { it.name }
         check(!NotePathPolicy.hasCollision(existingNames, name)) {
@@ -321,10 +519,25 @@ class LocalLibraryRepository(
         }
     }
 
+    private fun checkNoExistingCollisions(children: Array<out File>) {
+        val keys = mutableSetOf<String>()
+        children.filterNot { Files.isSymbolicLink(it.toPath()) || it.name.startsWith('.') }.forEach { child ->
+            check(keys.add(NotePathPolicy.collisionKey(child.name))) {
+                "Case- or Unicode-colliding library items cannot be listed safely."
+            }
+        }
+    }
+
     private fun requireValidName(input: String): String = when (val result = NotePathPolicy.validateNoteName(input)) {
         is NameResult.Valid -> result.name
         is NameResult.Invalid -> throw IllegalArgumentException(result.error.message)
     }
+
+    private fun requireValidFolderName(input: String): String =
+        when (val result = NotePathPolicy.validateFolderName(input)) {
+            is NameResult.Valid -> result.name
+            is NameResult.Invalid -> throw IllegalArgumentException(result.error.message)
+        }
 
     private fun atomicCreate(target: File, bytes: ByteArray) {
         check(!target.exists()) { "The destination already exists. Nothing was overwritten." }
@@ -374,7 +587,7 @@ class LocalLibraryRepository(
     }
 
     private fun atomicMove(source: File, target: File) {
-        check(source.exists()) { "The source note no longer exists." }
+        check(source.exists()) { "The source item no longer exists." }
         check(!target.exists()) { "The destination already exists. Nothing was overwritten." }
         Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
     }
@@ -399,6 +612,12 @@ class LocalLibraryRepository(
         displayName = name,
         modifiedAtMillis = lastModified(),
         sizeBytes = length(),
+    )
+
+    private fun File.toLibraryFolder(relativePath: String) = LibraryFolder(
+        id = relativePath.ifEmpty { RootIdentity },
+        relativePath = relativePath,
+        displayName = if (relativePath.isEmpty()) "MiaoYan" else name,
     )
 
     private fun relativePath(file: File): String = file.relativeTo(root).invariantSeparatorsPath

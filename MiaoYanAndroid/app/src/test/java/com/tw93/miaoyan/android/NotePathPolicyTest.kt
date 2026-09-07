@@ -60,6 +60,29 @@ class NotePathPolicyTest {
     }
 
     @Test
+    fun validatesSafeFolderNamesAndPaths() {
+        assertEquals(NameResult.Valid("Projects"), NotePathPolicy.validateFolderName(" Projects "))
+        assertEquals(NameResult.Valid("Café"), NotePathPolicy.validateFolderName("Cafe\u0301"))
+        assertTrue(NotePathPolicy.isFolderPath("Projects/2026"))
+        assertTrue(NotePathPolicy.isFolderPath(""))
+        assertFalse(NotePathPolicy.isFolderPath("", allowRoot = false))
+    }
+
+    @Test
+    fun rejectsReservedTraversalSeparatorControlAndHiddenFolderNames() {
+        listOf(".git", ".Trash", "Trash", "TRASH", "i", "I", "files", "FILES").forEach { name ->
+            assertEquals(NameResult.Invalid(NameError.RESERVED), NotePathPolicy.validateFolderName(name))
+        }
+        assertEquals(NameResult.Invalid(NameError.RESERVED), NotePathPolicy.validateFolderName(".."))
+        assertEquals(NameResult.Invalid(NameError.HIDDEN), NotePathPolicy.validateFolderName(".private"))
+        assertEquals(NameResult.Invalid(NameError.INVALID_CHARACTERS), NotePathPolicy.validateFolderName("a/b"))
+        assertEquals(NameResult.Invalid(NameError.INVALID_CHARACTERS), NotePathPolicy.validateFolderName("a\\b"))
+        assertEquals(NameResult.Invalid(NameError.INVALID_CHARACTERS), NotePathPolicy.validateFolderName("a\u007fb"))
+        assertFalse(NotePathPolicy.isFolderPath("safe/../outside"))
+        assertFalse(NotePathPolicy.isFolderPath("safe/i"))
+    }
+
+    @Test
     fun transportAllowsNotesAndAdjacentAttachmentFoldersOnly() {
         assertTrue(NotePathPolicy.isTransportFile("Journal/2026/September.md"))
         assertTrue(NotePathPolicy.isTransportFile("Journal/2026/i/photo.webp"))
