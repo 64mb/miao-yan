@@ -1,7 +1,7 @@
 # MiaoYan macOS Git Sync — product contract and implementation plan
 
 Дата актуализации: 2026-09-07
-Статус: macOS-only реализация завершена локально; остаются ручные проверки с реальными credentials/providers
+Статус: macOS-only реализация, включая opt-in automatic/pre-quit sync, завершена локально; остаются ручные проверки с реальными credentials/providers
 
 ## Scope
 
@@ -12,6 +12,7 @@
 - macOS 13+ и Swift 6.1;
 - одна корневая папка библиотеки;
 - ручной sync;
+- opt-in automatic sync каждые 15 минут и best-effort sync перед выходом;
 - ветка `main`;
 - username + personal access token;
 - автоматический clean merge;
@@ -46,6 +47,24 @@
 11. Выполняется обычный push `main`; force push запрещён.
 
 Команды настройки и sync всегда относятся к корню основной (`isDefault`) библиотеки и не зависят от текущего выделения в sidebar. Bookmark/additional roots не мигрируются и не получают отдельную Git-конфигурацию: поддерживается ровно одна root-библиотека. Неявный переход к другой библиотеке запрещён.
+
+### Automatic и pre-quit sync
+
+Галочка **Automatically sync every 15 minutes** в **Settings → Git Sync** является общим opt-in для периодического и pre-quit sync. Старые сохранённые конфигурации декодируются с выключенным флагом, поэтому существующим пользователям не добавляется фоновая сеть без согласия. Сохранение settings немедленно пересобирает расписание; выключение флага останавливает timer, а смена main library применяется после обязательного restart существующего storage flow.
+
+Scheduler принадлежит `AppDelegate`, работает на main actor и запускает первый automatic sync не сразу, а через 15 минут. Перед постановкой в расписание и перед каждым запуском повторно проверяются exact URL текущей default-library, наличие конфигурации, opt-in и local-location policy. Additional roots и прежний root после смены settings никогда не используются. Один scheduler task и `GitSyncCoordinator.state` не допускают overlap между timer, ручным sync и lifecycle sync.
+
+Периодический запуск не показывает toast, alert или conflict sheet. Успешный результат остаётся фоновым; missing credentials, unsafe location, blocked/conflict и runtime failures записываются через `AppDelegate.trackError`. Конфликт не выбирается автоматически и остаётся для следующего ручного sync.
+
+При выходе с включённым opt-in `applicationShouldTerminate`:
+
+1. синхронно сохраняет editor buffer строго по `EditTextView.storageNote` и вызывает `flushPendingSaves()`;
+2. останавливает timer и возвращает `.terminateLater`;
+3. если любой sync уже выполняется, не создаёт второй и ограниченно ждёт текущий даже при выключенном opt-in; иначе при включённом opt-in запускает тот же silent automatic path;
+4. ограничивает всё ожидание 8 секундами;
+5. при success, failure, blocked/conflict или timeout ровно один раз вызывает `reply(toApplicationShouldTerminate: true)`.
+
+Failure и timeout никогда не удерживают приложение открытым: локальные файлы и recovery state не заменяются принудительно, причина попадает в diagnostics, блокирующий conflict UI при quit не показывается. `applicationWillTerminate` сохраняет повторный идемпотентный flush и cleanup временных preview-файлов. Отдельный reply gate защищает от гонки completion/timeout и двойного ответа AppKit.
 
 ### Несвязанные истории
 
@@ -84,7 +103,7 @@
 - API key;
 - переопределяемый system prompt.
 
-Точка входа находится в системном окне **MiaoYan → Settings… → Git Sync**. Все поля находятся непосредственно на прокручиваемой странице: root-библиотека, отдельная кнопка **Move Library to Local Storage…**, HTTPS remote, username/PAT, commit author, явная галочка **Enable AI diff conflict resolver**, AI HTTPS endpoint, произвольное имя модели, API key и переопределяемый prompt. Git/credential/model fields строго однострочные; перенос разрешён только в prompt editor. **Save** и **Sync Now** закреплены в нижнем footer и не прокручиваются вместе с prompt. Только включённая галочка сохраняет AI-конфигурацию и разрешает показывать **Resolve with AI** для подходящего текстового конфликта. В меню File остаётся только ручная команда **Sync Git Repository**.
+Точка входа находится в системном окне **MiaoYan → Settings… → Git Sync**. Все поля находятся непосредственно на прокручиваемой странице: root-библиотека, отдельная кнопка **Move Library to Local Storage…**, HTTPS remote, username/PAT, commit author, opt-in **Automatically sync every 15 minutes**, явная галочка **Enable AI diff conflict resolver**, AI HTTPS endpoint, произвольное имя модели, API key и переопределяемый prompt. Git/credential/model fields строго однострочные; перенос разрешён только в prompt editor. **Save** и **Sync Now** закреплены в нижнем footer и не прокручиваются вместе с prompt. Только включённая AI-галочка сохраняет AI-конфигурацию и разрешает показывать **Resolve with AI** для подходящего текстового конфликта. В меню File остаётся только ручная команда **Sync Git Repository**.
 
 Значения по умолчанию:
 
@@ -166,6 +185,8 @@ Git sync нельзя включить в каталоге, которым од�
 - recovery ref и отсутствие force push;
 - FSEvents suppression и точечная reconciliation моделей;
 - отдельный раздел Settings → Git Sync и ручная команда sync в меню File;
+- opt-in scheduler каждые 15 минут с exact-root/local checks, reconfiguration после Save и без overlap;
+- silent best-effort pre-quit sync через `.terminateLater`, 8-секундный timeout и single-reply gate;
 - выбор Replace Local / Keep Local для unrelated histories;
 - per-file Local / Remote conflict choice с Git timestamps;
 - OpenAI-compatible AI resolver с редактируемыми endpoint, model, key и prompt;
@@ -188,10 +209,14 @@ Git sync нельзя включить в каталоге, которым од�
 - Нельзя удалять verified local copy при ошибке cleanup; до ручного восстановления сохраняются обе копии.
 - Нельзя автоматически удалять home/Documents, network volume root, весь iCloud Drive или корень Dropbox/Google Drive/OneDrive/File Provider.
 - Нельзя force push или автоматически объединять unrelated histories.
+- Нельзя запускать automatic/pre-quit sync без сохранённого opt-in или для root, отличного от текущей local default-library.
+- Нельзя показывать modal conflict/failure UI из periodic или pre-quit sync.
+- Timeout/failure pre-quit sync не может отменить выход или вызвать второй AppKit termination reply.
 
 ## Следующие проверки перед релизом
 
 - ручной authenticated sync с реальным private HTTPS repository;
+- ручной smoke periodic timer, Save enable/disable и quit success/failure/timeout на реальном remote;
 - ручной UX smoke всех alert/sheet flows;
 - AI smoke минимум с DeepSeek и одним другим OpenAI-compatible provider;
 - fault injection миграции: collision, copy failure, verification failure, Trash failure, crash boundaries;
@@ -200,10 +225,10 @@ Git sync нельзя включить в каталоге, которым од�
 
 ## Локальная верификация 2026-09-07
 
-- macOS Debug build и полный unit/integration suite: 188 tests, 1 live-HTTPS test skipped без внешнего test remote, 0 failures;
+- macOS Debug build (`CODE_SIGNING_ALLOWED=NO`) и полный unit/integration suite: 204 tests, 1 live-HTTPS test skipped без внешнего test remote, 0 failures;
 - Git conflict и unrelated-history integration scenarios: passed;
 - `xcrun swift-format lint --recursive . --strict`: passed;
-- `git diff --check`, storyboard XML, plist/strings и shell script syntax: passed;
+- `git diff --check` и plist/strings validation: passed;
 - `MiaoYanMobile/` и `.github/workflows/` не изменены.
 
-Не выполнены только проверки, требующие пользовательских секретов или реального внешнего окружения: authenticated private HTTPS remote, AI providers и живые iCloud/File Provider каталоги.
+SwiftLint не установлен в локальном окружении; его строгая проверка остаётся за CI. Не выполнены также проверки, требующие пользовательских секретов или реального внешнего окружения: authenticated private HTTPS remote, AI providers и живые iCloud/File Provider каталоги.

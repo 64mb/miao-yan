@@ -24,6 +24,19 @@ final class PrefsWindowControllerTests: XCTestCase {
     }
 
     @MainActor
+    func testGitSyncPreferencesExposeAutomaticSyncOptIn() {
+        let controller = GitSyncPrefsViewController()
+        controller.loadView()
+
+        let checkbox = controller.view.recursiveSubviews
+            .compactMap { $0 as? NSButton }
+            .first { $0.title == I18n.str("Automatically sync every 15 minutes") }
+
+        XCTAssertNotNil(checkbox)
+        XCTAssertEqual(checkbox?.state, .off)
+    }
+
+    @MainActor
     func testFontMigrationPreservesCustomFaces() throws {
         let defaults = UserDefaults.standard
         let keys = ["fontName", "windowFontName", "previewFontName", "codeFont", "hasMigratedSystemFonts_v1", "hasMigratedCodeFontDefault_v1", "hasMigratedFontDefaults_v2"]

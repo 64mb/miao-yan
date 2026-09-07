@@ -38,13 +38,38 @@ struct GitSyncConfiguration: Codable, Equatable, Sendable {
     let remoteURL: URL
     let authorName: String
     let authorEmail: String
+    let automaticSyncEnabled: Bool
     let ai: GitAIConfiguration?
 
-    init(remoteURL: URL, authorName: String, authorEmail: String, ai: GitAIConfiguration? = nil) {
+    init(
+        remoteURL: URL,
+        authorName: String,
+        authorEmail: String,
+        automaticSyncEnabled: Bool = false,
+        ai: GitAIConfiguration? = nil
+    ) {
         self.remoteURL = remoteURL
         self.authorName = authorName
         self.authorEmail = authorEmail
+        self.automaticSyncEnabled = automaticSyncEnabled
         self.ai = ai
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case remoteURL
+        case authorName
+        case authorEmail
+        case automaticSyncEnabled
+        case ai
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        remoteURL = try container.decode(URL.self, forKey: .remoteURL)
+        authorName = try container.decode(String.self, forKey: .authorName)
+        authorEmail = try container.decode(String.self, forKey: .authorEmail)
+        automaticSyncEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticSyncEnabled) ?? false
+        ai = try container.decodeIfPresent(GitAIConfiguration.self, forKey: .ai)
     }
 }
 

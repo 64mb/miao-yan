@@ -69,6 +69,7 @@
 		BC385DFF893DACFA0A40C91B /* Business/GitCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35391A160D9B9986B895665A /* Business/GitCredentialStore.swift */; };
 		C91B51A52F50000100BEEF01 /* GitSyncFoundation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51A62F50000100BEEF01 /* GitSyncFoundation.swift */; };
 		C91B51A72F50000100BEEF01 /* GitSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51A82F50000100BEEF01 /* GitSyncCoordinator.swift */; };
+		C91B51AD2F50000100BEEF01 /* GitSyncScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51AE2F50000100BEEF01 /* GitSyncScheduler.swift */; };
 		E07272C1ABE538BA8DCAC3DE /* MiaoYanTests/GitCredentialStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86FE56AD4A198C2D499DFDD1 /* MiaoYanTests/GitCredentialStoreTests.swift */; };
 		C91B51A92F50000100BEEF01 /* GitSyncFoundationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51AA2F50000100BEEF01 /* GitSyncFoundationTests.swift */; };
 		C91B51AB2F50000100BEEF01 /* GitRepositoryClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91B51AC2F50000100BEEF01 /* GitRepositoryClientTests.swift */; };
@@ -349,6 +350,7 @@
 		35391A160D9B9986B895665A /* Business/GitCredentialStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Business/GitCredentialStore.swift; sourceTree = SOURCE_ROOT; };
 		C91B51A62F50000100BEEF01 /* GitSyncFoundation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitSyncFoundation.swift; sourceTree = "<group>"; };
 		C91B51A82F50000100BEEF01 /* GitSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitSyncCoordinator.swift; sourceTree = "<group>"; };
+		C91B51AE2F50000100BEEF01 /* GitSyncScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitSyncScheduler.swift; sourceTree = "<group>"; };
 		86FE56AD4A198C2D499DFDD1 /* MiaoYanTests/GitCredentialStoreTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiaoYanTests/GitCredentialStoreTests.swift; sourceTree = SOURCE_ROOT; };
 		C91B51AA2F50000100BEEF01 /* GitSyncFoundationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiaoYanTests/GitSyncFoundationTests.swift; sourceTree = SOURCE_ROOT; };
 		C91B51AC2F50000100BEEF01 /* GitRepositoryClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiaoYanTests/GitRepositoryClientTests.swift; sourceTree = SOURCE_ROOT; };
@@ -637,6 +639,7 @@
 				35391A160D9B9986B895665A /* Business/GitCredentialStore.swift */,
 				C91B51A62F50000100BEEF01 /* GitSyncFoundation.swift */,
 				C91B51A82F50000100BEEF01 /* GitSyncCoordinator.swift */,
+				C91B51AE2F50000100BEEF01 /* GitSyncScheduler.swift */,
 				b2384ca08b9b4d1389a7bf4e0ae47758 /* FontConfiguration.swift */,
 				278160912E75551F00F3D54B /* PrefsModel.swift */,
 				D7038E2520FB24E000A54E69 /* NoteAttachment.swift */,
@@ -1059,6 +1062,7 @@
 				BC385DFF893DACFA0A40C91B /* Business/GitCredentialStore.swift in Sources */,
 				C91B51A52F50000100BEEF01 /* GitSyncFoundation.swift in Sources */,
 				C91B51A72F50000100BEEF01 /* GitSyncCoordinator.swift in Sources */,
+				C91B51AD2F50000100BEEF01 /* GitSyncScheduler.swift in Sources */,
 				27F1C0312F40000400AAA001 /* BacktickAndFontNormalizer.swift in Sources */,
 				27F1C0212F40000300AAA001 /* MarkdownRuleHighlighter.swift in Sources */,
 				27F1C0112F40000200AAA001 /* CodeBlockHighlighter.swift in Sources */,

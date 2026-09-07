@@ -317,6 +317,7 @@
 "Username" = "ユーザー名";
 "Author name" = "作成者名";
 "Author email" = "作成者メール";
+"Automatically sync every 15 minutes" = "15分ごとに自動同期";
 "Git sync configured~" = "Git同期を設定しました~";
 "Git sync configuration is invalid." = "Git同期の設定が無効です。";
 "Git credentials are unavailable." = "Git認証情報を利用できません。";

@@ -317,6 +317,7 @@
 "Username" = "用户名";
 "Author name" = "作者姓名";
 "Author email" = "作者邮箱";
+"Automatically sync every 15 minutes" = "每 15 分钟自动同步";
 "Git sync configured~" = "Git 同步已配置~";
 "Git sync configuration is invalid." = "Git 同步配置无效。";
 "Git credentials are unavailable." = "Git 凭据不可用。";

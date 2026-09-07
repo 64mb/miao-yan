@@ -315,6 +315,7 @@
 "Username" = "Usuario";
 "Author name" = "Nombre del autor";
 "Author email" = "Correo del autor";
+"Automatically sync every 15 minutes" = "Sincronizar automáticamente cada 15 minutos";
 "Git sync configured~" = "Git configurado~";
 "Git sync configuration is invalid." = "La configuración Git no es válida.";
 "Git credentials are unavailable." = "Las credenciales Git no están disponibles.";

@@ -3,6 +3,30 @@ import XCTest
 @testable import MiaoYan
 
 final class GitSyncFoundationTests: XCTestCase {
+    private actor SyncRecorder {
+        private(set) var roots = [URL]()
+        private var shouldWait = false
+
+        func setShouldWait(_ value: Bool) {
+            shouldWait = value
+        }
+
+        func run(root: URL) async {
+            roots.append(root)
+            while shouldWait {
+                await Task.yield()
+            }
+        }
+
+        func count() -> Int {
+            roots.count
+        }
+
+        func lastRoot() -> URL? {
+            roots.last
+        }
+    }
+
     @MainActor
     func testGitSyncMenuRouteNeverLoadsAnUnwiredViewController() {
         let storyboardProxy = ViewController()
@@ -94,6 +118,149 @@ final class GitSyncFoundationTests: XCTestCase {
         XCTAssertFalse(GitSyncState.idle(lastResult: nil).isRunning)
         XCTAssertTrue(GitSyncState.fetching.isRunning)
         XCTAssertTrue(GitSyncState.pushing.isRunning)
+    }
+
+    func testLegacyGitSyncConfigurationDecodesWithAutomaticSyncDisabled() throws {
+        struct LegacyConfiguration: Encodable {
+            let remoteURL: URL
+            let authorName: String
+            let authorEmail: String
+            let ai: GitAIConfiguration?
+        }
+
+        let data = try JSONEncoder().encode(
+            LegacyConfiguration(
+                remoteURL: URL(string: "https://example.com/notes.git")!,
+                authorName: "Miao Yan",
+                authorEmail: "notes@example.com",
+                ai: nil
+            )
+        )
+        let configuration = try JSONDecoder().decode(GitSyncConfiguration.self, from: data)
+
+        XCTAssertFalse(configuration.automaticSyncEnabled)
+    }
+
+    func testGitSyncConfigurationRoundTripsAutomaticSyncOptIn() throws {
+        let configuration = GitSyncConfiguration(
+            remoteURL: URL(string: "https://example.com/notes.git")!,
+            authorName: "Miao Yan",
+            authorEmail: "notes@example.com",
+            automaticSyncEnabled: true
+        )
+
+        let decoded = try JSONDecoder().decode(
+            GitSyncConfiguration.self,
+            from: JSONEncoder().encode(configuration)
+        )
+
+        XCTAssertEqual(decoded, configuration)
+        XCTAssertTrue(decoded.automaticSyncEnabled)
+    }
+
+    @MainActor
+    func testAutomaticSchedulerUsesFifteenMinuteIntervalAndLatestConfiguredRoot() async {
+        let recorder = SyncRecorder()
+        let scheduler = GitSyncScheduler { root in
+            await recorder.run(root: root)
+        }
+        defer { scheduler.stop() }
+        let oldRoot = URL(fileURLWithPath: "/tmp/old-notes", isDirectory: true)
+        let currentRoot = URL(fileURLWithPath: "/tmp/current-notes", isDirectory: true)
+
+        scheduler.configure(rootURL: oldRoot, enabled: true)
+        scheduler.configure(rootURL: currentRoot, enabled: true)
+        scheduler.triggerForTesting()
+
+        XCTAssertEqual(GitSyncScheduler.interval, 15 * 60)
+        let didRun = await waitUntil { await recorder.count() == 1 }
+        let recordedRoot = await recorder.lastRoot()
+        XCTAssertTrue(didRun)
+        XCTAssertEqual(recordedRoot, currentRoot.standardizedFileURL.resolvingSymlinksInPath())
+    }
+
+    @MainActor
+    func testAutomaticSchedulerDoesNotRunWhenDisabled() async {
+        let recorder = SyncRecorder()
+        let scheduler = GitSyncScheduler { root in
+            await recorder.run(root: root)
+        }
+        scheduler.configure(rootURL: URL(fileURLWithPath: "/tmp/notes"), enabled: false)
+
+        scheduler.triggerForTesting()
+        await Task.yield()
+
+        let runCount = await recorder.count()
+        XCTAssertNil(scheduler.scheduledRootURL)
+        XCTAssertEqual(runCount, 0)
+    }
+
+    @MainActor
+    func testAutomaticSchedulerPreventsOverlappingRuns() async {
+        let recorder = SyncRecorder()
+        await recorder.setShouldWait(true)
+        let scheduler = GitSyncScheduler { root in
+            await recorder.run(root: root)
+        }
+        defer { scheduler.stop() }
+        scheduler.configure(rootURL: URL(fileURLWithPath: "/tmp/notes"), enabled: true)
+
+        scheduler.triggerForTesting()
+        scheduler.triggerForTesting()
+
+        let firstRunStarted = await waitUntil { await recorder.count() == 1 }
+        let firstRunCount = await recorder.count()
+        XCTAssertTrue(firstRunStarted)
+        XCTAssertTrue(scheduler.isSyncRunning)
+        XCTAssertEqual(firstRunCount, 1)
+
+        await recorder.setShouldWait(false)
+        let firstRunFinished = await waitUntil { !scheduler.isSyncRunning }
+        XCTAssertTrue(firstRunFinished)
+        scheduler.triggerForTesting()
+        let secondRunStarted = await waitUntil { await recorder.count() == 2 }
+        XCTAssertTrue(secondRunStarted)
+    }
+
+    @MainActor
+    func testTerminationReplyGateRepliesOnlyOnce() {
+        var replyCount = 0
+        let gate = GitSyncTerminationReplyGate {
+            replyCount += 1
+        }
+
+        XCTAssertTrue(gate.begin())
+        XCTAssertFalse(gate.begin())
+        XCTAssertTrue(gate.replyOnce())
+        XCTAssertFalse(gate.replyOnce())
+        XCTAssertEqual(replyCount, 1)
+        XCTAssertEqual(gate.state, .replied)
+    }
+
+    @MainActor
+    func testTerminationTimeoutRepliesAndIgnoresLateCompletion() async throws {
+        var timeoutCount = 0
+        var replyCount = 0
+        let controller = GitSyncTerminationController(
+            timeout: 0.01,
+            onTimeout: { timeoutCount += 1 },
+            reply: { replyCount += 1 }
+        )
+
+        XCTAssertTrue(controller.begin())
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(timeoutCount, 1)
+        XCTAssertEqual(replyCount, 1)
+        XCTAssertEqual(controller.state, .replied)
+        XCTAssertFalse(controller.finish())
+        XCTAssertEqual(replyCount, 1)
+    }
+
+    @MainActor
+    func testPreQuitGitSyncTimeoutIsShortAndBounded() {
+        XCTAssertGreaterThan(AppDelegate.preQuitGitSyncTimeout, 0)
+        XCTAssertLessThanOrEqual(AppDelegate.preQuitGitSyncTimeout, 10)
     }
 
     func testRecognizesKnownCloudStorageRootsWithoutSubstringFalsePositives() {
@@ -275,5 +442,17 @@ final class GitSyncFoundationTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+
+    @MainActor
+    private func waitUntil(
+        attempts: Int = 1_000,
+        _ condition: @escaping @MainActor () async -> Bool
+    ) async -> Bool {
+        for _ in 0..<attempts {
+            if await condition() { return true }
+            await Task.yield()
+        }
+        return false
     }
 }

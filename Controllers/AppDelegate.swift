@@ -8,6 +8,8 @@ import os.log
 @main
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
+    static let preQuitGitSyncTimeout: TimeInterval = 8
+
     var mainWindowController: MainWindowController?
     var prefsWindowController: PrefsWindowController?
     var aboutWindowController: AboutWindowController?
@@ -17,6 +19,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
     public var newName: String?
     public var newContent: String?
     let appContext = AppContext.shared
+    private var automaticGitSyncScheduleGeneration = 0
+    private(set) lazy var automaticGitSyncScheduler = GitSyncScheduler { [weak self] rootURL in
+        guard let viewController = self?.resolveViewController() else { return }
+        _ = await viewController.performAutomaticGitSync(for: rootURL)
+    }
+    private lazy var gitSyncTerminationController = GitSyncTerminationController(
+        timeout: Self.preQuitGitSyncTimeout,
+        onTimeout: {
+            AppDelegate.trackError(
+                GitSyncTerminationError.timedOut,
+                context: "AppDelegate.applicationShouldTerminate.timeout"
+            )
+        },
+        reply: {
+            NSApplication.shared.reply(toApplicationShouldTerminate: true)
+        }
+    )
+    var isTerminationPending: Bool { gitSyncTerminationController.state == .pending }
+    var hasStartedTermination: Bool { gitSyncTerminationController.state != .idle }
     #if !APPSTORE
         private var updaterController: SPUStandardUpdaterController?
     #endif
@@ -136,6 +157,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
 
         mainWindowController = mainWC
         appContext.bind(viewController: mainWC.window?.contentViewController as? ViewController)
+        refreshAutomaticGitSyncSchedule()
         normalizeMainWindowFrame(mainWC.window)
         DispatchQueue.main.async { [weak self, weak window = mainWC.window] in
             self?.normalizeMainWindowFrame(window)
@@ -154,22 +176,144 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemVa
 
     }
 
-    func applicationWillTerminate(_ aNotification: Notification) {
-        UserDefaultsManagement.clearSingleMode()
-        if let vc = resolveViewController() {
-            vc.persistCurrentViewState()
-            // Capture the current editor buffer into the active note before
-            // we drain the debounce queue, otherwise an in-flight keystroke
-            // from the last 1.5s would never reach Note.content.
-            if let activeNote = EditTextView.note {
-                vc.editArea.saveTextStorageContent(to: activeNote)
-            }
-            vc.storage.flushPendingSaves()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        switch gitSyncTerminationController.state {
+        case .pending:
+            return .terminateLater
+        case .replied:
+            return .terminateNow
+        case .idle:
+            break
         }
+
+        let flushSucceeded = flushEditorAndPendingSaves()
+        guard let viewController = resolveViewController() else {
+            if !flushSucceeded {
+                AppDelegate.trackError(
+                    GitSyncTerminationError.pendingSaveFailed,
+                    context: "AppDelegate.applicationShouldTerminate.flush"
+                )
+            }
+            return .terminateNow
+        }
+
+        let root = viewController.selectedGitSyncRoot()
+        let configuration = root.flatMap { viewController.gitSyncConfigurationStore.configuration(for: $0.url) }
+        let hasRunningSync = automaticGitSyncScheduler.isSyncRunning || viewController.gitSyncCoordinator.state.isRunning
+        let shouldStartPreQuitSync = root != nil && configuration?.automaticSyncEnabled == true
+        guard hasRunningSync || shouldStartPreQuitSync else {
+            if !flushSucceeded {
+                AppDelegate.trackError(
+                    GitSyncTerminationError.pendingSaveFailed,
+                    context: "AppDelegate.applicationShouldTerminate.flush"
+                )
+            }
+            return .terminateNow
+        }
+
+        guard gitSyncTerminationController.begin() else { return .terminateLater }
+        automaticGitSyncScheduleGeneration += 1
+        automaticGitSyncScheduler.stop()
+        let rootURL = root?.url.standardizedFileURL.resolvingSymlinksInPath()
+
+        Task { @MainActor [weak self, weak viewController] in
+            guard let self, let viewController else { return }
+            if !flushSucceeded {
+                AppDelegate.trackError(
+                    GitSyncTerminationError.pendingSaveFailed,
+                    context: "AppDelegate.applicationShouldTerminate.flush"
+                )
+                finishDeferredTermination()
+                return
+            }
+
+            if hasRunningSync || automaticGitSyncScheduler.isSyncRunning || viewController.gitSyncCoordinator.state.isRunning {
+                while isTerminationPending,
+                    automaticGitSyncScheduler.isSyncRunning || viewController.gitSyncCoordinator.state.isRunning
+                {
+                    do {
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                    } catch {
+                        return
+                    }
+                }
+            } else {
+                guard let rootURL else {
+                    AppDelegate.trackError(
+                        GitSyncTerminationError.syncBecameUnavailable,
+                        context: "AppDelegate.applicationShouldTerminate.root"
+                    )
+                    finishDeferredTermination()
+                    return
+                }
+                if await GitSyncLibraryLocationPolicy.isCloudBacked(rootURL) {
+                    AppDelegate.trackError(
+                        GitSyncTerminationError.cloudBackedLibrary,
+                        context: "AppDelegate.applicationShouldTerminate.location"
+                    )
+                    finishDeferredTermination()
+                    return
+                }
+                _ = await viewController.performAutomaticGitSync(for: rootURL)
+            }
+
+            guard isTerminationPending else { return }
+            finishDeferredTermination()
+        }
+
+        return .terminateLater
+    }
+
+    func applicationWillTerminate(_ aNotification: Notification) {
+        automaticGitSyncScheduleGeneration += 1
+        automaticGitSyncScheduler.stop()
+        UserDefaultsManagement.clearSingleMode()
+        _ = flushEditorAndPendingSaves()
         try? FileManager.default.removeItem(at: HtmlManager.previewBundleURL())
         var temporary = URL(fileURLWithPath: NSTemporaryDirectory())
         temporary.appendPathComponent("ThumbnailsBig")
         try? FileManager.default.removeItem(at: temporary)
+    }
+
+    @discardableResult
+    private func flushEditorAndPendingSaves() -> Bool {
+        guard let viewController = resolveViewController() else { return true }
+        viewController.persistCurrentViewState()
+        if let storageNote = viewController.editArea.storageNote {
+            viewController.editArea.saveTextStorageContent(to: storageNote)
+        }
+        return viewController.storage.flushPendingSaves()
+    }
+
+    private func finishDeferredTermination() {
+        guard isTerminationPending else { return }
+        _ = gitSyncTerminationController.finish()
+    }
+
+    func refreshAutomaticGitSyncSchedule() {
+        automaticGitSyncScheduleGeneration += 1
+        let generation = automaticGitSyncScheduleGeneration
+        automaticGitSyncScheduler.stop()
+
+        guard let viewController = resolveViewController(),
+            let root = viewController.selectedGitSyncRoot(),
+            let configuration = viewController.gitSyncConfigurationStore.configuration(for: root.url),
+            configuration.automaticSyncEnabled
+        else { return }
+
+        let expectedRootURL = root.url.standardizedFileURL.resolvingSymlinksInPath()
+        Task { @MainActor [weak self, weak viewController] in
+            let isCloudBacked = await GitSyncLibraryLocationPolicy.isCloudBacked(expectedRootURL)
+            guard let self, let viewController,
+                generation == automaticGitSyncScheduleGeneration,
+                !isCloudBacked,
+                let currentRoot = viewController.selectedGitSyncRoot(),
+                currentRoot.url.standardizedFileURL.resolvingSymlinksInPath() == expectedRootURL,
+                viewController.gitSyncConfigurationStore.configuration(for: currentRoot.url)?.automaticSyncEnabled == true
+            else { return }
+
+            automaticGitSyncScheduler.configure(rootURL: expectedRootURL, enabled: true)
+        }
     }
 
     static func trackError(_ error: Error, context: String) {

@@ -7,11 +7,29 @@ struct GitSyncSettingsInput {
     let personalAccessToken: String
     let authorName: String
     let authorEmail: String
+    let automaticSyncEnabled: Bool
     let aiEnabled: Bool
     let aiBaseURL: String
     let aiModel: String
     let aiAPIKey: String
     let aiPrompt: String
+}
+
+private enum GitSyncAutomaticRunError: LocalizedError {
+    case cloudBackedLibrary
+    case missingCredentials
+    case blocked(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cloudBackedLibrary:
+            return "Automatic Git sync refused a cloud-backed or non-local library."
+        case .missingCredentials:
+            return "Automatic Git sync could not load the configured Git credentials."
+        case .blocked(let description):
+            return "Automatic Git sync was blocked: \(description)"
+        }
+    }
 }
 
 // MARK: - User Actions and Operations
@@ -686,6 +704,7 @@ extension ViewController {
             remoteURL: remoteURL,
             authorName: input.authorName.trimmingCharacters(in: .whitespacesAndNewlines),
             authorEmail: input.authorEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+            automaticSyncEnabled: input.automaticSyncEnabled,
             ai: aiConfiguration
         )
         let token = input.personalAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -956,6 +975,7 @@ extension ViewController {
                     remoteURL: remoteURL,
                     authorName: authorNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
                     authorEmail: authorEmailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+                    automaticSyncEnabled: existingConfiguration?.automaticSyncEnabled ?? false,
                     ai: aiConfiguration
                 )
                 let token = tokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1085,6 +1105,7 @@ extension ViewController {
                 }
             }
         }
+        (NSApplication.shared.delegate as? AppDelegate)?.refreshAutomaticGitSyncSchedule()
     }
 
     @IBAction func syncGitRepository(_ sender: Any) {
@@ -1128,12 +1149,59 @@ extension ViewController {
         runGitSync(root: root, configuration: configuration, credential: credential)
     }
 
+    func performAutomaticGitSync(for scheduledRootURL: URL) async -> GitSyncResult? {
+        guard !gitSyncCoordinator.state.isRunning,
+            let root = selectedGitSyncRoot(),
+            root.url.standardizedFileURL.resolvingSymlinksInPath()
+                == scheduledRootURL.standardizedFileURL.resolvingSymlinksInPath(),
+            let configuration = gitSyncConfigurationStore.configuration(for: root.url),
+            configuration.automaticSyncEnabled
+        else { return nil }
+
+        guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
+            AppDelegate.trackError(
+                GitSyncAutomaticRunError.cloudBackedLibrary,
+                context: "ViewController.performAutomaticGitSync.location"
+            )
+            return nil
+        }
+
+        let credential: GitHTTPSCredential
+        do {
+            guard let stored = try AppEnvironment.current.gitCredentialStore.credential(for: configuration.remoteURL) else {
+                throw GitSyncAutomaticRunError.missingCredentials
+            }
+            credential = stored
+        } catch {
+            AppDelegate.trackError(error, context: "ViewController.performAutomaticGitSync.credentials")
+            return nil
+        }
+
+        let result = await gitSyncCoordinator.sync(
+            root: root,
+            configuration: configuration,
+            credential: credential,
+            viewController: self
+        )
+        if case .blocked(let reason) = result {
+            AppDelegate.trackError(
+                GitSyncAutomaticRunError.blocked(gitSyncBlockDescription(reason)),
+                context: "ViewController.performAutomaticGitSync.blocked"
+            )
+        }
+        return result
+    }
+
     private func runGitSync(
         root: Project,
         configuration: GitSyncConfiguration,
         credential: GitHTTPSCredential,
         unrelatedHistoryResolution: GitSyncUnrelatedHistoryResolution = .keepLocal
     ) {
+        guard !gitSyncCoordinator.state.isRunning else {
+            toast(message: I18n.str("Wait for the current Git sync to finish."), style: .failure)
+            return
+        }
         toastPersistent(message: I18n.str("Syncing Git repository…"))
         gitSyncCoordinator.stateDidChange = { [weak self] state in
             guard state.isRunning else { return }
@@ -1150,6 +1218,9 @@ extension ViewController {
             )
             gitSyncCoordinator.stateDidChange = nil
             toastDismiss()
+            if (NSApplication.shared.delegate as? AppDelegate)?.hasStartedTermination == true {
+                return
+            }
             presentGitSyncResult(result, root: root, configuration: configuration, credential: credential)
         }
     }

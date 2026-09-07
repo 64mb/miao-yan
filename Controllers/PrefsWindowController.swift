@@ -207,6 +207,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
     private var authorNameField: NSTextField!
     private var authorEmailField: NSTextField!
     private var moveLibraryButton: NSButton!
+    private var automaticSyncButton: NSButton!
     private var aiEnabledButton: NSButton!
     private var aiBaseURLField: NSTextField!
     private var aiModelField: NSTextField!
@@ -274,6 +275,12 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
         authorNameField.placeholderString = I18n.str("Commit author name")
         authorEmailField = NSTextField()
         authorEmailField.placeholderString = I18n.str("Commit author email")
+
+        automaticSyncButton = NSButton(
+            checkboxWithTitle: I18n.str("Automatically sync every 15 minutes"),
+            target: nil,
+            action: nil
+        )
 
         aiEnabledButton = NSButton(
             checkboxWithTitle: I18n.str("Enable AI diff conflict resolver"),
@@ -362,6 +369,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
             makePreferencesRow(labelText: "\(I18n.str("Personal access token")):", control: tokenField, controlWidth: 300),
             makePreferencesRow(labelText: "\(I18n.str("Author name")):", control: authorNameField, controlWidth: 300),
             makePreferencesRow(labelText: "\(I18n.str("Author email")):", control: authorEmailField, controlWidth: 300),
+            makePreferencesRow(labelText: "", control: automaticSyncButton, controlWidth: nil),
             makePreferencesSeparator(),
             makePreferencesRow(labelText: "", control: aiEnabledButton, controlWidth: nil),
             makePreferencesRow(labelText: "\(I18n.str("AI API base URL")):", control: aiBaseURLField, controlWidth: 300),
@@ -398,6 +406,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
             personalAccessToken: tokenField.stringValue,
             authorName: authorNameField.stringValue,
             authorEmail: authorEmailField.stringValue,
+            automaticSyncEnabled: automaticSyncButton.state == .on,
             aiEnabled: aiEnabledButton.state == .on,
             aiBaseURL: aiBaseURLField.stringValue,
             aiModel: aiModelField.stringValue,
@@ -433,6 +442,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
             remoteField.placeholderString = I18n.str("Select the main library in the sidebar.")
             moveLibraryButton.isEnabled = false
             moveLibraryButton.toolTip = nil
+            automaticSyncButton.state = .off
             saveButton.isEnabled = false
             syncButton.isEnabled = false
             return
@@ -451,6 +461,7 @@ final class GitSyncPrefsViewController: BasePrefsViewController {
             credential == nil ? I18n.str("Personal access token") : I18n.str("Stored token (leave blank to keep)")
         authorNameField.stringValue = configuration?.authorName ?? ""
         authorEmailField.stringValue = configuration?.authorEmail ?? ""
+        automaticSyncButton.state = configuration?.automaticSyncEnabled == true ? .on : .off
         let ai = configuration?.ai
         aiEnabledButton.state = ai == nil ? .off : .on
         aiBaseURLField.stringValue = ai?.baseURL.absoluteString ?? GitAIConfiguration.defaultBaseURL.absoluteString
