@@ -42,6 +42,22 @@ android {
         buildConfig = true
     }
 
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
+        create("localRelease") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+        }
+    }
+
     sourceSets {
         getByName("main").assets.directories.add(rootProject.file("../Resources/Initial").path)
     }
