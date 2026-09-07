@@ -7,6 +7,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.inputmethod.BaseInputConnection
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
@@ -363,12 +364,14 @@ private fun MarkdownPreview(markdown: String, modifier: Modifier = Modifier) {
                 settings.javaScriptEnabled = false
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
+                settings.blockNetworkLoads = true
                 settings.domStorageEnabled = false
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 settings.setSupportMultipleWindows(false)
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val uri = request.url
-                        if (uri.scheme in setOf("https", "http", "mailto")) {
+                        if (PreviewNavigationPolicy.opensExternally(uri.scheme)) {
                             runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
                         }
                         return true
