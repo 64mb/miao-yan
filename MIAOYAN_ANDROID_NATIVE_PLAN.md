@@ -4,7 +4,7 @@
 
 Статус: research завершён; первый исполняемый editor/preview-прототип находится в `MiaoYanAndroid/`. Каноническое хранилище Android подтверждено как app-private; SAF остаётся только границей явного Import/Export.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, строгие CRUD/Trash/Restore и явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting, permissionless Photo Picker/OpenDocument attachments и secure Git HTTPS sync на Eclipse JGit. Прототип собирается и покрыт JVM/instrumentation tests; adaptive tablet layout и дальнейший device hardening остаются отдельными checkpoint. AI для Android исключён.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, note CRUD/Trash/Restore, явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting и permissionless Photo Picker/OpenDocument attachments уже находятся в target. Git HTTPS и preview реализованы, но не считаются принятыми до закрытия release-only `lb0`, интеграции единого preview pipeline и повторного device smoke. Folder CRUD подготовлен отдельно и также требует интеграции. Adaptive tablet layout, iframe и корректный короткий exit-sync ещё не реализованы. AI для Android исключён.
 
 ## Текущий объединённый goal и Definition of Done
 
@@ -24,6 +24,26 @@ Android-версия доводится одним цельным локальн
 - UI поддерживает Auto/System, Dark и Light темы, цвета editor/preview в духе текущей macOS-версии, bundled открытые шрифты и выбор шрифта/одного из ограниченного набора размеров. Markdown syntax highlighting в Android editor использует те же смысловые группы и светлую/тёмную палитру, что и macOS, без повреждения IME composition. App icon и action icons входят в поставку; adaptive launcher icon держит цветной знак внутри Android safe-zone, а отдельный themed/monochrome layer показывает читаемый силуэт птицы с веткой без цветного фона и солнца (включая Nothing OS). Toolbar использует монохромную птицу и компактные выровненные действия.
 - Телефон использует single-pane navigation, планшет от 840 dp — устойчивый list-detail/two-pane режим. Settings, fullscreen continuous preview и presentation занимают всё окно; rotation и multi-window не теряют draft или выбранную заметку.
 - Короткие UI labels/subtitles не получают декоративную точку в конце. Import/Export/Trash не занимают постоянное место на главном экране и доступны из Settings.
+
+## Статус реализации и очередь приоритетов
+
+Этот реестр является источником истины для статуса. Наличие кода или unit-теста само по себе не означает, что device-flow принят.
+
+| Приоритет | Поверхность | Статус на 2026-09-07 | Следующий gate |
+|---|---|---|---|
+| P0 | `Sync Now` / Reload с Git | Исправляется release-only сбой `lb0`; debug API и JVM policy уже существуют | minified `localRelease` smoke с настоящим JGit init/sync path, стабильные пользовательские ошибки без обфусцированных имён |
+| P0 | Inline Preview | Отдельный hotfix подготовлен: reusable continuous WebView, renderer recovery, font-before-first-frame | rebase на текущий target, JVM/lint/build и один изолированный device smoke без crash/FOUT |
+| P1 | Nested folder CRUD | Полная реализация подготовлена в отдельной ветке | интеграция, затем create/rename/navigation/trash/restore/permanent-delete smoke с Room/pins/draft remap |
+| P1 | Tablet | Реального list-detail/two-pane branching пока нет | phone/tablet, rotation и multi-window tests от 840 dp |
+| P1 | Best-effort exit sync | Текущий worker ошибочно зависит от periodic toggle и допускает длинный timeout | отдельный от periodic запускающий путь, короткий timeout, выход не блокируется, local commit остаётся восстановимым |
+| P1 | Click-to-load iframe | Ещё отсутствует; raw HTML сейчас безопасно удаляется cmark без unsafe mode | явное нажатие, изолированный in-app iframe без scripts/forms/popups/top-navigation и security tests |
+| P1 | `/files/` attachments | Импорт и вставка ссылки есть, preview обслуживает только `/i/` | безопасное открытие выбранного файла и path/MIME tests |
+| P2 | Room FTS/backlinks/cleanup | Реализовано: stale-row cleanup, WAL checkpoint, size/fragmentation rebuild | длительный churn/size regression test |
+| P2 | Demo/theme/fonts/syntax/icon | Реализовано, включая macOS editor palette и отдельный monochrome bird+branch layer | финальный light/dark и themed-launcher visual smoke; preview FOUT закрывается P0 hotfix |
+| P2 | Progress overlay | Delay 150 ms, после появления minimum 800 ms; тесты state machine есть | runtime smoke Reload и Sync после Git fix |
+| P2 | Initial unrelated history | Обычные file conflicts есть, но whole-library first-sync choice не выделен | отдельный выбор: заменить локальную библиотеку remote либо оставить local без применения remote |
+| P3 | Subtitle punctuation | Исправлено не во всех EN/RU detail strings | убрать декоративные финальные точки из всех subtitle/detail, не затрагивая обычный текст |
+| Release gate | APK | Предыдущий переданный APK не содержит последние syntax/reload изменения | после всех интеграций `test lint assembleDebug assembleDebugAndroidTest assembleLocalRelease`, установка свежей сборки на `emulator-5554` |
 
 ## 1. Scope и принятые ограничения
 
@@ -83,8 +103,8 @@ SAF tree выбранный пользователем — только исто
 |---|---|
 | Язык | Kotlin 2.4.10 |
 | Build | AGP 9.4.0, Gradle 9.6, JDK 17 |
-| SDK | `compileSdk 37`, `targetSdk 37`, `minSdk 35` (Android 15) |
-| UI | Jetpack Compose BOM 2026.08.00, Material 3 |
+| SDK | `compileSdk 36`, `targetSdk 36`, `minSdk 35` (Android 15) |
+| UI | Jetpack Compose BOM 2026.06.00, Material 3 |
 | Редактор | `AppCompatEditText`/`EditText` внутри `AndroidView` |
 | Состояние | ViewModel + coroutines + Flow/StateFlow, UDF |
 | Настройки | Preferences DataStore 1.2.1 |
@@ -92,7 +112,7 @@ SAF tree выбранный пользователем — только исто
 | Фоновые задачи | WorkManager: opt-in periodic Git sync, минимум 15 минут |
 | Markdown | cmark-gfm 0.29.0.gfm.13 через узкий JNI API |
 | Git | Eclipse JGit `7.7.1.202607240634-r` (EDL-1.0 / BSD-3-Clause), Gradle lockfile |
-| Preview | Android WebView + `WebViewAssetLoader` |
+| Preview | Android WebView + собственный allowlisted `shouldInterceptRequest` router на synthetic HTTPS origin |
 | Секреты | Android Keystore + AES-256-GCM blobs в `noBackupFilesDir` |
 | Шрифты | системные equivalents; JetBrains Mono как bundled open alternative с license attribution |
 | DI | ручная constructor injection на MVP |
@@ -234,7 +254,7 @@ Pipeline:
 5. Переписать локальные `src`/`href`.
 6. Вставить fragment в Android HTML shell с общими CSS/assets.
 
-WebView использует `https://appassets.androidplatform.net` через `WebViewAssetLoader`:
+WebView использует synthetic origin `https://appassets.androidplatform.net`; ресурсы обслуживаются собственным allowlisted `shouldInterceptRequest` router без раскрытия filesystem paths:
 
 - `allowFileAccess = false`;
 - `allowContentAccess = false`;
@@ -252,7 +272,7 @@ Asset handler декодирует путь один раз и отклоняе�
 
 - базовые HTML-теги разрешены;
 - `<script>` из заметки не выполняется;
-- iframe не загружается автоматически; окончательный UX между click-to-load в жёстком sandbox и внешним браузером требует продуктового подтверждения;
+- iframe не загружается автоматически; принятый UX — placeholder и загрузка только после явного нажатия внутри отдельного жёстко изолированного in-app iframe без scripts, forms, popups и top-navigation;
 - встроенные scripts приложения получают случайный CSP nonce;
 - `connect-src`, `object-src` и `frame-src` запрещены.
 
@@ -422,13 +442,14 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 
 ### Phase 2 — editor и сохранность, 3–4 недели
 
-- EditText editor и incremental highlighting;
-- CJK composition guards;
-- autosave с owner/hash generation;
-- image paste, `i/`, `files/`;
-- Typesetting action;
-- Trash/restore;
-- local history и external-change conflicts.
+- ✅ EditText editor и incremental highlighting;
+- ✅ CJK composition guards на уровне реализации;
+- ✅ autosave с owner/hash generation;
+- ✅ image/file picker, `i/` и базовая вставка `files/`;
+- ✅ Typesetting action;
+- ✅ note Trash/restore/permanent delete;
+- folder CRUD подготовлен отдельно и ожидает интеграции;
+- `/files/` preview/open policy, local history и external-change conflicts остаются открыты.
 
 ### Phase 3 — manual + periodic Git MVP, 3–5 недель
 
@@ -438,7 +459,9 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - ✅ commit/fetch/classify/apply/push без content merge;
 - ✅ recovery ref;
 - ✅ local/remote whole-file conflict UI с timestamps и choose-all;
-- ✅ ручная кнопка Sync и opt-in WorkManager каждые 15 минут плюс bounded best-effort background enqueue.
+- opt-in WorkManager каждые 15 минут реализован;
+- ручная кнопка Sync ожидает release-only `lb0` regression gate;
+- best-effort background/exit sync требует отделения от periodic toggle и сокращения timeout.
 
 ### Phase 4 — visual/settings и platform polish, 2–3 недели
 
@@ -459,14 +482,15 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 
 Оценка: 8–14 инженерных недель до уверенной beta для одного опытного Android-разработчика. Отказ от SAF как live storage убирает mirror/apply state machine; Git MVP закрывает базовый transport/conflict flow, а главные оставшиеся неопределённости — provider/device hardening, WebView и IME.
 
-## 13. Вопросы, на которые нужен конкретный продуктовый ответ
+## 13. Оставшиеся продуктовые вопросы
 
 Ниже не абстрактная «семантика», а решения, меняющие контракт.
 
-1. Iframe: после явного нажатия загружать внутри preview в жёстком sandbox без scripts/forms/popups/top-navigation или открывать системный браузер?
-2. PlantUML: локальный renderer, пользовательский endpoint или не включать в MVP? Рекомендация: не включать в MVP, пока нет локального renderer.
-3. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
-Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; remote media загружается только по нажатию; Git имеет ручной и opt-in 15-минутный запуск; username + PAT используются только для HTTPS-аутентификации, а обязательные отдельные author name/email формируют JGit `PersonIdent`, как в macOS; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
+1. PlantUML: локальный renderer, пользовательский endpoint или не включать в MVP? Рекомендация: не включать в MVP, пока нет локального renderer.
+2. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
+3. Android system backup: требование «только локально» запрещает также зашифрованный Android Backup или app-private library можно включать в системную backup-модель? До ответа библиотека не должна рекламироваться как имеющая внешнюю резервную копию без успешного Git sync/Export.
+
+Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; iframe и remote media загружаются только по нажатию внутри изолированного in-app view; Git имеет ручной и opt-in 15-минутный запуск; username + PAT используются только для HTTPS-аутентификации, а обязательные отдельные author name/email формируют JGit `PersonIdent`, как в macOS; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
 
 ## 14. Реализованные feasibility decisions
 
@@ -475,7 +499,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 1. App-private atomic filesystem operations и SAF Import/Export на реальных providers.
 2. JGit `7.7.1.202607240634-r` HTTPS/TLS с отключёнными redirects, exact host/port credential provider и URL-bound Keystore blob; libgit2 не реализован.
 3. cmark-gfm JNI и общий golden corpus.
-4. WebViewAssetLoader + CSP + локальные `i/` assets без раскрытия filesystem paths.
+4. Synthetic HTTPS origin + CSP + собственный allowlisted request router для локальных `/i/` assets без раскрытия filesystem paths.
 
 Эти gates позволяют продолжать hardening существующих production-направлений без смены canonical storage.
 
