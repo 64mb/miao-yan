@@ -4,7 +4,7 @@
 
 Статус: research завершён; первый исполняемый editor/preview-прототип находится в `MiaoYanAndroid/`. Каноническое хранилище Android подтверждено как app-private; SAF остаётся только границей явного Import/Export.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библиотека, рекурсивный список и поиск заметок, безопасное UTF-8 редактирование с защитой IME composition, fail-closed сохранение по hash и ограниченный Markdown preview без JavaScript/raw HTML. Прототип собран и проверен на native AVD. Следующий checkpoint переводит библиотеку из первоначального SAF-spike в `filesDir/libraries/default`, добавляет production cmark-gfm, attachments, Room и Git. AI для Android исключён.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, строгие CRUD/Trash/Restore и явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI и безопасные локальные `/i/` assets. Прототип собирается и покрыт JVM/instrumentation tests; следующий checkpoint — Git и расширение editor/attachment flows. AI для Android исключён.
 
 ## 1. Scope и принятые ограничения
 
@@ -49,7 +49,9 @@ SAF tree выбранный пользователем — только исто
 - `.git`, локальные metadata, Trash и служебные данные никогда не экспортируются через SAF.
 - Room — только перестраиваемый индекс, не источник текста заметок.
 - История версий, черновики, conflict backups и pin/favorite metadata находятся в app-private storage.
-- Все операции записи сериализуются одним `LibraryMutationCoordinator`.
+- Все canonical filesystem operations, включая консистентные scan/open, проходят через process-wide
+  `LibraryMutationGate` с общим `LibraryAccess` contract; Git и attachment coordinators обязаны
+  использовать тот же gate.
 - Безопасные записи используют temporary sibling + atomic replace, когда это поддерживается файловой системой; существующий файл не воссоздаётся молча после исчезновения.
 - App update сохраняет библиотеку, но uninstall/clear data удаляет её. Этот риск должен быть явно показан в настройках рядом с Git и Export.
 
@@ -358,20 +360,20 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 
 ### Phase 0 — feasibility, 1–2 недели
 
-- app-private filesystem CRUD/Trash и SAF Import/Export spike;
+- ✅ app-private filesystem CRUD/Trash и SAF Import/Export spike;
 - libgit2 Android build, HTTPS trust store, redirect, ABI;
-- cmark-gfm JNI parity;
-- WebView CSP/raw HTML prototype;
+- ✅ cmark-gfm JNI parity;
+- ✅ WebView CSP/raw HTML prototype;
 - ADR по app-private canonical storage, raw HTML и initial sync.
 
 Не продолжать Git-реализацию, если TLS/credential binding или безопасное применение incoming tree не доказаны.
 
 ### Phase 1 — reader, 2–3 недели
 
-- создание app-private root и явный Import/Export;
-- scan, Room index, folders, recent/search;
-- GFM preview, frontmatter, wikilinks, `i/`;
-- safe WebView и external links;
+- ✅ создание app-private root и явный Import/Export;
+- ✅ scan, Room index, folders и recursive search;
+- ✅ GFM preview, frontmatter, wikilinks/backlinks и `i/`;
+- ✅ safe WebView и external links;
 - large-file skeleton/read-only behavior.
 
 ### Phase 2 — editor и сохранность, 3–4 недели

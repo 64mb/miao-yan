@@ -3,11 +3,18 @@
 Native Android 15+ prototype for validating the first local-library flow. The canonical library
 contract is `context.filesDir/libraries/default`; SAF is reserved for explicit Import/Export:
 
-1. Recursively list `.md`, `.markdown`, and `.txt` notes from one app-private library.
-2. Keep everyday preview and editing independent from `ContentResolver` and persisted SAF grants.
-3. Search and open a note.
-4. Edit through a platform `EditText` that does not replace text during IME composition.
-5. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript,
+1. Recursively list nested `.md`, `.markdown`, and `.txt` notes while excluding `.git`,
+   `Trash`/`.Trash`, `i`, `files`, hidden folders, and symlinks.
+2. Create and rename notes with strict path and case/Unicode collision checks; save by expected
+   content hash with atomic replacement.
+3. Move notes into a recoverable app-private `.Trash` and restore them to the original folder or
+   a safe root fallback.
+4. Keep everyday preview and editing independent from `ContentResolver`. SAF trees are used only
+   by explicit Import Library and Export Library actions and never become a live root.
+5. Search titles, nested paths, and bodies through a rebuildable Room FTS4 projection. Wikilinks
+   and backlinks update transactionally; pins stay authoritative in DataStore.
+6. Edit through a platform `EditText` that does not replace text during IME composition.
+7. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript,
    raw HTML, frames, and network loads disabled.
    Local `/i/<name>` images are streamed from the `i` directory next to the selected note through a
    restricted synthetic origin. Canonical-path checks keep the loader inside both the selected
@@ -15,8 +22,12 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
    remain explicit tap-to-open links and are never loaded automatically. External video and iframe
    markup stays inert; the shared policy requires user activation and a sandbox for future iframe
    embedding.
-6. Save only if the document hash still matches the opened version, then verify the written bytes.
-7. Follow the Android system light/dark appearance and keep editor/preview typography in local DataStore settings.
+8. Follow the Android system light/dark appearance and keep editor/preview typography in local
+   DataStore settings.
+
+Every canonical filesystem operation passes through the process-wide `LibraryMutationGate`.
+Future Git and attachment coordinators can share the same `LibraryAccess` contract instead of
+introducing independent locks. Room remains disposable: no note content can be recovered from it.
 
 There is no broad storage permission and no network permission.
 
@@ -42,7 +53,10 @@ cd MiaoYanAndroid
 ./gradlew test lint assembleDebug
 ```
 
-The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compose BOM 2026.06.00, NDK 29.0.14206865, CMake 3.22.1, `compileSdk 36`, `targetSdk 36`, and `minSdk 35`. The prototype deliberately stays on the newest SDK platform currently available from the installed stable Android SDK channel; moving to API 37 is a dependency-only follow-up once that platform is available locally.
+The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compose BOM
+2026.06.00, Room 2.8.4, NDK 29.0.14206865, CMake 3.22.1, `compileSdk 36`, `targetSdk
+36`, and `minSdk 35`. The prototype deliberately stays on the newest SDK platform currently
+available from the installed stable Android SDK channel.
 
 cmark-gfm 0.29.0.gfm.13 is vendored from GitHub at commit `587a12bb54d95ac37241377e6ddc93ea0e45439b`; its source archive checksum and update procedure are recorded in `app/src/main/cpp/third_party/cmark-gfm/README.miaoyan.md`. Builds do not fetch native source from the network.
 
@@ -50,6 +64,8 @@ The renderer enables the table, strikethrough, autolink, tagfilter, and task-lis
 
 ## Deliberate prototype limits
 
-- Note creation/rename/Trash, Room indexing, Git sync, and the SAF transport behind the Settings Import/Export callbacks are not included in this slice. SAF never becomes the live-library root. Android AI is explicitly out of scope.
+- Import/Export can leave already copied, non-conflicting files when a provider fails partway
+  through. Existing canonical files are never overwritten.
+- Git sync, full crash journaling, and attachment mutation UI are not included. Android AI is
+  explicitly out of scope.
 - Native APKs are currently produced for `arm64-v8a` devices and `x86_64` emulators only.
-- The production atomic-write and crash-recovery state machine remains Phase 0 work.

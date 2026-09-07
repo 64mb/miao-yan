@@ -4,12 +4,14 @@
         <exclude domain="file" path="git/" />
         <exclude domain="file" path="recovery/" />
         <exclude domain="file" path="datastore/" />
+        <!-- Room contains only a rebuildable search/link projection. -->
         <exclude domain="database" path="." />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="git/" />
         <exclude domain="file" path="recovery/" />
         <exclude domain="file" path="datastore/" />
+        <!-- Device transfer rebuilds Room from the transferred canonical files. -->
         <exclude domain="database" path="." />
     </device-transfer>
 </data-extraction-rules>

@@ -18,6 +18,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -87,7 +90,11 @@ import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.EditorSettings
 import com.tw93.miaoyan.android.data.LocalFileImageLoader
 import com.tw93.miaoyan.android.data.LocalImagePolicy
+import com.tw93.miaoyan.android.data.NameError
+import com.tw93.miaoyan.android.data.NameResult
+import com.tw93.miaoyan.android.data.NotePathPolicy
 import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.model.TrashedNote
 import com.tw93.miaoyan.android.ui.theme.MiaoYanColors
 import java.io.File
 import java.text.DateFormat
@@ -103,11 +110,17 @@ fun MiaoYanApp(
     editorSettings: EditorSettings,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
-    onImportLibrary: () -> Unit = {},
-    onExportLibrary: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(viewModel::importFrom)
+    }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(viewModel::exportTo)
+    }
+    val launchImport = { importLauncher.launch(null) }
+    val launchExport = { exportLauncher.launch(null) }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(state.message) {
@@ -124,8 +137,8 @@ fun MiaoYanApp(
                     settings = editorSettings,
                     onFontChanged = onFontChanged,
                     onFontSizeChanged = onFontSizeChanged,
-                    onImportLibrary = onImportLibrary,
-                    onExportLibrary = onExportLibrary,
+                    onImportLibrary = launchImport,
+                    onExportLibrary = launchExport,
                     onBack = { showSettings = false },
                 )
                 state.selected != null -> EditorScreen(
@@ -137,66 +150,29 @@ fun MiaoYanApp(
                     onSave = viewModel::save,
                     onSettings = { showSettings = true },
                 )
-                state.rootUri == null -> WelcomeScreen(
-                    onImportLibrary = onImportLibrary,
-                    onSettings = { showSettings = true },
-                )
                 else -> LibraryScreen(
                     state = state,
                     onRefresh = viewModel::reload,
                     onQueryChanged = viewModel::updateQuery,
                     onOpenNote = viewModel::openNote,
+                    onCreateNote = viewModel::createNote,
+                    onRenameNote = viewModel::renameNote,
+                    onMoveToTrash = viewModel::moveToTrash,
+                    onRestore = viewModel::restore,
+                    onShowTrash = viewModel::showTrash,
+                    onTogglePinned = viewModel::togglePinned,
+                    onImport = launchImport,
+                    onExport = launchExport,
                     onSettings = { showSettings = true },
                 )
             }
-            if (state.loading || state.saving) {
-                LoadingOverlay(if (state.saving) stringResource(R.string.save) else stringResource(R.string.loading))
-            }
-        }
-    }
-}
-
-@Composable
-private fun WelcomeScreen(onImportLibrary: () -> Unit, onSettings: () -> Unit) {
-    Box(Modifier.fillMaxSize()) {
-        IconButton(
-            onClick = onSettings,
-            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
-        ) {
-            Icon(
-                painterResource(R.drawable.ic_settings),
-                contentDescription = stringResource(R.string.settings),
-            )
-        }
-        Column(
-            modifier = Modifier.align(Alignment.Center).fillMaxWidth().widthIn(max = 680.dp)
-                .padding(horizontal = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Icon(
-                painterResource(R.drawable.miaoyan_brand_mark),
-                contentDescription = null,
-                modifier = Modifier.size(104.dp),
-                tint = androidx.compose.ui.graphics.Color.Unspecified,
-            )
-            Spacer(Modifier.height(28.dp))
-            Text(
-                stringResource(R.string.empty_title),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                stringResource(R.string.empty_message),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Spacer(Modifier.height(28.dp))
-            Button(onClick = onImportLibrary) {
-                Icon(painterResource(R.drawable.ic_folder_open), contentDescription = null)
-                Spacer(Modifier.size(8.dp))
-                Text(stringResource(R.string.import_library))
+            if (state.loading || state.saving || state.mutating) {
+                val label = when {
+                    state.saving -> stringResource(R.string.save)
+                    state.mutating -> stringResource(R.string.updating_library)
+                    else -> stringResource(R.string.loading)
+                }
+                LoadingOverlay(label)
             }
         }
     }
@@ -208,84 +184,303 @@ private fun LibraryScreen(
     onRefresh: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onOpenNote: (LibraryNote) -> Unit,
+    onCreateNote: (String) -> Unit,
+    onRenameNote: (LibraryNote, String) -> Unit,
+    onMoveToTrash: (LibraryNote) -> Unit,
+    onRestore: (TrashedNote) -> Unit,
+    onShowTrash: (Boolean) -> Unit,
+    onTogglePinned: (LibraryNote) -> Unit,
+    onImport: () -> Unit,
+    onExport: () -> Unit,
     onSettings: () -> Unit,
 ) {
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var renamingNote by remember { mutableStateOf<LibraryNote?>(null) }
+    var trashingNote by remember { mutableStateOf<LibraryNote?>(null) }
+
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 920.dp).fillMaxWidth().fillMaxHeight()) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("MiaoYan", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Text(
-                    state.libraryName,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "MiaoYan",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        stringResource(R.string.private_library),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (!state.showingTrash) {
+                    TextButton(onClick = { showCreateDialog = true }) {
+                        Text(stringResource(R.string.new_note))
+                    }
+                }
+                IconButton(onClick = onRefresh) {
+                    Icon(painterResource(R.drawable.ic_refresh), contentDescription = stringResource(R.string.refresh))
+                }
+                IconButton(onClick = onSettings) {
+                    Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onImport) { Text(stringResource(R.string.import_library)) }
+                TextButton(onClick = onExport) { Text(stringResource(R.string.export_library)) }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { onShowTrash(!state.showingTrash) }) {
+                    Text(stringResource(if (state.showingTrash) R.string.notes else R.string.trash))
+                }
+            }
+            if (state.showingTrash) {
+                if (state.trash.isEmpty() && !state.loading) {
+                    EmptyLibraryMessage(R.string.trash_empty)
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                        items(state.trash, key = { it.trashRelativePath }) { note ->
+                            TrashRow(note = note, onRestore = { onRestore(note) })
+                            HorizontalDivider(
+                                Modifier.padding(start = 20.dp),
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
+                            )
+                        }
+                    }
+                }
+            } else {
+                OutlinedTextField(
+                    value = state.query,
+                    onValueChange = onQueryChanged,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    placeholder = { Text(stringResource(R.string.search_notes)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
                 )
-            }
-            IconButton(onClick = onRefresh) {
-                Icon(painterResource(R.drawable.ic_refresh), contentDescription = stringResource(R.string.refresh))
-            }
-            IconButton(onClick = onSettings) {
-                Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
-            }
-        }
-        OutlinedTextField(
-            value = state.query,
-            onValueChange = onQueryChanged,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            placeholder = { Text(stringResource(R.string.search_notes)) },
-            leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
-            singleLine = true,
-            shape = RoundedCornerShape(14.dp),
-        )
-        if (state.visibleNotes.isEmpty() && !state.loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(stringResource(R.string.no_notes), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        } else {
-            LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
-                items(state.visibleNotes, key = { it.documentId }) { note ->
-                    NoteRow(note = note, onClick = { onOpenNote(note) })
-                    HorizontalDivider(Modifier.padding(start = 20.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = .16f))
+                if (state.visibleNotes.isEmpty() && !state.loading) {
+                    if (state.notes.isEmpty() && state.query.isBlank()) {
+                        EmptyLibraryContent(
+                            onCreate = { showCreateDialog = true },
+                            onImport = onImport,
+                        )
+                    } else {
+                        EmptyLibraryMessage(R.string.no_notes)
+                    }
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
+                        items(state.visibleNotes, key = { it.id }) { note ->
+                            NoteRow(
+                                note = note,
+                                pinned = note.relativePath in state.pinnedPaths,
+                                onClick = { onOpenNote(note) },
+                                onTogglePinned = { onTogglePinned(note) },
+                                onRename = { renamingNote = note },
+                                onTrash = { trashingNote = note },
+                            )
+                            HorizontalDivider(
+                                Modifier.padding(start = 20.dp),
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (showCreateDialog) {
+        NoteNameDialog(
+            title = stringResource(R.string.new_note),
+            initialName = "",
+            confirmLabel = stringResource(R.string.create),
+            onDismiss = { showCreateDialog = false },
+            onConfirm = { name -> showCreateDialog = false; onCreateNote(name) },
+        )
+    }
+    renamingNote?.let { note ->
+        NoteNameDialog(
+            title = stringResource(R.string.rename_note),
+            initialName = note.displayName,
+            confirmLabel = stringResource(R.string.rename),
+            onDismiss = { renamingNote = null },
+            onConfirm = { name -> renamingNote = null; onRenameNote(note, name) },
+        )
+    }
+    trashingNote?.let { note ->
+        AlertDialog(
+            onDismissRequest = { trashingNote = null },
+            title = { Text(stringResource(R.string.move_to_trash_title)) },
+            text = { Text(stringResource(R.string.move_to_trash_message, note.displayName)) },
+            confirmButton = {
+                TextButton(onClick = { trashingNote = null; onMoveToTrash(note) }) {
+                    Text(stringResource(R.string.move_to_trash))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { trashingNote = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun EmptyLibraryContent(onCreate: () -> Unit, onImport: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            painterResource(R.drawable.miaoyan_brand_mark),
+            contentDescription = null,
+            modifier = Modifier.size(88.dp),
+            tint = androidx.compose.ui.graphics.Color.Unspecified,
+        )
+        Spacer(Modifier.height(24.dp))
+        Text(
+            stringResource(R.string.empty_title),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            stringResource(R.string.empty_message),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Spacer(Modifier.height(24.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = onCreate) { Text(stringResource(R.string.new_note)) }
+            TextButton(onClick = onImport) { Text(stringResource(R.string.import_library)) }
         }
     }
 }
 
 @Composable
-private fun NoteRow(note: LibraryNote, onClick: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 14.dp),
-    ) {
-        Text(
-            note.displayName.substringBeforeLast('.'),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            val folder = note.relativePath.substringBeforeLast('/', missingDelimiterValue = "")
-            if (folder.isNotEmpty()) {
-                Text(folder, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-            if (note.modifiedAtMillis > 0) {
-                Text(
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(note.modifiedAtMillis)),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+private fun NoteRow(
+    note: LibraryNote,
+    pinned: Boolean,
+    onClick: () -> Unit,
+    onTogglePinned: () -> Unit,
+    onRename: () -> Unit,
+    onTrash: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp)) {
+        Column(Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 6.dp)) {
+            Text(
+                note.displayName.substringBeforeLast('.'),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val folder = note.relativePath.substringBeforeLast('/', missingDelimiterValue = "")
+                if (folder.isNotEmpty()) {
+                    Text(
+                        folder,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (note.modifiedAtMillis > 0) {
+                    Text(
+                        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                            .format(Date(note.modifiedAtMillis)),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
+        TextButton(onClick = onTogglePinned) {
+            Text(stringResource(if (pinned) R.string.unpin else R.string.pin))
+        }
+        TextButton(onClick = onRename) { Text(stringResource(R.string.rename)) }
+        TextButton(onClick = onTrash) { Text(stringResource(R.string.trash)) }
     }
 }
+
+@Composable
+private fun TrashRow(note: TrashedNote, onRestore: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(note.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            note.originalRelativePath?.let {
+                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        TextButton(onClick = onRestore) { Text(stringResource(R.string.restore)) }
+    }
+}
+
+@Composable
+private fun EmptyLibraryMessage(@StringRes message: Int) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(stringResource(message), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun NoteNameDialog(
+    title: String,
+    initialName: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    val result = NotePathPolicy.validateNoteName(name)
+    val error = (result as? NameResult.Invalid)?.error
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(stringResource(R.string.note_name)) },
+                supportingText = { error?.let { Text(nameErrorMessage(it)) } },
+                isError = error != null,
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm((result as NameResult.Valid).name) },
+                enabled = result is NameResult.Valid,
+            ) {
+                Text(confirmLabel)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun nameErrorMessage(error: NameError): String = stringResource(
+    when (error) {
+        NameError.EMPTY -> R.string.name_error_empty
+        NameError.RESERVED -> R.string.name_error_reserved
+        NameError.HIDDEN -> R.string.name_error_hidden
+        NameError.INVALID_CHARACTERS -> R.string.name_error_characters
+        NameError.UNSUPPORTED_EXTENSION -> R.string.name_error_extension
+        NameError.TOO_LONG -> R.string.name_error_too_long
+    }
+)
 
 @Composable
 private fun EditorScreen(

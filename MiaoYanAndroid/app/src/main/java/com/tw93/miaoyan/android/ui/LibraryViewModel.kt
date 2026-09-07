@@ -4,81 +4,93 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.tw93.miaoyan.android.data.LibraryPreferences
-import com.tw93.miaoyan.android.data.SafLibraryRepository
+import com.tw93.miaoyan.android.R
+import com.tw93.miaoyan.android.data.IndexedLibraryRepository
+import com.tw93.miaoyan.android.data.LibraryRepository
+import com.tw93.miaoyan.android.data.LocalLibraryRepository
+import com.tw93.miaoyan.android.data.LocalPinStore
+import com.tw93.miaoyan.android.data.index.RoomLibrarySearchIndex
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
+import com.tw93.miaoyan.android.model.TrashedNote
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class LibraryUiState(
-    val rootUri: Uri? = null,
-    val libraryName: String = "MiaoYan",
     val notes: List<LibraryNote> = emptyList(),
+    val searchResults: List<LibraryNote> = emptyList(),
+    val pinnedPaths: Set<String> = emptySet(),
+    val trash: List<TrashedNote> = emptyList(),
+    val showingTrash: Boolean = false,
     val query: String = "",
     val selected: OpenNote? = null,
     val draft: String = "",
     val preview: Boolean = false,
     val loading: Boolean = false,
     val saving: Boolean = false,
+    val mutating: Boolean = false,
     val dirty: Boolean = false,
     val message: String? = null,
 ) {
     val visibleNotes: List<LibraryNote>
-        get() {
-            val needle = query.trim()
-            if (needle.isEmpty()) return notes
-            return notes.filter {
-                it.displayName.contains(needle, ignoreCase = true) ||
-                    it.relativePath.contains(needle, ignoreCase = true)
-            }
-        }
+        get() = if (query.isBlank()) notes else searchResults
 }
 
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
-    private val preferences = LibraryPreferences(application)
-    private val repository = SafLibraryRepository(application)
+    private val repository: LibraryRepository = IndexedLibraryRepository(
+        canonical = LocalLibraryRepository(application),
+        index = RoomLibrarySearchIndex(application),
+        pins = LocalPinStore(application),
+    )
     private val mutableState = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = mutableState.asStateFlow()
-    private var loadJob: Job? = null
+    private var searchJob: Job? = null
 
     init {
-        viewModelScope.launch {
-            preferences.rootUri.distinctUntilChanged().collectLatest { uri ->
-                if (uri == null) {
-                    mutableState.value = LibraryUiState()
-                } else {
-                    load(uri)
-                }
-            }
-        }
-    }
-
-    fun selectRoot(uri: Uri) {
-        viewModelScope.launch {
-            runCatching {
-                repository.retainPermission(uri)
-                preferences.setRoot(uri)
-            }.onFailure(::showError)
-        }
+        reload()
     }
 
     fun reload() {
-        mutableState.value.rootUri?.let(::load)
+        if (mutableState.value.loading || mutableState.value.mutating) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(loading = true, message = null) }
+            runCatching {
+                Triple(repository.scan(), repository.listTrash(), loadPinnedPaths())
+            }.onSuccess { (notes, trash, pinnedPaths) ->
+                    mutableState.update {
+                        it.copy(
+                            notes = notes,
+                            trash = trash,
+                            pinnedPaths = pinnedPaths,
+                            loading = false,
+                        )
+                    }
+                    refreshSearch()
+                }
+                .onFailure { error ->
+                    mutableState.update { it.copy(loading = false) }
+                    showError(error)
+                }
+        }
+    }
+
+    fun showTrash(show: Boolean) {
+        searchJob?.cancel()
+        mutableState.update { it.copy(showingTrash = show, query = "", searchResults = emptyList()) }
     }
 
     fun updateQuery(query: String) {
-        mutableState.update { it.copy(query = query) }
+        mutableState.update { it.copy(query = query, searchResults = emptyList()) }
+        refreshSearch()
     }
 
     fun openNote(note: LibraryNote) {
-        if (mutableState.value.loading || mutableState.value.saving) return
+        if (isBusy()) return
         viewModelScope.launch {
             mutableState.update { it.copy(loading = true, message = null) }
             runCatching { repository.open(note) }
@@ -100,6 +112,150 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun createNote(name: String) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.createRootNote(name) }
+                .onSuccess { opened ->
+                    val notes = repository.scan()
+                    mutableState.update {
+                        it.copy(
+                            notes = notes,
+                            selected = opened,
+                            draft = opened.text,
+                            dirty = false,
+                            preview = false,
+                            mutating = false,
+                            showingTrash = false,
+                        )
+                    }
+                    refreshSearch()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun renameNote(note: LibraryNote, name: String) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.rename(note, name) }
+                .onSuccess {
+                    mutableState.update { state ->
+                        state.copy(
+                            notes = repository.scan(),
+                            pinnedPaths = loadPinnedPaths(),
+                            mutating = false,
+                        )
+                    }
+                    refreshSearch()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun moveToTrash(note: LibraryNote) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.moveToTrash(note) }
+                .onSuccess {
+                    val (notes, trash) = repository.scan() to repository.listTrash()
+                    mutableState.update {
+                        it.copy(
+                            notes = notes,
+                            trash = trash,
+                            pinnedPaths = loadPinnedPaths(),
+                            mutating = false,
+                        )
+                    }
+                    refreshSearch()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun restore(trashed: TrashedNote) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.restore(trashed) }
+                .onSuccess { result ->
+                    val (notes, trash) = repository.scan() to repository.listTrash()
+                    val message = if (result.restoredToRoot) {
+                        getApplication<Application>().getString(R.string.restored_to_root)
+                    } else {
+                        getApplication<Application>().getString(R.string.note_restored)
+                    }
+                    mutableState.update {
+                        it.copy(
+                            notes = notes,
+                            trash = trash,
+                            pinnedPaths = loadPinnedPaths(),
+                            mutating = false,
+                            message = message,
+                        )
+                    }
+                    refreshSearch()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun importFrom(treeUri: Uri) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.importFrom(treeUri) }
+                .onSuccess { result ->
+                    mutableState.update {
+                        it.copy(
+                            notes = repository.scan(),
+                            trash = repository.listTrash(),
+                            pinnedPaths = loadPinnedPaths(),
+                            mutating = false,
+                            showingTrash = false,
+                            message = getApplication<Application>().getString(R.string.imported_files, result.fileCount),
+                        )
+                    }
+                    refreshSearch()
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun exportTo(treeUri: Uri) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching { repository.exportTo(treeUri) }
+                .onSuccess { result ->
+                    mutableState.update {
+                        it.copy(
+                            mutating = false,
+                            message = getApplication<Application>().getString(R.string.exported_files, result.fileCount),
+                        )
+                    }
+                }
+                .onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
+    fun togglePinned(note: LibraryNote) {
+        if (isBusy()) return
+        viewModelScope.launch {
+            val pinned = note.relativePath in mutableState.value.pinnedPaths
+            mutableState.update { it.copy(mutating = true, message = null) }
+            runCatching {
+                repository.setPinned(note.relativePath, !pinned)
+                loadPinnedPaths()
+            }.onSuccess { pinnedPaths ->
+                mutableState.update { it.copy(pinnedPaths = pinnedPaths, mutating = false) }
+            }.onFailure { error -> finishFailedMutation(error) }
+        }
+    }
+
     fun updateDraft(text: String) {
         mutableState.update { current ->
             val selected = current.selected ?: return@update current
@@ -114,13 +270,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun save(onSaved: (() -> Unit)? = null) {
         val snapshot = mutableState.value.selected ?: return
         val draft = mutableState.value.draft
-        if (mutableState.value.saving) return
+        if (isBusy()) return
         viewModelScope.launch {
             mutableState.update { it.copy(saving = true, message = null) }
             runCatching { repository.save(snapshot, draft) }
                 .onSuccess { saved ->
                     mutableState.update { current ->
-                        if (current.selected?.note?.uri != snapshot.note.uri) {
+                        if (current.selected?.note?.id != snapshot.note.id) {
                             current.copy(saving = false)
                         } else if (current.draft == draft) {
                             current.copy(selected = saved, draft = saved.text, dirty = false, saving = false)
@@ -129,7 +285,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         }
                     }
                     onSaved?.invoke()
-                    mutableState.value.rootUri?.let(::refreshAfterSave)
+                    mutableState.update { it.copy(notes = repository.scan()) }
+                    refreshSearch()
                 }
                 .onFailure { error ->
                     mutableState.update { it.copy(saving = false) }
@@ -148,34 +305,56 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         mutableState.update { it.copy(message = null) }
     }
 
-    private fun load(uri: Uri) {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            mutableState.update {
-                it.copy(rootUri = uri, loading = true, selected = null, dirty = false, message = null)
-            }
-            runCatching { repository.libraryName(uri) to repository.scan(uri) }
-                .onSuccess { (name, notes) ->
-                    mutableState.update { it.copy(libraryName = name, notes = notes, loading = false) }
+    private fun refreshSearch() {
+        searchJob?.cancel()
+        val query = mutableState.value.query.trim()
+        if (query.isEmpty()) {
+            mutableState.update { it.copy(searchResults = emptyList()) }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(SearchDebounceMillis)
+            runCatching { repository.search(query) }
+                .onSuccess { results ->
+                    mutableState.update { current ->
+                        if (current.query.trim() == query) current.copy(searchResults = results) else current
+                    }
                 }
-                .onFailure { error ->
-                    mutableState.update { it.copy(loading = false, notes = emptyList()) }
-                    showError(error)
-                }
+                .onFailure(::showError)
         }
     }
 
-    private fun refreshAfterSave(uri: Uri) {
-        viewModelScope.launch {
-            runCatching { repository.scan(uri) }.onSuccess { notes ->
-                mutableState.update { current -> current.copy(notes = notes) }
-            }
+    private suspend fun finishFailedMutation(error: Throwable) {
+        val refreshed = runCatching {
+            Triple(repository.scan(), repository.listTrash(), loadPinnedPaths())
+        }.getOrNull()
+        mutableState.update {
+            it.copy(
+                notes = refreshed?.first ?: it.notes,
+                trash = refreshed?.second ?: it.trash,
+                pinnedPaths = refreshed?.third ?: it.pinnedPaths,
+                mutating = false,
+            )
         }
+        refreshSearch()
+        showError(error)
     }
+
+    private fun isBusy(): Boolean = mutableState.value.run { loading || saving || mutating }
+
+    private suspend fun loadPinnedPaths(): Set<String> =
+        repository.pinnedNotes().mapTo(mutableSetOf(), LibraryNote::relativePath)
 
     private fun showError(error: Throwable) {
         mutableState.update {
-            it.copy(message = error.message ?: "Android could not access the selected library.")
+            it.copy(
+                message = error.message
+                    ?: getApplication<Application>().getString(R.string.private_library_error),
+            )
         }
+    }
+
+    private companion object {
+        const val SearchDebounceMillis = 120L
     }
 }

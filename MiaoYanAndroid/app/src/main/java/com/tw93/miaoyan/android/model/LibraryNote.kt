@@ -1,14 +1,19 @@
 package com.tw93.miaoyan.android.model
 
-import android.net.Uri
-
 data class LibraryNote(
-    val documentId: String,
-    val uri: Uri,
+    val id: String,
     val relativePath: String,
     val displayName: String,
     val modifiedAtMillis: Long,
     val sizeBytes: Long,
+)
+
+data class TrashedNote(
+    val manifestId: String?,
+    val trashRelativePath: String,
+    val displayName: String,
+    val originalRelativePath: String?,
+    val deletedAtMillis: Long,
 )
 
 data class OpenNote(
