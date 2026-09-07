@@ -88,13 +88,14 @@
     <string name="git_sync_now_detail">Создать коммит локальных изменений, получить origin/main и безопасно обновить или отправить данные.</string>
     <string name="git_syncing">Синхронизация origin/main…</string>
     <string name="git_repository_url">HTTPS URL репозитория</string>
-    <string name="git_https_main_only">Только HTTPS; синхронизация ограничена origin/main.</string>
+    <string name="git_https_main_only">Синхронизация ограничена origin/main</string>
     <string name="git_username">Имя пользователя</string>
     <string name="git_pat">Персональный токен доступа</string>
     <string name="git_pat_unchanged">Сохранённый токен не изменится</string>
     <string name="git_author_name">Имя автора коммита</string>
     <string name="git_author_email">Email автора коммита</string>
-    <string name="git_periodic_15m">Фоновая синхронизация (минимум 15 минут)</string>
+    <string name="git_periodic">Фоновая синхронизация</string>
+    <string name="git_periodic_detail">Минимальный интервал — 15 минут</string>
     <string name="git_settings_saved">Настройки Git-синхронизации сохранены.</string>
     <string name="git_sync_complete">Git-синхронизация завершена.</string>
     <string name="git_save_before_sync">Перед Git-синхронизацией сохраните или отмените активный черновик.</string>

@@ -84,14 +84,20 @@ fun GitSyncSettingsDialog(
                         Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        OutlinedTextField(
-                            value = repositoryUrl,
-                            onValueChange = { repositoryUrl = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text(stringResource(R.string.git_repository_url)) },
-                            supportingText = { Text(stringResource(R.string.git_https_main_only)) },
-                            singleLine = true,
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            OutlinedTextField(
+                                value = repositoryUrl,
+                                onValueChange = { repositoryUrl = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text(stringResource(R.string.git_repository_url)) },
+                                singleLine = true,
+                            )
+                            Text(
+                                text = stringResource(R.string.git_https_main_only),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         OutlinedTextField(
                             value = editedUsername,
                             onValueChange = { editedUsername = it },
@@ -130,7 +136,20 @@ fun GitSyncSettingsDialog(
                             Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(stringResource(R.string.git_periodic_15m), Modifier.weight(1f))
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.git_periodic),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                Text(
+                                    text = stringResource(R.string.git_periodic_detail),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             Spacer(Modifier.width(16.dp))
                             Switch(checked = periodic, onCheckedChange = { periodic = it })
                         }

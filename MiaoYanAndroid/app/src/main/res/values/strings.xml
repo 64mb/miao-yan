@@ -88,13 +88,14 @@
     <string name="git_sync_now_detail">Commit local changes, fetch origin/main, and safely update or push.</string>
     <string name="git_syncing">Syncing origin/main…</string>
     <string name="git_repository_url">HTTPS repository URL</string>
-    <string name="git_https_main_only">HTTPS only; sync is restricted to origin/main.</string>
+    <string name="git_https_main_only">Sync is restricted to origin/main</string>
     <string name="git_username">Username</string>
     <string name="git_pat">Personal access token</string>
     <string name="git_pat_unchanged">Stored token remains unchanged</string>
     <string name="git_author_name">Commit author name</string>
     <string name="git_author_email">Commit author email</string>
-    <string name="git_periodic_15m">Sync in the background (15-minute minimum)</string>
+    <string name="git_periodic">Sync in the background</string>
+    <string name="git_periodic_detail">15-minute minimum</string>
     <string name="git_settings_saved">Git sync settings saved.</string>
     <string name="git_sync_complete">Git sync complete.</string>
     <string name="git_save_before_sync">Save or discard the active draft before Git sync.</string>
