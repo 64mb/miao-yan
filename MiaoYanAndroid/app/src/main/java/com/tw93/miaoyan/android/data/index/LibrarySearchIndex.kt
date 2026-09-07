@@ -11,6 +11,13 @@ interface LibrarySearchIndex {
         scanned: List<LibraryNote>,
         loaded: List<IndexedDocument>,
         pinnedPaths: Set<String>,
+    ): IndexReconciliationResult
+
+    suspend fun rebuild(
+        rootIdentity: String,
+        scanned: List<LibraryNote>,
+        documents: List<IndexedDocument>,
+        pinnedPaths: Set<String>,
     )
 
     suspend fun upsert(rootIdentity: String, document: IndexedDocument, pinned: Boolean)
@@ -24,6 +31,11 @@ interface LibrarySearchIndex {
     suspend fun setPinned(rootIdentity: String, relativePath: String, pinned: Boolean)
 
     suspend fun clear()
+}
+
+enum class IndexReconciliationResult {
+    Current,
+    FullRebuildRequired,
 }
 
 internal fun IndexedNoteEntity.toLibraryNote(): LibraryNote = LibraryNote(

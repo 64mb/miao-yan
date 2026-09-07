@@ -2,7 +2,9 @@ package com.tw93.miaoyan.android.data
 
 import android.net.Uri
 import android.util.Log
+import com.tw93.miaoyan.android.data.index.IndexedDocument
 import com.tw93.miaoyan.android.data.index.IndexText
+import com.tw93.miaoyan.android.data.index.IndexReconciliationResult
 import com.tw93.miaoyan.android.data.index.LibrarySearchIndex
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
@@ -120,7 +122,16 @@ class IndexedLibraryRepository(
                     null
                 }
             }
-            index.reconcileScan(rootIdentity, notes, loaded, pins.paths())
+            val pinnedPaths = pins.paths()
+            val result = index.reconcileScan(rootIdentity, notes, loaded, pinnedPaths)
+            if (result == IndexReconciliationResult.FullRebuildRequired) {
+                val allDocuments = loadDocuments(notes)
+                if (allDocuments.size == notes.size) {
+                    index.rebuild(rootIdentity, notes, allDocuments, pinnedPaths)
+                } else {
+                    Log.w(LogTag, "Full index rebuild deferred because not every note could be read")
+                }
+            }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
@@ -128,6 +139,18 @@ class IndexedLibraryRepository(
         }
         return notes
     }
+
+    private suspend fun loadDocuments(notes: List<LibraryNote>): List<IndexedDocument> =
+        notes.mapNotNull { note ->
+            try {
+                IndexText.document(canonical.open(note))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Log.w(LogTag, "Could not read ${note.relativePath} for a full index rebuild", error)
+                null
+            }
+        }
 
     private suspend fun updateIndexBestEffort(openNote: OpenNote) {
         try {
