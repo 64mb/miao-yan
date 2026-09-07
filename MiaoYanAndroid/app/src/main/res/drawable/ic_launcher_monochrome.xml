@@ -1,11 +1,29 @@
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Android uses the alpha of the existing bird artwork as the themed-icon mask. -->
-    <item
-        android:width="72dp"
-        android:height="68dp"
-        android:gravity="center">
-        <bitmap
-            android:gravity="fill"
-            android:src="@drawable/miaoyan_brand_mark" />
-    </item>
-</layer-list>
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dedicated alpha mask for Android themed icons (including Nothing OS).
+  Deliberately excludes the sun and decorative colour regions: once a launcher
+  applies one tint, the bird silhouette, eye cutout, beak, and branch remain
+  recognisable instead of merging into the old bitmap's circular backdrop.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Bird and tail silhouette, with an alpha cutout for the eye. -->
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M52,27 L67,40 C66,42 66,43 67,44 L77,49 L70,49 L70,58 C72,62 70,67 66,70 C62,73 56,74 47,73 L36,72 L32,82 L32,76 L24,79 L24,72 L39,52 C47,44 52,38 52,30 Z M63.3,44.7 A1.7,1.7 0,1 0,66.7 44.7 A1.7,1.7 0,1 0,63.3 44.7" />
+
+    <!-- Feet -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M47,70 L51,76 L55,76 L52,70 Z M55,70 L58,76 L62,76 L59,70 Z" />
+
+    <!-- A clean branch gives the bird a distinct lower baseline. -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M29,75 L69,75 C73,75 76,72 78,69 L80,71 C77,76 73,78 68,78 L29,78 Z M65,77 L72,84 L75,84 L69,77 Z" />
+</vector>

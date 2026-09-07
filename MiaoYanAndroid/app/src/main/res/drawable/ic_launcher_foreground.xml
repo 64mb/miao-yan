@@ -1,7 +1,13 @@
+<!--
+  Keep the established colour artwork pixel-faithful. The 60 x 56 dp layer is
+  centred in Android's 108 dp adaptive-icon canvas, stays inside the guaranteed
+  66 x 66 dp safe zone, and adds more breathing room than the old 72 x 68 dp
+  layer on aggressive OEM masks.
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item
-        android:width="72dp"
-        android:height="68dp"
+        android:width="60dp"
+        android:height="56dp"
         android:gravity="center">
         <bitmap
             android:gravity="fill"
