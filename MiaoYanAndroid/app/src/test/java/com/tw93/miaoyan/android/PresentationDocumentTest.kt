@@ -1,0 +1,135 @@
+package com.tw93.miaoyan.android
+
+import com.tw93.miaoyan.android.ui.presentation.PresentationAssetPolicy
+import com.tw93.miaoyan.android.ui.presentation.PresentationDocument
+import com.tw93.miaoyan.android.ui.presentation.SlideStateNavigation
+import com.tw93.miaoyan.android.data.EditorFont
+import com.tw93.miaoyan.android.data.EditorSettings
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PresentationDocumentTest {
+    @Test
+    fun splitsOnlyExactThreeHyphenLinesAfterFrontmatter() {
+        val markdown = """
+            ---
+            title: Deck
+            ---
+            # One
+            ---
+            # Two
+             ---
+            text---text
+            ----
+        """.trimIndent()
+
+        assertEquals(
+            listOf("# One", "# Two\n ---\ntext---text\n----"),
+            PresentationDocument.split(markdown),
+        )
+    }
+
+    @Test
+    fun supportsCrlfSeparatorsAndKeepsEmptySlides() {
+        assertEquals(listOf("one", "", "three"), PresentationDocument.split("one\r\n---\r\n---\r\nthree"))
+    }
+
+    @Test
+    fun rendersEverySlideWithTheNativePipelineBoundary() {
+        val inputs = mutableListOf<String>()
+        val html = PresentationDocument.renderSlides(
+            markdown = "first\n---\nsecond",
+            darkMode = false,
+            initialSlide = 50,
+            nonce = "abcdefghijklmnop",
+        ) { slide ->
+            inputs += slide
+            "<p>$slide</p>"
+        }
+
+        assertEquals(listOf("first", "second"), inputs)
+        assertEquals(2, "<section>".toRegex().findAll(html).count())
+        assertTrue(html.contains("Reveal.slide(1)"))
+    }
+
+    @Test
+    fun slideDocumentAllowsOnlyNonceScriptsAndSyntheticAssets() {
+        val html = PresentationDocument.renderSlides(
+            markdown = "# Safe",
+            darkMode = true,
+            initialSlide = 0,
+            nonce = "abcdefghijklmnop",
+        ) { "<h1>Safe</h1>" }
+
+        assertTrue(html.contains("script-src 'nonce-abcdefghijklmnop' 'strict-dynamic'"))
+        assertTrue(html.contains("connect-src 'none'"))
+        assertTrue(html.contains("frame-src 'none'"))
+        assertTrue(html.contains("base-uri 'none'"))
+        assertTrue(html.contains("https://appassets.androidplatform.net/presentation/reveal.js"))
+        assertFalse(html.contains("plugin/markdown"))
+        assertFalse(html.contains("http://"))
+    }
+
+    @Test
+    fun continuousPreviewIsOneScrollableScriptlessDocument() {
+        val html = PresentationDocument.renderContinuous("# One\n---\n# Two", darkMode = false) {
+            "<h1>One</h1><hr /><h1>Two</h1>"
+        }
+
+        assertTrue(html.contains("script-src 'none'"))
+        assertTrue(html.contains("overflow-x: hidden"))
+        assertTrue(html.contains("<hr />"))
+        assertFalse(html.contains("class=\"reveal\""))
+        assertFalse(html.contains("<section>"))
+    }
+
+    @Test
+    fun usesApprovedPreviewTokensAndCurrentEditorTypography() {
+        val html = PresentationDocument.renderContinuous(
+            markdown = "text",
+            darkMode = true,
+            editorSettings = EditorSettings(EditorFont.SYSTEM_SERIF, 24),
+        ) { "<p>text</p>" }
+
+        assertTrue(html.contains("background: #23282D"))
+        assertTrue(html.contains("color: #E7E9EA"))
+        assertTrue(html.contains("font-family: serif"))
+        assertTrue(html.contains("font-size: 24px"))
+        assertFalse(html.contains("#fffdfa", ignoreCase = true))
+    }
+
+    @Test
+    fun rewritesOnlyValidatedLocalImagesToTheSyntheticOrigin() {
+        val rewritten = PresentationAssetPolicy.rewriteLocalImages(
+            "<p><img src=\"/i/%E7%8C%AB%20photo%2B1.png\" alt=\"cat\" /></p>",
+        )
+
+        assertTrue(rewritten.contains("https://appassets.androidplatform.net/i/%E7%8C%AB%20photo%2B1.png"))
+        assertEquals("猫 photo+1.png", PresentationAssetPolicy.fileNameForAssetUrl(
+            "https://appassets.androidplatform.net/i/%E7%8C%AB%20photo%2B1.png",
+        ))
+    }
+
+    @Test
+    fun rejectsTraversalAndAmbiguousOrigins() {
+        val rejected = listOf(
+            "https://appassets.androidplatform.net/i/../secret.png",
+            "https://appassets.androidplatform.net/i/%2e%2e",
+            "https://appassets.androidplatform.net/i/folder%2Fsecret.png",
+            "https://appassets.androidplatform.net/i/%252e%252e.png",
+            "https://appassets.androidplatform.net.evil/i/photo.png",
+        )
+        rejected.forEach { assertNull(it, PresentationAssetPolicy.fileNameForAssetUrl(it)) }
+    }
+
+    @Test
+    fun acceptsOnlyNonGestureSlideStateReports() {
+        assertEquals(42, SlideStateNavigation.reportedIndex("miaoyan-slide://state/42", hasUserGesture = false))
+        assertNull(SlideStateNavigation.reportedIndex("miaoyan-slide://state/42", hasUserGesture = true))
+        assertNull(SlideStateNavigation.reportedIndex("miaoyan-slide://other/42", hasUserGesture = false))
+        assertNull(SlideStateNavigation.reportedIndex("https://state/42", hasUserGesture = false))
+    }
+}

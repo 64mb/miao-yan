@@ -1,0 +1,60 @@
+package com.tw93.miaoyan.android.ui.presentation
+
+import android.content.Context
+import android.net.Uri
+import android.webkit.WebResourceResponse
+import com.tw93.miaoyan.android.data.LocalFileImageLoader
+import com.tw93.miaoyan.android.data.LocalImagePolicy
+import java.io.ByteArrayInputStream
+
+/** Pluggable boundary for note-local images; WebView never sees a filesystem path. */
+fun interface PresentationImageHandler {
+    fun open(assetUrl: String): WebResourceResponse?
+
+    companion object {
+        val DenyAll = PresentationImageHandler { null }
+    }
+}
+
+class AppPrivatePresentationImageHandler(scope: LocalImagePolicy.NoteAssetScope) : PresentationImageHandler {
+    private val loader = LocalFileImageLoader(scope)
+
+    override fun open(assetUrl: String): WebResourceResponse = loader.load(assetUrl)
+}
+
+internal class PresentationAssetRouter(
+    private val context: Context,
+    private val imageHandler: PresentationImageHandler,
+) {
+    fun open(uri: Uri): WebResourceResponse {
+        val rawUrl = uri.toString()
+        if (uri.scheme != "https" || uri.encodedAuthority != AssetHost || uri.query != null || uri.fragment != null) {
+            return blockedResponse()
+        }
+        return when (uri.encodedPath) {
+            "/presentation/reveal.js" -> bundled("presentation/reveal.js", "text/javascript")
+            "/presentation/reveal.css" -> bundled("presentation/reveal.css", "text/css")
+            else -> if (LocalImagePolicy.fileNameForAssetUrl(rawUrl) != null) {
+                imageHandler.open(rawUrl) ?: blockedResponse()
+            } else {
+                blockedResponse()
+            }
+        }
+    }
+
+    private fun bundled(path: String, mimeType: String): WebResourceResponse = runCatching {
+        response(mimeType, context.assets.open(path))
+    }.getOrElse { blockedResponse(404, "Not Found") }
+}
+
+internal fun blockedResponse(statusCode: Int = 403, reason: String = "Forbidden"): WebResourceResponse =
+    WebResourceResponse("text/plain", "utf-8", statusCode, reason, ResponseHeaders, ByteArrayInputStream(ByteArray(0)))
+
+private fun response(mimeType: String, stream: java.io.InputStream): WebResourceResponse =
+    WebResourceResponse(mimeType, null, 200, "OK", ResponseHeaders, stream)
+
+private const val AssetHost = "appassets.androidplatform.net"
+private val ResponseHeaders = mapOf(
+    "Cache-Control" to "no-store",
+    "X-Content-Type-Options" to "nosniff",
+)

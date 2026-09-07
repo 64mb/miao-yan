@@ -24,6 +24,8 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
    embedding.
 8. Follow the Android system light/dark appearance and keep editor/preview typography in local
    DataStore settings.
+9. Enter a view-only fullscreen continuous Preview from the video-camera action, or a separate
+   Reveal.js slide Presentation split by exact `---` lines.
 
 Every canonical filesystem operation passes through the process-wide `LibraryMutationGate`.
 Future Git and attachment coordinators can share the same `LibraryAccess` contract instead of
@@ -61,6 +63,10 @@ available from the installed stable Android SDK channel.
 cmark-gfm 0.29.0.gfm.13 is vendored from GitHub at commit `587a12bb54d95ac37241377e6ddc93ea0e45439b`; its source archive checksum and update procedure are recorded in `app/src/main/cpp/third_party/cmark-gfm/README.miaoyan.md`. Builds do not fetch native source from the network.
 
 The renderer enables the table, strikethrough, autolink, tagfilter, and task-list extensions. It does not pass `CMARK_OPT_UNSAFE`: raw HTML (including iframes) is omitted by cmark before reaching WebView. The single post-render content-policy boundary maps valid local images to the synthetic origin and changes remote images to explicit external links. CSP and `blockNetworkLoads` independently prevent automatic remote media loading.
+
+Presentation uses the same native cmark-gfm content-policy pipeline for every slide and the current editor font/size settings. Reveal.js 4.3.1 core assets are copied from the pinned macOS bundle and run under a nonce CSP; WebView network, file, and content access stay disabled. Only bundled Reveal assets and images accepted by the shared app-private `LocalImagePolicy`/`LocalFileImageLoader` are served through the synthetic appassets origin. The current mode and slide are saveable across rotation. System bars are hidden with `WindowInsetsController` outside multi-window and restored on Back.
+
+See `PRESENTATION.md` for the subsystem boundaries and narrow integration points.
 
 ## Deliberate prototype limits
 

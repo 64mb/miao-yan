@@ -40,8 +40,8 @@ class CmarkGfmRendererInstrumentedTest {
     fun rewritesRemoteMarkdownImagesBeforeWebView() {
         val html = MarkdownRenderer.renderFragment("![diagram](https://example.com/image.png)")
 
-        assertTrue(html.contains("Remote image: diagram"))
-        assertFalse(html.contains("example.com"))
+        assertTrue(html.contains("[external image: diagram — tap to open]"))
+        assertTrue(html.contains("href=\"https://example.com/image.png\""))
         assertFalse(html.contains("<img"))
     }
 

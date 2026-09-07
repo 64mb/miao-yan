@@ -7,6 +7,8 @@
     <string name="refresh">Refresh</string>
     <string name="edit">Edit</string>
     <string name="preview">Preview</string>
+    <string name="fullscreen_preview">Fullscreen preview</string>
+    <string name="slide_presentation">Slide presentation</string>
     <string name="save">Save</string>
     <string name="back">Back</string>
     <string name="discard">Discard</string>

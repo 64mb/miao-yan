@@ -95,6 +95,11 @@ import com.tw93.miaoyan.android.data.NameResult
 import com.tw93.miaoyan.android.data.NotePathPolicy
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.TrashedNote
+import com.tw93.miaoyan.android.ui.presentation.AppPrivatePresentationImageHandler
+import com.tw93.miaoyan.android.ui.presentation.PresentationHost
+import com.tw93.miaoyan.android.ui.presentation.PresentationImageHandler
+import com.tw93.miaoyan.android.ui.presentation.PresentationMode
+import com.tw93.miaoyan.android.ui.presentation.rememberPresentationSession
 import com.tw93.miaoyan.android.ui.theme.MiaoYanColors
 import java.io.File
 import java.text.DateFormat
@@ -112,6 +117,8 @@ fun MiaoYanApp(
     onFontSizeChanged: (Int) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val presentationSession = rememberPresentationSession()
     var showSettings by rememberSaveable { mutableStateOf(false) }
     val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::importFrom)
@@ -128,6 +135,28 @@ fun MiaoYanApp(
             snackbar.showSnackbar(it)
             viewModel.dismissMessage()
         }
+    }
+
+    val selected = state.selected
+    val canonicalRoot = remember(context) { File(context.filesDir, "libraries/default") }
+    val imageScope = remember(canonicalRoot, selected?.note?.relativePath) {
+        selected?.note?.relativePath?.let { LocalImagePolicy.resolveNoteAssetScope(canonicalRoot, it) }
+    }
+    val presentationImageHandler = remember(imageScope) {
+        imageScope?.let(::AppPrivatePresentationImageHandler) ?: PresentationImageHandler.DenyAll
+    }
+    val presentationMode = presentationSession.mode
+    if (presentationMode != null && selected != null) {
+        PresentationHost(
+            mode = presentationMode,
+            markdown = state.draft,
+            editorSettings = editorSettings,
+            initialSlide = presentationSession.slide,
+            imageHandler = presentationImageHandler,
+            onSlideChanged = presentationSession::reportSlide,
+            onExit = presentationSession::exit,
+        )
+        return
     }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { insets ->
@@ -149,6 +178,8 @@ fun MiaoYanApp(
                     onPreviewChanged = viewModel::setPreview,
                     onSave = viewModel::save,
                     onSettings = { showSettings = true },
+                    onFullscreenPreview = { presentationSession.enter(PresentationMode.ContinuousPreview) },
+                    onSlidePresentation = { presentationSession.enter(PresentationMode.Slides) },
                 )
                 else -> LibraryScreen(
                     state = state,
@@ -491,6 +522,8 @@ private fun EditorScreen(
     onPreviewChanged: (Boolean) -> Unit,
     onSave: () -> Unit,
     onSettings: () -> Unit,
+    onFullscreenPreview: () -> Unit,
+    onSlidePresentation: () -> Unit,
 ) {
     var showDiscardDialog by remember { mutableStateOf(false) }
     val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
@@ -515,6 +548,18 @@ private fun EditorScreen(
             )
             IconButton(onClick = onSettings) {
                 Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
+            }
+            IconButton(onClick = onFullscreenPreview) {
+                Icon(
+                    painterResource(R.drawable.ic_videocam),
+                    contentDescription = stringResource(R.string.fullscreen_preview),
+                )
+            }
+            IconButton(onClick = onSlidePresentation) {
+                Icon(
+                    painterResource(R.drawable.ic_slideshow),
+                    contentDescription = stringResource(R.string.slide_presentation),
+                )
             }
             IconButton(onClick = onSave, enabled = state.dirty && !state.saving) {
                 Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))
