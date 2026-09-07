@@ -6,6 +6,25 @@
 
 Checkpoint прототипа: Android 15+ (`minSdk 35`), единственная canonical-библиотека в `filesDir/libraries/default`, строгие CRUD/Trash/Restore и явный SAF Import/Export, перестраиваемый Room FTS4 с транзакционными wikilinks/backlinks, DataStore pins, production cmark-gfm JNI, безопасные локальные `/i/` assets, presentation, локальный typesetting, permissionless Photo Picker/OpenDocument attachments и secure Git HTTPS sync на Eclipse JGit. Прототип собирается и покрыт JVM/instrumentation tests; adaptive tablet layout и дальнейший device hardening остаются отдельными checkpoint. AI для Android исключён.
 
+## Текущий объединённый goal и Definition of Done
+
+Android-версия доводится одним цельным локальным этапом; CI/CD и публикация пока не входят в scope. Goal считается выполненным только после сборки, автоматических проверок и smoke-теста на Android-эмуляторе по каждому пункту ниже.
+
+- Android 15+ (`minSdk 35`), одна canonical app-private библиотека; SAF используется только из Settings для явных Import Library и Export Library.
+- Файлы `.md` остаются источником истины. Room — только восстанавливаемая поисковая проекция с full-text search, wikilinks/backlinks, удалением stale rows, ограниченным WAL и автоматическим self-healing rebuild/compaction при чрезмерном размере или фрагментации. Изображения и другие attachments в Room не индексируются.
+- Создание, редактирование и переименование заметок; создание и переименование вложенных папок; folder-first navigation с breadcrumbs/back; пустые папки поддерживаются без `.gitkeep`.
+- Удаление заметок и папок только через recoverable Trash. В Settings доступны Restore и Delete Permanently с явным подтверждением; rename/trash/restore корректно переводят pins, Room paths, открытый draft и прочие локальные owner metadata.
+- Production `cmark-gfm` preview использует один безопасный WebView pipeline для embedded и fullscreen continuous view, поддерживает `/i/`, не допускает горизонтального overflow и не показывает промежуточный системный шрифт. Первый стабильный кадр укладывается в измеримый бюджет либо до готовности показывается skeleton; смена режима не создаёт повторный cold render. Reveal.js presentation остаётся отдельным полноэкранным послайдовым режимом.
+- Вложения вставляются только после явного выбора через системный Photo Picker/OpenDocument; camera/media permission не запрашиваются. Изображения сохраняются по соглашению `i/`, прочие файлы — в разрешённой структуре библиотеки; лимит одного вложения — 25 MiB.
+- Git работает только по HTTPS, только с `origin/main`, через username + PAT; PAT привязан к URL и хранится через Android Keystore. Commit author name и email задаются отдельно. Локальные metadata, Room, Trash и secrets не попадают в Git.
+- Верхний Reload при полной Git-конфигурации выполняет безопасный save/fetch/integrate/commit/push и затем пересканирует библиотеку; без Git выполняет локальный reload. Операции сериализованы с filesystem mutations. Опциональный WorkManager sync имеет системный минимум 15 минут; при завершении приложения применяется best-effort sync с коротким timeout без блокировки выхода и без потери локальных данных.
+- Reload сохраняет progress-модалку: она появляется после 150 мс, а после появления остаётся видимой непрерывно минимум 800 мс. Быстрые повторные состояния и recomposition не должны сокращать это время.
+- Конфликты разрешаются выбором полной Local или Remote версии файла с датами обеих сторон. Android AI conflict resolver отсутствует полностью: нет checkbox, endpoint, model, key, prompt или отправки содержимого AI-провайдеру.
+- При первом действительно пустом запуске атомарно создаются те же demo notes/folders, что в desktop MiaoYan, без повторного восстановления удалённых пользователем demo-файлов.
+- UI поддерживает Auto/System, Dark и Light темы, цвета editor/preview в духе текущей macOS-версии, bundled открытые шрифты и выбор шрифта/одного из ограниченного набора размеров. App icon и action icons входят в поставку; toolbar использует монохромную птицу и компактные выровненные действия.
+- Телефон использует single-pane navigation, планшет от 840 dp — устойчивый list-detail/two-pane режим. Settings, fullscreen continuous preview и presentation занимают всё окно; rotation и multi-window не теряют draft или выбранную заметку.
+- Короткие UI labels/subtitles не получают декоративную точку в конце. Import/Export/Trash не занимают постоянное место на главном экране и доступны из Settings.
+
 ## 1. Scope и принятые ограничения
 
 Цель — отдельное нативное Android-приложение, совместимое с MiaoYan на уровне файлов и поведения. Это не порт SwiftUI/iOS-кода и не Kotlin Multiplatform.
