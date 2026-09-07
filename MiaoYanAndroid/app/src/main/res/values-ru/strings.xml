@@ -72,9 +72,9 @@
     <string name="local_storage_warning_title">Сохраните копию для восстановления</string>
     <string name="local_storage_warning_detail">Настройте Git или экспортируйте библиотеку до удаления приложения или очистки данных</string>
     <string name="import_library">Импорт библиотеки</string>
-    <string name="import_library_detail">Скопировать заметки из выбранной папки в локальную библиотеку MiaoYan.</string>
+    <string name="import_library_detail">Скопировать заметки из выбранной папки в локальную библиотеку MiaoYan</string>
     <string name="export_library">Экспорт библиотеки</string>
-    <string name="export_library_detail">Скопировать локальную библиотеку в выбранную папку.</string>
+    <string name="export_library_detail">Скопировать локальную библиотеку в выбранную папку</string>
     <string name="appearance">Оформление</string>
     <string name="theme">Тема</string>
     <string name="theme_auto_system">Авто / Системная</string>
@@ -105,7 +105,7 @@
     <string name="git_settings">Git</string>
     <string name="git_settings_title">Git-синхронизация</string>
     <string name="git_sync_now">Синхронизировать</string>
-    <string name="git_sync_now_detail">Создать коммит локальных изменений, получить origin/main и безопасно обновить или отправить данные.</string>
+    <string name="git_sync_now_detail">Создать коммит локальных изменений, получить origin/main и безопасно обновить или отправить данные</string>
     <string name="git_syncing">Синхронизация origin/main…</string>
     <string name="git_repository_url">HTTPS URL репозитория</string>
     <string name="git_https_main_only">Синхронизация ограничена origin/main</string>
@@ -130,8 +130,8 @@
     <string name="git_backup_dirty_detail">Локальные изменения ещё не синхронизированы</string>
     <string name="git_backup_failed_title">Git-копия требует внимания</string>
     <string name="git_backup_failed_detail">Последняя Git-синхронизация не удалась, локальные заметки не изменены</string>
-    <string name="git_configured_detail">HTTPS-учётные данные сохранены для этого URL репозитория.</string>
-    <string name="git_not_configured_detail">Настройте HTTPS origin, имя пользователя, PAT и автора коммитов.</string>
+    <string name="git_configured_detail">HTTPS-учётные данные сохранены для этого URL репозитория</string>
+    <string name="git_not_configured_detail">Настройте HTTPS origin, имя пользователя, PAT и автора коммитов</string>
     <string name="git_conflict_title">Выберите версии файлов</string>
     <string name="git_conflict_message">Локальная история и origin/main разошлись. Выберите целую версию каждого файла. MiaoYan не объединяет содержимое файлов.</string>
     <string name="git_use_all_local">Все локальные</string>

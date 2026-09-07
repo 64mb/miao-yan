@@ -72,9 +72,9 @@
     <string name="local_storage_warning_title">Keep a restorable copy</string>
     <string name="local_storage_warning_detail">Set up Git or export the library before uninstalling or clearing app data</string>
     <string name="import_library">Import Library</string>
-    <string name="import_library_detail">Copy notes from a folder into MiaoYan’s local library.</string>
+    <string name="import_library_detail">Copy notes from a folder into MiaoYan’s local library</string>
     <string name="export_library">Export Library</string>
-    <string name="export_library_detail">Copy the local library to a folder you choose.</string>
+    <string name="export_library_detail">Copy the local library to a folder you choose</string>
     <string name="appearance">Appearance</string>
     <string name="theme">Theme</string>
     <string name="theme_auto_system">Auto / System</string>
@@ -105,7 +105,7 @@
     <string name="git_settings">Git</string>
     <string name="git_settings_title">Git sync</string>
     <string name="git_sync_now">Sync Now</string>
-    <string name="git_sync_now_detail">Commit local changes, fetch origin/main, and safely update or push.</string>
+    <string name="git_sync_now_detail">Commit local changes, fetch origin/main, and safely update or push</string>
     <string name="git_syncing">Syncing origin/main…</string>
     <string name="git_repository_url">HTTPS repository URL</string>
     <string name="git_https_main_only">Sync is restricted to origin/main</string>
@@ -130,8 +130,8 @@
     <string name="git_backup_dirty_detail">Local changes have not been synced yet</string>
     <string name="git_backup_failed_title">Git backup needs attention</string>
     <string name="git_backup_failed_detail">The last Git sync failed; local notes remain unchanged</string>
-    <string name="git_configured_detail">HTTPS credentials are stored for this repository URL.</string>
-    <string name="git_not_configured_detail">Configure an HTTPS origin, username, PAT, and commit identity.</string>
+    <string name="git_configured_detail">HTTPS credentials are stored for this repository URL</string>
+    <string name="git_not_configured_detail">Configure an HTTPS origin, username, PAT, and commit identity</string>
     <string name="git_conflict_title">Choose conflicting files</string>
     <string name="git_conflict_message">Local and origin/main diverged. Choose one complete version for every listed file. MiaoYan will not combine file contents.</string>
     <string name="git_use_all_local">All Local</string>
