@@ -68,4 +68,7 @@
     <string name="jetbrains_mono_attribution">JetBrains Mono 2.304 · SIL Open Font License 1.1</string>
     <string name="open_source_license">JetBrains Mono license</string>
     <string name="close">Close</string>
+    <string name="typesetting">Typesetting</string>
+    <string name="typesetting_succeeded">Typesetting complete</string>
+    <string name="typesetting_failed">Typesetting failed; the draft was left unchanged.</string>
 </resources>

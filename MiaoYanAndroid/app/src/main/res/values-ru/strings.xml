@@ -68,4 +68,7 @@
     <string name="jetbrains_mono_attribution">JetBrains Mono 2.304 · SIL Open Font License 1.1</string>
     <string name="open_source_license">Лицензия JetBrains Mono</string>
     <string name="close">Закрыть</string>
+    <string name="typesetting">Форматирование</string>
+    <string name="typesetting_succeeded">Форматирование завершено</string>
+    <string name="typesetting_failed">Не удалось отформатировать; черновик не изменён.</string>
 </resources>

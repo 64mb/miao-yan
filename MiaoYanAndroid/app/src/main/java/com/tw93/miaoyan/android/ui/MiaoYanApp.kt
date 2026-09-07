@@ -176,6 +176,7 @@ fun MiaoYanApp(
                     onBack = viewModel::closeNote,
                     onDraftChanged = viewModel::updateDraft,
                     onPreviewChanged = viewModel::setPreview,
+                    onTypeset = viewModel::typesetDraft,
                     onSave = viewModel::save,
                     onSettings = { showSettings = true },
                     onFullscreenPreview = { presentationSession.enter(PresentationMode.ContinuousPreview) },
@@ -520,6 +521,7 @@ private fun EditorScreen(
     onBack: () -> Unit,
     onDraftChanged: (String) -> Unit,
     onPreviewChanged: (Boolean) -> Unit,
+    onTypeset: () -> Unit,
     onSave: () -> Unit,
     onSettings: () -> Unit,
     onFullscreenPreview: () -> Unit,
@@ -560,6 +562,16 @@ private fun EditorScreen(
                     painterResource(R.drawable.ic_slideshow),
                     contentDescription = stringResource(R.string.slide_presentation),
                 )
+            }
+            IconButton(onClick = onTypeset, enabled = !state.preview && !state.formatting) {
+                if (state.formatting) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_typesetting),
+                        contentDescription = stringResource(R.string.typesetting),
+                    )
+                }
             }
             IconButton(onClick = onSave, enabled = state.dirty && !state.saving) {
                 Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))

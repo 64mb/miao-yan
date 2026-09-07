@@ -13,6 +13,10 @@ import com.tw93.miaoyan.android.data.index.RoomLibrarySearchIndex
 import com.tw93.miaoyan.android.model.LibraryNote
 import com.tw93.miaoyan.android.model.OpenNote
 import com.tw93.miaoyan.android.model.TrashedNote
+import com.tw93.miaoyan.android.typesetting.MarkdownFormatter
+import com.tw93.miaoyan.android.typesetting.TypesettingRequest
+import com.tw93.miaoyan.android.typesetting.TypesettingResultGuard
+import com.tw93.miaoyan.android.typesetting.WebViewMarkdownFormatter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,14 +38,19 @@ data class LibraryUiState(
     val loading: Boolean = false,
     val saving: Boolean = false,
     val mutating: Boolean = false,
+    val formatting: Boolean = false,
     val dirty: Boolean = false,
+    val draftRevision: Long = 0,
     val message: String? = null,
 ) {
     val visibleNotes: List<LibraryNote>
         get() = if (query.isBlank()) notes else searchResults
 }
 
-class LibraryViewModel(application: Application) : AndroidViewModel(application) {
+class LibraryViewModel @JvmOverloads constructor(
+    application: Application,
+    private val markdownFormatter: MarkdownFormatter = WebViewMarkdownFormatter(application),
+) : AndroidViewModel(application) {
     private val repository: LibraryRepository = IndexedLibraryRepository(
         canonical = LocalLibraryRepository(application),
         index = RoomLibrarySearchIndex(application),
@@ -50,6 +59,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val mutableState = MutableStateFlow(LibraryUiState())
     val state: StateFlow<LibraryUiState> = mutableState.asStateFlow()
     private var searchJob: Job? = null
+    private var formatJob: Job? = null
+    private var lastDraftRevision = 0L
 
     init {
         reload()
@@ -102,6 +113,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                             dirty = false,
                             preview = false,
                             loading = false,
+                            formatting = false,
+                            draftRevision = nextDraftRevision(),
                         )
                     }
                 }
@@ -126,6 +139,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                             draft = opened.text,
                             dirty = false,
                             preview = false,
+                            formatting = false,
+                            draftRevision = nextDraftRevision(),
                             mutating = false,
                             showingTrash = false,
                         )
@@ -259,7 +274,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun updateDraft(text: String) {
         mutableState.update { current ->
             val selected = current.selected ?: return@update current
-            current.copy(draft = text, dirty = text != selected.text)
+            if (text == current.draft) return@update current
+            current.copy(
+                draft = text,
+                dirty = text != selected.text,
+                draftRevision = nextDraftRevision(),
+            )
         }
     }
 
@@ -295,9 +315,80 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun typesetDraft() {
+        val snapshot = mutableState.value
+        val selected = snapshot.selected ?: return
+        if (snapshot.preview || snapshot.formatting || snapshot.loading || snapshot.saving || snapshot.mutating) return
+        val request = TypesettingRequest(
+            ownerNoteId = selected.note.id,
+            draftRevision = snapshot.draftRevision,
+            markdown = snapshot.draft,
+        )
+
+        mutableState.update { current ->
+            if (TypesettingResultGuard.canApply(request, current.selected?.note?.id, current.draftRevision)) {
+                current.copy(formatting = true, message = null)
+            } else {
+                current
+            }
+        }
+        formatJob = viewModelScope.launch {
+            runCatching { markdownFormatter.format(request.markdown) }
+                .onSuccess { formatted ->
+                    mutableState.update { current ->
+                        if (!TypesettingResultGuard.canApply(
+                                request,
+                                current.selected?.note?.id,
+                                current.draftRevision,
+                            )
+                        ) {
+                            current.clearFormattingFor(request)
+                        } else {
+                            val opened = current.selected ?: return@update current
+                            current.copy(
+                                draft = formatted,
+                                dirty = formatted != opened.text,
+                                formatting = false,
+                                draftRevision = nextDraftRevision(),
+                                message = getApplication<Application>().getString(R.string.typesetting_succeeded),
+                            )
+                        }
+                    }
+                }
+                .onFailure {
+                    mutableState.update { current ->
+                        if (TypesettingResultGuard.canApply(
+                                request,
+                                current.selected?.note?.id,
+                                current.draftRevision,
+                            )
+                        ) {
+                            current.copy(
+                                formatting = false,
+                                message = getApplication<Application>().getString(R.string.typesetting_failed),
+                            )
+                        } else {
+                            current.clearFormattingFor(request)
+                        }
+                    }
+                }
+            formatJob = null
+        }
+    }
+
     fun closeNote() {
+        formatJob?.cancel()
+        formatJob = null
         mutableState.update {
-            it.copy(selected = null, draft = "", dirty = false, preview = false, message = null)
+            it.copy(
+                selected = null,
+                draft = "",
+                dirty = false,
+                preview = false,
+                formatting = false,
+                draftRevision = nextDraftRevision(),
+                message = null,
+            )
         }
     }
 
@@ -340,7 +431,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         showError(error)
     }
 
-    private fun isBusy(): Boolean = mutableState.value.run { loading || saving || mutating }
+    private fun isBusy(): Boolean = mutableState.value.run { loading || saving || mutating || formatting }
 
     private suspend fun loadPinnedPaths(): Set<String> =
         repository.pinnedNotes().mapTo(mutableSetOf(), LibraryNote::relativePath)
@@ -352,6 +443,20 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     ?: getApplication<Application>().getString(R.string.private_library_error),
             )
         }
+    }
+
+    private fun nextDraftRevision(): Long {
+        lastDraftRevision += 1
+        return lastDraftRevision
+    }
+
+    private fun LibraryUiState.clearFormattingFor(request: TypesettingRequest): LibraryUiState =
+        if (selected?.note?.id == request.ownerNoteId) copy(formatting = false) else this
+
+    override fun onCleared() {
+        formatJob?.cancel()
+        markdownFormatter.close()
+        super.onCleared()
     }
 
     private companion object {

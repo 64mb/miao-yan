@@ -26,6 +26,8 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
    DataStore settings.
 9. Enter a view-only fullscreen continuous Preview from the video-camera action, or a separate
    Reveal.js slide Presentation split by exact `---` lines.
+10. Format Markdown with pinned Prettier in an isolated local WebView; protected
+   syntax and a note-owner/draft-revision guard make the operation fail closed.
 
 Every canonical filesystem operation passes through the process-wide `LibraryMutationGate`.
 Future Git and attachment coordinators can share the same `LibraryAccess` contract instead of
@@ -61,6 +63,13 @@ The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compos
 available from the installed stable Android SDK channel.
 
 cmark-gfm 0.29.0.gfm.13 is vendored from GitHub at commit `587a12bb54d95ac37241377e6ddc93ea0e45439b`; its source archive checksum and update procedure are recorded in `app/src/main/cpp/third_party/cmark-gfm/README.miaoyan.md`. Builds do not fetch native source from the network.
+
+Prettier 3.9.6 `standalone.js` and its Markdown plugin are vendored from the
+official npm package. Version, integrity, hashes, MIT license, third-party
+notices, and the update procedure are recorded in
+`app/src/main/assets/prettier/README.miaoyan.md`. Its formatting WebView enables
+JavaScript only for this bundled page and disables network loads, file/content
+access, storage, and new windows. No JavaScript interface is exposed.
 
 The renderer enables the table, strikethrough, autolink, tagfilter, and task-list extensions. It does not pass `CMARK_OPT_UNSAFE`: raw HTML (including iframes) is omitted by cmark before reaching WebView. The single post-render content-policy boundary maps valid local images to the synthetic origin and changes remote images to explicit external links. CSP and `blockNetworkLoads` independently prevent automatic remote media loading.
 
