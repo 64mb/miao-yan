@@ -145,7 +145,8 @@ class PresentationDocumentTest {
         }
         assertTrue(continuous.contains("line-height: 1.55"))
         assertTrue(slides.contains(".reveal p,.reveal li { line-height: 1.5; }"))
-        assertTrue(slides.contains("line-height: 1.42"))
+        assertTrue(slides.contains("max-height: 360px"))
+        assertTrue(slides.contains("line-height: 1.45"))
     }
 
     @Test

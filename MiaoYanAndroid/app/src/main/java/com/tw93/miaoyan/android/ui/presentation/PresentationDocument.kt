@@ -208,8 +208,8 @@ object PresentationDocument {
         .reveal strong { color: ${colors.markup}; }
         .reveal li::marker { color: ${colors.list}; }
         .reveal code { background: ${colors.code}; border-radius: 5px; padding: .1em .3em; }
-        .reveal pre { width: 100%; max-width: 100%; overflow: auto; background: ${colors.code}; border-radius: 10px; padding: 14px; box-sizing: border-box; }
-        .reveal pre code { display: block; max-height: 50vh; padding: 0; background: transparent; line-height: 1.42; }
+        .reveal pre { display: block; float: none; width: 100%; max-width: 100%; margin: .7em 0; overflow: hidden; background: ${colors.code}; border-radius: 10px; padding: 14px; box-sizing: border-box; font-size: .42em; line-height: 1.45; }
+        .reveal pre code,.reveal pre code.hljs { display: block; width: 100%; min-height: 0; max-height: 360px; padding: 0; overflow: auto; background: transparent; font-size: 1em; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
         .reveal blockquote { width: auto; margin-left: 0; padding-left: 18px; border-left: 4px solid ${colors.list}; color: ${colors.muted}; box-shadow: none; }
         ${syntaxHighlightStyle(colors, prefix = ".reveal ")}
         .reveal img,.reveal video,.reveal audio,.reveal iframe,.reveal table { max-width: 100%; }

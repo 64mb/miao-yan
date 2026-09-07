@@ -615,13 +615,15 @@ private fun FolderBreadcrumb(
     onOpenFolderPath: (String) -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (relativePath.isNotEmpty()) {
             IconButton(onClick = onNavigateUp, modifier = Modifier.size(40.dp).testTag("folder-back")) {
                 Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
             }
+        } else {
+            Spacer(Modifier.width(16.dp))
         }
         Box(
             Modifier.height(40.dp).clickable { onOpenFolderPath("") },
@@ -636,10 +638,18 @@ private fun FolderBreadcrumb(
             Icon(
                 painterResource(R.drawable.ic_chevron_right),
                 contentDescription = null,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(24.dp).padding(3.dp),
             )
-            TextButton(onClick = { onOpenFolderPath(destination) }) {
-                Text(segment, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(
+                Modifier.height(40.dp).clickable { onOpenFolderPath(destination) },
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    segment,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
