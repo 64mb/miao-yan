@@ -31,6 +31,7 @@
     <string name="rename_note">Переименовать заметку</string>
     <string name="rename_folder">Переименовать папку</string>
     <string name="trash">Корзина</string>
+    <string name="more_actions">Другие действия</string>
     <string name="trash_empty">Корзина пуста</string>
     <string name="trash_detail">Заметок и папок для восстановления: %1$d</string>
     <string name="delete_permanently">Удалить навсегда</string>
@@ -72,7 +73,7 @@
     <string name="local_storage_warning_title">Сохраните копию для восстановления</string>
     <string name="local_storage_warning_detail">Настройте Git или экспортируйте библиотеку до удаления приложения или очистки данных</string>
     <string name="import_library">Импорт библиотеки</string>
-    <string name="import_library_detail">Скопировать заметки из выбранной папки в локальную библиотеку MiaoYan</string>
+    <string name="import_library_detail">Скопировать заметки из выбранной папки в локальную библиотеку</string>
     <string name="export_library">Экспорт библиотеки</string>
     <string name="export_library_detail">Скопировать локальную библиотеку в выбранную папку</string>
     <string name="appearance">Оформление</string>
@@ -80,6 +81,10 @@
     <string name="theme_auto_system">Авто / Системная</string>
     <string name="theme_dark">Тёмная</string>
     <string name="theme_light">Светлая</string>
+    <string name="language">Язык</string>
+    <string name="language_auto_system">Авто / Системный</string>
+    <string name="language_english">English</string>
+    <string name="language_russian">Русский</string>
     <string name="typography">Типографика</string>
     <string name="font">Шрифт</string>
     <string name="font_size">Размер текста</string>
@@ -106,7 +111,7 @@
     <string name="git_settings_title">Git-синхронизация</string>
     <string name="git_sync_now">Синхронизировать</string>
     <string name="git_sync_now_detail">Создать коммит локальных изменений, получить origin/main и безопасно обновить или отправить данные</string>
-    <string name="git_syncing">Синхронизация origin/main…</string>
+    <string name="git_syncing">Синхронизация с Remote…</string>
     <string name="git_repository_url">HTTPS URL репозитория</string>
     <string name="git_https_main_only">Синхронизация ограничена origin/main</string>
     <string name="git_username">Имя пользователя</string>
@@ -148,6 +153,11 @@
     <string name="git_resolve_later">Позже</string>
     <string name="git_resolve">Разрешить</string>
     <string name="git_conflict_pending">Для Git-синхронизации нужно выбрать версии файлов.</string>
+    <string name="git_unrelated_title">Выберите исходную Git-библиотеку</string>
+    <string name="git_unrelated_message">Локальная библиотека и origin/main имеют несвязанные истории. Оставьте всю локальную библиотеку без изменений или полностью замените её версией с сервера. MiaoYan не будет объединять их.</string>
+    <string name="git_keep_local">Оставить локальную</string>
+    <string name="git_replace_with_remote">Заменить с сервера</string>
+    <string name="git_unrelated_kept_local">Локальная библиотека оставлена без изменений</string>
     <string name="jgit_attribution">Eclipse JGit 7.7.1 · Eclipse Distribution License 1.0</string>
     <string name="jgit_license">Уведомления Eclipse JGit</string>
 </resources>

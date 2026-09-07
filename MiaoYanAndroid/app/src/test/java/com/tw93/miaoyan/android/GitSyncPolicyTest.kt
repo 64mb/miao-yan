@@ -4,12 +4,14 @@ import com.tw93.miaoyan.android.git.GitContentGate
 import com.tw93.miaoyan.android.git.GitConflictCodec
 import com.tw93.miaoyan.android.git.GitConflictDetails
 import com.tw93.miaoyan.android.git.GitConflictFile
+import com.tw93.miaoyan.android.git.GitConflictKind
 import com.tw93.miaoyan.android.git.GitCredentials
 import com.tw93.miaoyan.android.git.GitSyncConfig
 import com.tw93.miaoyan.android.git.GitSyncException
 import com.tw93.miaoyan.android.git.GitSyncPathPolicy
 import com.tw93.miaoyan.android.git.CredentialPayloadCodec
 import com.tw93.miaoyan.android.git.OriginBoundCredentialsProvider
+import java.util.Base64
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -35,6 +37,21 @@ class GitSyncPolicyTest {
         assertFalse(GitSyncPathPolicy.isAllowed("Images/photo.webp"))
         assertFalse(GitSyncPathPolicy.isAllowed("Folder/.gitignore"))
         assertFalse(GitSyncPathPolicy.isAllowed(".GitIgnore"))
+    }
+
+    @Test
+    fun allowsOnlyTheAppManagedTrashShape() {
+        val id = "92e5c30f-0c40-4a78-9ab6-52b58229b691"
+        assertTrue(GitSyncPathPolicy.isAllowed(".Trash/manifest.tsv"))
+        assertTrue(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Welcome.md"))
+        assertTrue(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Folder/Nested.md"))
+        assertTrue(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Folder/i/photo.webp"))
+        assertTrue(GitSyncPathPolicy.isAttachment(".Trash/items/$id/Folder/i/photo.webp"))
+        assertFalse(GitSyncPathPolicy.isAllowed(".Trash/other.md"))
+        assertFalse(GitSyncPathPolicy.isAllowed(".Trash/items/not-a-uuid/Welcome.md"))
+        assertFalse(GitSyncPathPolicy.isAllowed(".Trash/items/$id/.secret"))
+        assertFalse(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Folder/random.bin"))
+        assertFalse(GitSyncPathPolicy.isAllowed("Trash/items/$id/Welcome.md"))
     }
 
     @Test
@@ -169,5 +186,28 @@ class GitSyncPolicyTest {
         val encoded = GitConflictCodec.encode(details)
         assertFalse(encoded.contains("Folder/note.md"))
         assertEquals(details, GitConflictCodec.decode(encoded))
+    }
+
+    @Test
+    fun unrelatedConflictKindRoundTrips() {
+        val details = GitConflictDetails(
+            localCommit = "c".repeat(40),
+            remoteCommit = "d".repeat(40),
+            files = listOf(
+                GitConflictFile("local.md", 1_000L, null, localExists = true, remoteExists = false),
+            ),
+            kind = GitConflictKind.UnrelatedHistory,
+        )
+
+        assertEquals(details, GitConflictCodec.decode(GitConflictCodec.encode(details)))
+    }
+
+    @Test
+    fun legacyConflictStateDefaultsToPerFileChoices() {
+        val path = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString("note.md".toByteArray(Charsets.UTF_8))
+        val encoded = "${"e".repeat(40)}\t${"f".repeat(40)}\n$path\t1\t2\t1\t1\n"
+
+        assertEquals(GitConflictKind.FileChoices, GitConflictCodec.decode(encoded)?.kind)
     }
 }

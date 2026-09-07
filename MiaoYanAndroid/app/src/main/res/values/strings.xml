@@ -31,6 +31,7 @@
     <string name="rename_note">Rename note</string>
     <string name="rename_folder">Rename folder</string>
     <string name="trash">Trash</string>
+    <string name="more_actions">More actions</string>
     <string name="trash_empty">Trash is empty</string>
     <string name="trash_detail">Recoverable notes and folders: %1$d</string>
     <string name="delete_permanently">Delete Permanently</string>
@@ -72,7 +73,7 @@
     <string name="local_storage_warning_title">Keep a restorable copy</string>
     <string name="local_storage_warning_detail">Set up Git or export the library before uninstalling or clearing app data</string>
     <string name="import_library">Import Library</string>
-    <string name="import_library_detail">Copy notes from a folder into MiaoYan’s local library</string>
+    <string name="import_library_detail">Copy notes from a folder into local library</string>
     <string name="export_library">Export Library</string>
     <string name="export_library_detail">Copy the local library to a folder you choose</string>
     <string name="appearance">Appearance</string>
@@ -80,6 +81,10 @@
     <string name="theme_auto_system">Auto / System</string>
     <string name="theme_dark">Dark</string>
     <string name="theme_light">Light</string>
+    <string name="language">Language</string>
+    <string name="language_auto_system">Auto / System</string>
+    <string name="language_english">English</string>
+    <string name="language_russian">Русский</string>
     <string name="typography">Typography</string>
     <string name="font">Font</string>
     <string name="font_size">Text size</string>
@@ -106,7 +111,7 @@
     <string name="git_settings_title">Git sync</string>
     <string name="git_sync_now">Sync Now</string>
     <string name="git_sync_now_detail">Commit local changes, fetch origin/main, and safely update or push</string>
-    <string name="git_syncing">Syncing origin/main…</string>
+    <string name="git_syncing">Syncing Remote…</string>
     <string name="git_repository_url">HTTPS repository URL</string>
     <string name="git_https_main_only">Sync is restricted to origin/main</string>
     <string name="git_username">Username</string>
@@ -148,6 +153,11 @@
     <string name="git_resolve_later">Later</string>
     <string name="git_resolve">Resolve</string>
     <string name="git_conflict_pending">Git sync needs file choices.</string>
+    <string name="git_unrelated_title">Choose the initial Git library</string>
+    <string name="git_unrelated_message">The local library and origin/main have unrelated histories. Keep the entire local library unchanged, or replace it completely with the Remote library. MiaoYan will not combine them.</string>
+    <string name="git_keep_local">Keep Local</string>
+    <string name="git_replace_with_remote">Replace with Remote</string>
+    <string name="git_unrelated_kept_local">Local library kept unchanged</string>
     <string name="jgit_attribution">Eclipse JGit 7.7.1 · Eclipse Distribution License 1.0</string>
     <string name="jgit_license">Eclipse JGit notices</string>
 </resources>

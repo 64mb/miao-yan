@@ -111,6 +111,44 @@ class PresentationDocumentTest {
     }
 
     @Test
+    fun previewAndSlidesUseMacPaletteAndReadableCodeTypography() {
+        val markdown = """
+            # Heading
+
+            **Strong**
+
+            ```kotlin
+            val answer = 42 // highlighted
+            ```
+        """.trimIndent()
+        val rendered = """
+            <h1>Heading</h1>
+            <p><strong>Strong</strong></p>
+            <pre><code class="language-kotlin">val answer = 42 // highlighted
+            </code></pre>
+        """.trimIndent()
+        val continuous = PresentationDocument.renderContinuous(markdown, darkMode = true) { rendered }
+        val slides = PresentationDocument.renderSlides(
+            markdown = markdown,
+            darkMode = true,
+            initialSlide = 0,
+            editorSettings = EditorSettings(),
+            nonce = "abcdefghijklmnop",
+        ) { rendered }
+
+        listOf(continuous, slides).forEach { html ->
+            assertTrue(html.contains("#A178FF"))
+            assertTrue(html.contains("#9B79F7"))
+            assertTrue(html.contains("#8FFCCD"))
+            assertTrue(html.contains("querySelectorAll('pre > code')"))
+            assertTrue(html.contains("class=\"language-kotlin\""))
+        }
+        assertTrue(continuous.contains("line-height: 1.55"))
+        assertTrue(slides.contains(".reveal p,.reveal li { line-height: 1.5; }"))
+        assertTrue(slides.contains("line-height: 1.42"))
+    }
+
+    @Test
     fun bundledFontIsFinalBeforeTheDocumentCanBecomeVisible() {
         val html = PresentationDocument.renderContinuous(
             markdown = "text",

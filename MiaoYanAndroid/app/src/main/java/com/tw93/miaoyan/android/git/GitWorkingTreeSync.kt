@@ -156,12 +156,19 @@ class GitWorkingTreeSync(context: Context) {
                     resetHard(git, remoteHead)
                     return resultForFastForward(before, after, remoteHead)
                 }
-                throw GitSyncException.Conflict(
-                    details = GitConflictResolver.describe(
+                val conflict = GitConflictResolver.describe(
                         repository,
                         localHead,
                         remoteHead,
                         localBeforeCommit.modifiedTimes,
+                    )
+                throw GitSyncException.Conflict(
+                    details = conflict.copy(
+                        kind = if (relation == GitHistoryRelation.Unrelated) {
+                            GitConflictKind.UnrelatedHistory
+                        } else {
+                            GitConflictKind.FileChoices
+                        },
                     ),
                 )
             }
@@ -209,6 +216,17 @@ class GitWorkingTreeSync(context: Context) {
                 }
                 val localTree = validateCommitTree(repository, localId)
                 val remoteTree = validateCommitTree(repository, remoteId)
+                val relation = GitHistoryPolicy.relation(repository, localId, remoteId)
+                val expectedRelation = if (details.kind == GitConflictKind.UnrelatedHistory) {
+                    GitHistoryRelation.Unrelated
+                } else {
+                    GitHistoryRelation.Diverged
+                }
+                if (relation != expectedRelation) {
+                    throw GitSyncException.Conflict(
+                        message = "The repository history changed after this conflict was detected. Sync again.",
+                    )
+                }
                 val current = GitConflictResolver.describe(
                     repository,
                     localId,
@@ -219,6 +237,17 @@ class GitWorkingTreeSync(context: Context) {
                     throw GitSyncException.Conflict(
                         message = "The stored conflict list no longer matches the repository. Sync again.",
                     )
+                }
+                if (details.kind == GitConflictKind.UnrelatedHistory) {
+                    if (current.files.any { choices[it.path] != GitConflictChoice.Remote }) {
+                        throw GitSyncException.Configuration(
+                            "Replacing an unrelated local history requires the complete Remote library.",
+                        )
+                    }
+                    validateChangedAttachments(localTree, remoteTree, "origin/main")
+                    ensureWithinDeadline(deadlineNanos)
+                    resetHard(git, remoteId)
+                    return resultForFastForward(localTree, remoteTree, remoteId)
                 }
                 val selectedEntries = current.files.mapNotNull { file ->
                     val selected = if (choices[file.path] == GitConflictChoice.Remote) {

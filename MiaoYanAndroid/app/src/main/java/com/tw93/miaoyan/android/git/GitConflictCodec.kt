@@ -4,7 +4,8 @@ import java.util.Base64
 
 internal object GitConflictCodec {
     fun encode(details: GitConflictDetails): String = buildString {
-        append(details.localCommit).append('\t').append(details.remoteCommit).append('\n')
+        append(details.localCommit).append('\t').append(details.remoteCommit)
+            .append('\t').append(details.kind.name).append('\n')
         details.files.forEach { file ->
             append(Base64.getUrlEncoder().withoutPadding().encodeToString(file.path.toByteArray(Charsets.UTF_8)))
             append('\t').append(file.localModifiedAtMillis ?: "-")
@@ -17,7 +18,8 @@ internal object GitConflictCodec {
     fun decode(value: String): GitConflictDetails? = runCatching {
         val lines = value.lineSequence().filter(String::isNotBlank).toList()
         val header = lines.first().split('\t')
-        require(header.size == 2 && header.all { it.matches(Regex("[0-9a-f]{40}")) })
+        require(header.size in 2..3 && header.take(2).all { it.matches(Regex("[0-9a-f]{40}")) })
+        val kind = header.getOrNull(2)?.let(GitConflictKind::valueOf) ?: GitConflictKind.FileChoices
         require(lines.size in 2..(GitSyncLimits.MaxFiles + 1))
         val files = lines.drop(1).map { line ->
             val parts = line.split('\t')
@@ -35,6 +37,6 @@ internal object GitConflictCodec {
         }
         require(files.map { it.path }.distinct().size == files.size)
         require(files.all { (it.localModifiedAtMillis ?: 0L) >= 0L && (it.remoteModifiedAtMillis ?: 0L) >= 0L })
-        GitConflictDetails(header[0], header[1], files)
+        GitConflictDetails(header[0], header[1], files, kind)
     }.getOrNull()
 }

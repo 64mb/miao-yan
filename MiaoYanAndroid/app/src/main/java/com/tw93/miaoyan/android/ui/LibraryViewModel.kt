@@ -14,6 +14,7 @@ import com.tw93.miaoyan.android.data.FolderMutationResult
 import com.tw93.miaoyan.android.git.ActiveDraftRegistry
 import com.tw93.miaoyan.android.git.GitConflictChoice
 import com.tw93.miaoyan.android.git.GitConflictDetails
+import com.tw93.miaoyan.android.git.GitConflictKind
 import com.tw93.miaoyan.android.git.GitCredentials
 import com.tw93.miaoyan.android.git.GitSyncConfig
 import com.tw93.miaoyan.android.git.GitSyncCoordinator
@@ -69,6 +70,7 @@ data class LibraryUiState(
     val selectionStart: Int = 0,
     val selectionEnd: Int = 0,
     val message: String? = null,
+    val messageTone: UiMessageTone = UiMessageTone.Info,
     val gitConfig: GitSyncConfig? = null,
     val gitUsername: String = "",
     val hasGitCredentials: Boolean = false,
@@ -86,6 +88,8 @@ data class LibraryUiState(
     val visibleFolders: List<LibraryFolder>
         get() = if (query.isBlank()) folders else emptyList()
 }
+
+enum class UiMessageTone { Info, Success, Error }
 
 private val RootLibraryFolder = LibraryFolder(
     id = "app-private://libraries/default",
@@ -885,6 +889,27 @@ class LibraryViewModel @JvmOverloads constructor(
         }
     }
 
+    fun keepLocalUnrelatedGitHistory() {
+        val conflict = mutableState.value.gitConflict
+            ?.takeIf { it.kind == GitConflictKind.UnrelatedHistory }
+            ?: return
+        if (isBusy()) return
+        viewModelScope.launch {
+            runCatching { syncCoordinator.keepLocalUnrelatedHistory(conflict) }
+                .onSuccess {
+                    mutableState.update {
+                        it.copy(
+                            gitConflict = null,
+                            message = getApplication<Application>().getString(
+                                R.string.git_unrelated_kept_local,
+                            ),
+                        )
+                    }
+                }
+                .onFailure(::showError)
+        }
+    }
+
     private suspend fun finishGitAttempt(attempt: Result<*>) {
         val refreshFailure = runCatching { refreshLibrary() }.exceptionOrNull()
         val error = (attempt.exceptionOrNull() ?: refreshFailure)?.let(GitSyncDiagnostics::mapForUser)
@@ -892,8 +917,9 @@ class LibraryViewModel @JvmOverloads constructor(
             mutableState.update {
                 it.copy(
                     syncing = false,
-                    gitConflict = null,
-                    message = getApplication<Application>().getString(R.string.git_sync_complete),
+                        gitConflict = null,
+                        messageTone = UiMessageTone.Success,
+                        message = getApplication<Application>().getString(R.string.git_sync_complete),
                 )
             }
         } else {
@@ -1004,6 +1030,11 @@ class LibraryViewModel @JvmOverloads constructor(
                 } else {
                     current.message
                 },
+                messageTone = if (error == null && route == ManualReloadRoute.Git) {
+                    UiMessageTone.Success
+                } else {
+                    current.messageTone
+                },
             )
         }
         if (error != null) showError(error)
@@ -1101,6 +1132,7 @@ class LibraryViewModel @JvmOverloads constructor(
             it.copy(
                 message = userMessage
                     ?: getApplication<Application>().getString(R.string.private_library_error),
+                messageTone = UiMessageTone.Error,
             )
         }
     }

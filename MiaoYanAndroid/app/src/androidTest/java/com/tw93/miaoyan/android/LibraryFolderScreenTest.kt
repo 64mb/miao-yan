@@ -81,12 +81,14 @@ class LibraryFolderScreenTest {
             onMoveFolderToTrash = trashed::set,
         )
 
+        compose.onNodeWithTag("folder-actions:Projects").performClick()
         compose.onNodeWithText(context.getString(R.string.rename)).performClick()
         compose.onNodeWithTag("folder-name").performTextClearance()
         compose.onNodeWithTag("folder-name").performTextInput("Archive")
         compose.onNodeWithTag("folder-name-confirm").performClick()
         assertEquals(folder to "Archive", renamed.get())
 
+        compose.onNodeWithTag("folder-actions:Projects").performClick()
         compose.onNodeWithText(context.getString(R.string.trash)).performClick()
         compose.onNodeWithText(context.getString(R.string.move_folder_to_trash_title)).assertIsDisplayed()
         assertNull(trashed.get())

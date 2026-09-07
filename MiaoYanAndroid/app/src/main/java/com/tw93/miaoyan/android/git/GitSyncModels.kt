@@ -75,6 +75,8 @@ data class GitSyncResult(
 
 enum class GitConflictChoice { Local, Remote }
 
+enum class GitConflictKind { FileChoices, UnrelatedHistory }
+
 data class GitConflictFile(
     val path: String,
     val localModifiedAtMillis: Long?,
@@ -87,6 +89,7 @@ data class GitConflictDetails(
     val localCommit: String,
     val remoteCommit: String,
     val files: List<GitConflictFile>,
+    val kind: GitConflictKind = GitConflictKind.FileChoices,
 )
 
 sealed class GitSyncException(message: String, cause: Throwable? = null) : Exception(message, cause) {

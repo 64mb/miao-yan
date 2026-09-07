@@ -1,6 +1,7 @@
 package com.tw93.miaoyan.android
 
 import com.tw93.miaoyan.android.data.DEFAULT_EDITOR_FONT_SIZE
+import com.tw93.miaoyan.android.data.AppLanguage
 import com.tw93.miaoyan.android.data.EDITOR_FONT_SIZES
 import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.ThemeMode
@@ -10,6 +11,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EditorPreferencesTest {
+    @Test
+    fun appLanguageRecognizesSupportedPrimaryTagsAndDefaultsToSystem() {
+        assertEquals(AppLanguage.AUTO_SYSTEM, AppLanguage.fromLanguageTags(null))
+        assertEquals(AppLanguage.AUTO_SYSTEM, AppLanguage.fromLanguageTags(""))
+        assertEquals(AppLanguage.ENGLISH, AppLanguage.fromLanguageTags("en-US"))
+        assertEquals(AppLanguage.RUSSIAN, AppLanguage.fromLanguageTags("ru-RU,en-US"))
+        assertEquals(AppLanguage.AUTO_SYSTEM, AppLanguage.fromLanguageTags("de-DE"))
+    }
+
     @Test
     fun fontCatalogIsSmallAndUnknownValuesFallBackToSystemSans() {
         assertEquals(4, EditorFont.entries.size)

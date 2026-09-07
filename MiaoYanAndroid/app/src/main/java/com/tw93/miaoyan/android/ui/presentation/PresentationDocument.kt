@@ -51,6 +51,7 @@ object PresentationDocument {
             <script nonce="$nonce">
               (() => {
                 'use strict';
+                ${syntaxHighlightScript()}
                 document.addEventListener('click', event => {
                   const button = event.target.closest('button.embed-placeholder[data-embed]');
                   if (!button) return;
@@ -117,6 +118,7 @@ object PresentationDocument {
             <script nonce="$nonce">
               (() => {
                 'use strict';
+                ${syntaxHighlightScript()}
                 const report = (index) => {
                   window.location.href = 'miaoyan-slide://state/' + index;
                 };
@@ -172,12 +174,14 @@ object PresentationDocument {
         html, body { margin: 0; max-width: 100%; min-height: 100%; overflow-x: hidden; background: ${colors.background}; color: ${colors.foreground}; }
         body { padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(52px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); font-family: ${colors.fontStack}; font-size: ${colors.fontSize}px; line-height: 1.74; letter-spacing: .04em; overflow-wrap: anywhere; }
         body > * { max-width: min(860px, 100%); margin-left: auto; margin-right: auto; }
-        h1,h2,h3,h4,h5,h6 { line-height: 1.25; margin-top: 1.35em; margin-bottom: .55em; }
+        h1,h2,h3,h4,h5,h6 { color: ${colors.heading}; line-height: 1.25; margin-top: 1.35em; margin-bottom: .55em; }
         h1 { font-size: 2em; } h2 { font-size: 1.55em; }
         p { margin-top: .8em; margin-bottom: .8em; } a { color: ${colors.link}; }
+        strong { color: ${colors.markup}; } li::marker { color: ${colors.list}; }
         code { background: ${colors.code}; border-radius: 5px; padding: .12em .35em; font-family: ui-monospace, monospace; }
         pre { max-width: 100%; overflow-x: hidden; background: ${colors.code}; border-radius: 8px; padding: 12px 16px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
-        pre code { padding: 0; } blockquote { margin-left: 0; padding-left: 14px; border-left: 3px solid ${colors.border}; color: ${colors.muted}; }
+        pre code { display: block; padding: 0; background: transparent; line-height: 1.55; } blockquote { margin-left: 0; padding-left: 14px; border-left: 3px solid ${colors.list}; color: ${colors.muted}; }
+        ${syntaxHighlightStyle(colors)}
         img,video,audio,iframe,table { max-width: 100%; }
         img { height: auto; display: block; margin: 1em auto; }
         hr { border: 0; border-top: 1px solid ${colors.border}; margin: 2em 0; }
@@ -193,15 +197,21 @@ object PresentationDocument {
         :root { color-scheme: ${colors.scheme}; }
         ${colors.fontFace}
         html, body, .reveal-viewport { margin: 0; width: 100%; height: 100%; overflow: hidden; background: ${colors.background}; color: ${colors.foreground}; }
-        .reveal { color: ${colors.foreground}; font-family: ${colors.fontStack}; font-size: ${colors.slideFontSize}px; }
+        .reveal { color: ${colors.foreground}; font-family: ${colors.fontStack}; font-size: ${colors.slideFontSize}px; line-height: 1.5; }
         .reveal .slides { text-align: left; }
         .reveal .slides section { max-height: 100%; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; padding: 10px; box-sizing: border-box; }
-        .reveal h1,.reveal h2,.reveal h3,.reveal h4,.reveal h5,.reveal h6 { color: ${colors.foreground}; line-height: 1.18; text-transform: none; }
+        .reveal h1,.reveal h2,.reveal h3,.reveal h4,.reveal h5,.reveal h6 { color: ${colors.heading}; line-height: 1.25; text-transform: none; }
+        .reveal p,.reveal li { line-height: 1.5; }
+        .reveal p { margin: .55em 0; }
+        .reveal li { margin: .16em 0; }
         .reveal a { color: ${colors.link}; }
+        .reveal strong { color: ${colors.markup}; }
+        .reveal li::marker { color: ${colors.list}; }
         .reveal code { background: ${colors.code}; border-radius: 5px; padding: .1em .3em; }
         .reveal pre { width: 100%; max-width: 100%; overflow: auto; background: ${colors.code}; border-radius: 10px; padding: 14px; box-sizing: border-box; }
-        .reveal pre code { max-height: 50vh; padding: 0; }
-        .reveal blockquote { width: auto; margin-left: 0; padding-left: 18px; border-left: 4px solid ${colors.border}; color: ${colors.muted}; box-shadow: none; }
+        .reveal pre code { display: block; max-height: 50vh; padding: 0; background: transparent; line-height: 1.42; }
+        .reveal blockquote { width: auto; margin-left: 0; padding-left: 18px; border-left: 4px solid ${colors.list}; color: ${colors.muted}; box-shadow: none; }
+        ${syntaxHighlightStyle(colors, prefix = ".reveal ")}
         .reveal img,.reveal video,.reveal audio,.reveal iframe,.reveal table { max-width: 100%; }
         .reveal img { max-height: 58vh; object-fit: contain; }
         .reveal table { border-collapse: collapse; table-layout: fixed; width: 100%; }
@@ -210,6 +220,47 @@ object PresentationDocument {
         .reveal .progress { color: ${colors.link}; }
         .media-placeholder { color: ${colors.muted}; font-style: italic; }
         @media (max-width: 600px), (max-height: 500px) { .reveal { font-size: ${colors.compactSlideFontSize}px; } }
+    """.trimIndent()
+
+    /**
+     * Small offline lexer for preview surfaces. It deliberately highlights a conservative shared
+     * set of tokens instead of shipping another copy of highlight.js in the Android APK.
+     */
+    private fun syntaxHighlightScript(): String = """
+        const escapeCode = value => value
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;');
+        const codeTokens = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|<!--[\s\S]*?-->|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:abstract|as|async|await|break|case|catch|class|const|continue|data|default|defer|do|else|enum|export|extends|final|for|from|fun|func|function|guard|if|import|in|interface|internal|is|let|match|mut|new|object|open|override|package|private|protocol|public|repeat|return|sealed|static|struct|switch|throw|throws|try|typealias|typeof|val|var|when|where|while|yield)\b|\b(?:false|nil|null|None|self|super|this|true)\b|\b(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?)\b/g;
+        document.querySelectorAll('pre > code').forEach(block => {
+          const source = block.textContent || '';
+          let output = '';
+          let cursor = 0;
+          codeTokens.lastIndex = 0;
+          for (let match; (match = codeTokens.exec(source)) !== null;) {
+            const token = match[0];
+            let kind = 'number';
+            if (token.startsWith('//') || token.startsWith('/*') || token.startsWith('#') || token.startsWith('<!--')) kind = 'comment';
+            else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) kind = 'string';
+            else if (/^(?:false|nil|null|None|self|super|this|true)$/.test(token)) kind = 'literal';
+            else if (!/^(?:0x[0-9a-fA-F]+|\d+(?:\.\d+)?)$/.test(token)) kind = 'keyword';
+            output += escapeCode(source.slice(cursor, match.index));
+            output += '<span class="hljs-' + kind + '">' + escapeCode(token) + '</span>';
+            cursor = match.index + token.length;
+          }
+          output += escapeCode(source.slice(cursor));
+          block.innerHTML = output;
+          block.classList.add('hljs');
+        });
+    """.trimIndent()
+
+    private fun syntaxHighlightStyle(colors: PresentationColors, prefix: String = ""): String = """
+        ${prefix}.hljs { color: ${colors.codeBase}; }
+        ${prefix}.hljs-comment { color: ${colors.codeComment}; }
+        ${prefix}.hljs-keyword { color: ${colors.codeKeyword}; }
+        ${prefix}.hljs-string { color: ${colors.codeString}; }
+        ${prefix}.hljs-number,${prefix}.hljs-literal { color: ${colors.codeNumber}; }
     """.trimIndent()
 
     private data class PresentationColors(
@@ -223,6 +274,14 @@ object PresentationDocument {
         val link = if (darkMode) MiaoYanColors.PreviewLinkDarkCss else MiaoYanColors.PreviewLinkLightCss
         val border = if (darkMode) MiaoYanColors.PreviewBorderDarkCss else MiaoYanColors.PreviewBorderLightCss
         val code = if (darkMode) MiaoYanColors.PreviewCodeDarkCss else MiaoYanColors.PreviewCodeLightCss
+        val heading = if (darkMode) "#A178FF" else "#7A3DAD"
+        val list = if (darkMode) "#C4C7C4" else "#826B29"
+        val markup = if (darkMode) "#FFC985" else "#F28A21"
+        val codeBase = if (darkMode) "#ABB2BF" else "#24292E"
+        val codeComment = if (darkMode) "#ABB2BF" else "#6A737D"
+        val codeKeyword = if (darkMode) "#9B79F7" else "#D73A49"
+        val codeString = if (darkMode) "#8FFCCD" else "#032F62"
+        val codeNumber = if (darkMode) "#F7CC8F" else "#005CC5"
         val fontSize = normalizedEditorFontSize(editorSettings.fontSizeSp)
         val fontStack = editorSettings.font.cssStack
         val slideFontSize = (fontSize * 2.375f).toInt()

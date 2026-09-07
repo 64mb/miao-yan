@@ -72,6 +72,19 @@ class GitSyncCoordinator(
         }
     }
 
+    suspend fun keepLocalUnrelatedHistory(details: GitConflictDetails) {
+        require(details.kind == GitConflictKind.UnrelatedHistory)
+        withContext(Dispatchers.IO) {
+            val pending = preferences.pendingConflict.first()
+            if (pending != details) {
+                throw GitSyncException.Conflict(
+                    message = "The stored conflict changed. Sync again before choosing a library.",
+                )
+            }
+            preferences.setPendingConflict(null)
+        }
+    }
+
     private suspend fun recordAttempt(operation: suspend () -> GitSyncResult): GitSyncResult {
         val attempt = try {
             Result.success(operation())

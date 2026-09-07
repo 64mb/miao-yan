@@ -5,7 +5,10 @@ import com.tw93.miaoyan.android.git.GitHistoryRelation
 import java.io.File
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.ResetCommand
+import org.eclipse.jgit.lib.CommitBuilder
 import org.eclipse.jgit.lib.ObjectId
+import org.eclipse.jgit.lib.PersonIdent
+import org.eclipse.jgit.lib.TreeFormatter
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -43,6 +46,17 @@ class GitHistoryPolicyTest {
         }
     }
 
+    @Test
+    fun identifiesHistoriesWithoutACommonAncestor() {
+        val directory = temporaryFolder.newFolder("unrelated")
+        Git.init().setDirectory(directory).setInitialBranch("main").call().use { git ->
+            val local = commit(git, directory, "local.md", "local", "local")
+            val remote = independentCommit(git, "remote root")
+
+            assertEquals(GitHistoryRelation.Unrelated, GitHistoryPolicy.relation(git.repository, local, remote))
+        }
+    }
+
     private fun commit(git: Git, directory: File, path: String, text: String, message: String): ObjectId {
         File(directory, path).writeText(text)
         git.add().addFilepattern(path).call()
@@ -51,5 +65,19 @@ class GitHistoryPolicyTest {
             .setAuthor("MiaoYan", "android@example.com")
             .setCommitter("MiaoYan", "android@example.com")
             .call().id
+    }
+
+    private fun independentCommit(git: Git, message: String): ObjectId {
+        val identity = PersonIdent("MiaoYan", "android@example.com")
+        return git.repository.newObjectInserter().use { inserter ->
+            val tree = inserter.insert(TreeFormatter())
+            val commit = CommitBuilder().apply {
+                setTreeId(tree)
+                this.message = message
+                author = identity
+                committer = identity
+            }
+            inserter.insert(commit).also { inserter.flush() }
+        }
     }
 }

@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -52,11 +53,13 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -69,6 +72,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -83,6 +87,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tw93.miaoyan.android.R
 import com.tw93.miaoyan.android.data.AttachmentKind
+import com.tw93.miaoyan.android.data.AppLanguage
 import com.tw93.miaoyan.android.data.EDITOR_FONT_SIZES
 import com.tw93.miaoyan.android.data.EditorFont
 import com.tw93.miaoyan.android.data.EditorSettings
@@ -120,9 +125,11 @@ private val JetBrainsMonoFamily = FontFamily(Font(R.font.jetbrains_mono_regular)
 fun MiaoYanApp(
     viewModel: LibraryViewModel,
     editorSettings: EditorSettings,
+    appLanguage: AppLanguage,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
     onThemeModeChanged: (ThemeMode) -> Unit,
+    onLanguageChanged: (AppLanguage) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val busyOverlay = remember { BusyOverlayStateMachine() }
@@ -144,7 +151,7 @@ fun MiaoYanApp(
 
     LaunchedEffect(state.message) {
         state.message?.let {
-            snackbar.showSnackbar(it)
+            snackbar.showSnackbar(it.trimEnd().trimEnd('.'))
             viewModel.dismissMessage()
         }
     }
@@ -162,6 +169,8 @@ fun MiaoYanApp(
         imageScope?.let(::AppPrivatePresentationImageHandler) ?: PresentationImageHandler.DenyAll
     }
     val presentationMode = presentationSession.mode
+    val twoPane = LibraryWindowLayout.forWidthDp(LocalConfiguration.current.screenWidthDp) ==
+        LibraryWindowLayoutMode.ListDetail
     val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
     val continuousPreparation = rememberContinuousPreviewDocument(
         markdown = state.draft,
@@ -183,9 +192,47 @@ fun MiaoYanApp(
         return
     }
 
-    Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { insets ->
+    Scaffold(
+        snackbarHost = {
+            SnackbarHost(snackbar) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = if (state.messageTone == UiMessageTone.Error) {
+                        MaterialTheme.colorScheme.errorContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHighest
+                    },
+                    contentColor = if (state.messageTone == UiMessageTone.Error) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    actionColor = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+    ) { insets ->
         Surface(Modifier.fillMaxSize().padding(insets), color = MaterialTheme.colorScheme.background) {
             when {
+                presentationMode == PresentationMode.ContinuousPreview && state.selected != null -> EditorScreen(
+                    state = state,
+                    editorSettings = editorSettings,
+                    onBack = viewModel::closeNote,
+                    onDraftChanged = viewModel::updateDraft,
+                    onSelectionChanged = viewModel::updateSelection,
+                    onPreviewChanged = viewModel::setPreview,
+                    onTypeset = viewModel::typesetDraft,
+                    onSave = viewModel::save,
+                    continuousPreparation = continuousPreparation,
+                    previewController = previewController,
+                    previewImageHandler = presentationImageHandler,
+                    fullscreenPreview = true,
+                    onFullscreenPreview = {},
+                    onExitFullscreenPreview = presentationSession::exit,
+                    onSlidePresentation = { presentationSession.enter(PresentationMode.Slides) },
+                    onPrepareAttachment = viewModel::prepareAttachment,
+                    onAttachmentResult = viewModel::finishAttachmentPicker,
+                )
                 showSettings && showTrashSettings -> TrashSettingsScreen(
                     state = state,
                     onRestore = viewModel::restore,
@@ -194,10 +241,12 @@ fun MiaoYanApp(
                 )
                 showSettings -> SettingsScreen(
                     settings = editorSettings,
+                    appLanguage = appLanguage,
                     state = state,
                     onFontChanged = onFontChanged,
                     onFontSizeChanged = onFontSizeChanged,
                     onThemeModeChanged = onThemeModeChanged,
+                    onLanguageChanged = onLanguageChanged,
                     onImportLibrary = launchImport,
                     onExportLibrary = launchExport,
                     onTrash = { showTrashSettings = true },
@@ -209,6 +258,56 @@ fun MiaoYanApp(
                         showSettings = false
                     },
                 )
+                state.selected != null && twoPane -> Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.width(400.dp).fillMaxHeight()) {
+                        LibraryScreen(
+                            state = state,
+                            onRefresh = viewModel::reload,
+                            onQueryChanged = viewModel::updateQuery,
+                            onOpenNote = viewModel::openNote,
+                            onOpenFolder = viewModel::openFolder,
+                            onOpenFolderPath = viewModel::openFolderPath,
+                            onNavigateUp = viewModel::navigateUp,
+                            onCreateNote = viewModel::createNote,
+                            onCreateFolder = viewModel::createFolder,
+                            onRenameNote = viewModel::renameNote,
+                            onRenameFolder = viewModel::renameFolder,
+                            onMoveToTrash = viewModel::moveToTrash,
+                            onMoveFolderToTrash = viewModel::moveFolderToTrash,
+                            onTogglePinned = viewModel::togglePinned,
+                            onResolveConflict = { showGitConflict = true },
+                            onSettings = { showSettings = true },
+                        )
+                    }
+                    VerticalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .24f))
+                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                        EditorScreen(
+                            state = state,
+                            editorSettings = editorSettings,
+                            onBack = viewModel::closeNote,
+                            onDraftChanged = viewModel::updateDraft,
+                            onSelectionChanged = viewModel::updateSelection,
+                            onPreviewChanged = { enabled ->
+                                if (enabled) previewController.markRequested("inline")
+                                viewModel.setPreview(enabled)
+                            },
+                            onTypeset = viewModel::typesetDraft,
+                            onSave = viewModel::save,
+                            continuousPreparation = continuousPreparation,
+                            previewController = previewController,
+                            previewImageHandler = presentationImageHandler,
+                            fullscreenPreview = false,
+                            onFullscreenPreview = {
+                                previewController.markRequested("fullscreen")
+                                presentationSession.enter(PresentationMode.ContinuousPreview)
+                            },
+                            onExitFullscreenPreview = presentationSession::exit,
+                            onSlidePresentation = { presentationSession.enter(PresentationMode.Slides) },
+                            onPrepareAttachment = viewModel::prepareAttachment,
+                            onAttachmentResult = viewModel::finishAttachmentPicker,
+                        )
+                    }
+                }
                 state.selected != null -> EditorScreen(
                     state = state,
                     editorSettings = editorSettings,
@@ -281,6 +380,10 @@ fun MiaoYanApp(
         GitConflictDialog(
             details = conflict,
             onLater = { showGitConflict = false },
+            onKeepLocalUnrelated = {
+                showGitConflict = false
+                viewModel.keepLocalUnrelatedGitHistory()
+            },
             onResolve = { choices ->
                 showGitConflict = false
                 viewModel.resolveGitConflict(choices)
@@ -400,7 +503,7 @@ internal fun LibraryScreen(
                             onTrash = { trashingFolder = folder },
                         )
                         HorizontalDivider(
-                            Modifier.padding(start = 20.dp),
+                            Modifier.padding(start = 16.dp),
                             color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
                         )
                     }
@@ -414,7 +517,7 @@ internal fun LibraryScreen(
                             onTrash = { trashingNote = note },
                         )
                         HorizontalDivider(
-                            Modifier.padding(start = 20.dp),
+                            Modifier.padding(start = 16.dp),
                             color = MaterialTheme.colorScheme.outline.copy(alpha = .16f),
                         )
                     }
@@ -512,17 +615,18 @@ private fun FolderBreadcrumb(
     onOpenFolderPath: (String) -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (relativePath.isNotEmpty()) {
             IconButton(onClick = onNavigateUp, modifier = Modifier.size(40.dp).testTag("folder-back")) {
                 Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
             }
-        } else {
-            Spacer(Modifier.size(8.dp))
         }
-        TextButton(onClick = { onOpenFolderPath("") }) {
+        Box(
+            Modifier.height(40.dp).clickable { onOpenFolderPath("") },
+            contentAlignment = Alignment.CenterStart,
+        ) {
             Text(stringResource(R.string.library_root), maxLines = 1)
         }
         var accumulated = ""
@@ -548,9 +652,10 @@ private fun FolderRow(
     onRename: () -> Unit,
     onTrash: () -> Unit,
 ) {
+    var actionsExpanded by remember(folder.id) { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().testTag("folder-row:${folder.relativePath}")
-            .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -572,8 +677,29 @@ private fun FolderRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        TextButton(onClick = onRename) { Text(stringResource(R.string.rename)) }
-        TextButton(onClick = onTrash) { Text(stringResource(R.string.trash)) }
+        Box {
+            IconButton(
+                onClick = { actionsExpanded = true },
+                modifier = Modifier.testTag("folder-actions:${folder.relativePath}"),
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_more_vert),
+                    contentDescription = stringResource(R.string.more_actions),
+                )
+            }
+            DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.rename)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_edit), contentDescription = null) },
+                    onClick = { actionsExpanded = false; onRename() },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.trash)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_trash), contentDescription = null) },
+                    onClick = { actionsExpanded = false; onTrash() },
+                )
+            }
+        }
     }
 }
 
@@ -673,9 +799,10 @@ private fun NoteRow(
     onRename: () -> Unit,
     onTrash: () -> Unit,
 ) {
+    var actionsExpanded by remember(note.id) { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().testTag("note-row:${note.relativePath}")
-            .padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
     ) {
         Column(Modifier.weight(1f).clickable(onClick = onClick).padding(vertical = 6.dp)) {
             Text(
@@ -705,11 +832,34 @@ private fun NoteRow(
                 }
             }
         }
-        TextButton(onClick = onTogglePinned) {
-            Text(stringResource(if (pinned) R.string.unpin else R.string.pin))
+        Box {
+            IconButton(
+                onClick = { actionsExpanded = true },
+                modifier = Modifier.testTag("note-actions:${note.relativePath}"),
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_more_vert),
+                    contentDescription = stringResource(R.string.more_actions),
+                )
+            }
+            DropdownMenu(expanded = actionsExpanded, onDismissRequest = { actionsExpanded = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(if (pinned) R.string.unpin else R.string.pin)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_push_pin), contentDescription = null) },
+                    onClick = { actionsExpanded = false; onTogglePinned() },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.rename)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_edit), contentDescription = null) },
+                    onClick = { actionsExpanded = false; onRename() },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.trash)) },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_trash), contentDescription = null) },
+                    onClick = { actionsExpanded = false; onTrash() },
+                )
+            }
         }
-        TextButton(onClick = onRename) { Text(stringResource(R.string.rename)) }
-        TextButton(onClick = onTrash) { Text(stringResource(R.string.trash)) }
     }
 }
 
@@ -937,17 +1087,6 @@ private fun EditorScreen(
                 ModeSwitcher(preview = state.preview, onPreviewChanged = onPreviewChanged)
             }
             Box(Modifier.fillMaxSize()) {
-                if (!state.preview && !fullscreenPreview) {
-                    PlatformMarkdownEditor(
-                        text = state.draft,
-                        selectionStart = state.selectionStart,
-                        selectionEnd = state.selectionEnd,
-                        onTextChanged = onDraftChanged,
-                        onSelectionChanged = onSelectionChanged,
-                        editorSettings = editorSettings,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
                 ContinuousPreview(
                     preparation = continuousPreparation,
                     controller = previewController,
@@ -957,6 +1096,17 @@ private fun EditorScreen(
                     onExitFullscreen = onExitFullscreenPreview,
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (!state.preview && !fullscreenPreview) {
+                    PlatformMarkdownEditor(
+                        text = state.draft,
+                        selectionStart = state.selectionStart,
+                        selectionEnd = state.selectionEnd,
+                        onTextChanged = onDraftChanged,
+                        onSelectionChanged = onSelectionChanged,
+                        editorSettings = editorSettings,
+                        modifier = Modifier.fillMaxSize().testTag("markdown_editor"),
+                    )
+                }
             }
         }
     }
@@ -1280,10 +1430,12 @@ internal fun TrashSettingsScreen(
 @Composable
 private fun SettingsScreen(
     settings: EditorSettings,
+    appLanguage: AppLanguage,
     state: LibraryUiState,
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
     onThemeModeChanged: (ThemeMode) -> Unit,
+    onLanguageChanged: (AppLanguage) -> Unit,
     onImportLibrary: () -> Unit,
     onExportLibrary: () -> Unit,
     onTrash: () -> Unit,
@@ -1395,6 +1547,13 @@ private fun SettingsScreen(
                         selected = themeModeLabel(settings.themeMode),
                         options = ThemeMode.entries.map { it to themeModeLabel(it) },
                         onSelected = onThemeModeChanged,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsDropdown(
+                        label = stringResource(R.string.language),
+                        selected = appLanguageLabel(appLanguage),
+                        options = AppLanguage.entries.map { it to appLanguageLabel(it) },
+                        onSelected = onLanguageChanged,
                     )
                 }
             }
@@ -1672,6 +1831,13 @@ private fun themeModeLabel(themeMode: ThemeMode): String = when (themeMode) {
     ThemeMode.AUTO_SYSTEM -> stringResource(R.string.theme_auto_system)
     ThemeMode.DARK -> stringResource(R.string.theme_dark)
     ThemeMode.LIGHT -> stringResource(R.string.theme_light)
+}
+
+@Composable
+private fun appLanguageLabel(language: AppLanguage): String = when (language) {
+    AppLanguage.AUTO_SYSTEM -> stringResource(R.string.language_auto_system)
+    AppLanguage.ENGLISH -> stringResource(R.string.language_english)
+    AppLanguage.RUSSIAN -> stringResource(R.string.language_russian)
 }
 
 private fun composeFontFamily(font: EditorFont): FontFamily = when (font) {
