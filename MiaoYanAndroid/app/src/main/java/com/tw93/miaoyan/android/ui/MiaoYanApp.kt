@@ -1,9 +1,14 @@
 package com.tw93.miaoyan.android.ui
 
+import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.Resources
 import android.graphics.Color as AndroidColor
+import android.graphics.Typeface
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Base64
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.inputmethod.BaseInputConnection
 import android.webkit.WebResourceRequest
@@ -25,16 +30,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -50,29 +64,49 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tw93.miaoyan.android.R
+import com.tw93.miaoyan.android.data.EDITOR_FONT_SIZES
+import com.tw93.miaoyan.android.data.EditorFont
+import com.tw93.miaoyan.android.data.EditorSettings
 import com.tw93.miaoyan.android.data.LocalFileImageLoader
 import com.tw93.miaoyan.android.data.LocalImagePolicy
 import com.tw93.miaoyan.android.model.LibraryNote
+import com.tw93.miaoyan.android.ui.theme.MiaoYanColors
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+private val JetBrainsMonoFamily = FontFamily(Font(R.font.jetbrains_mono_regular))
 
 @Composable
-fun MiaoYanApp(viewModel: LibraryViewModel) {
+fun MiaoYanApp(
+    viewModel: LibraryViewModel,
+    editorSettings: EditorSettings,
+    onFontChanged: (EditorFont) -> Unit,
+    onFontSizeChanged: (Int) -> Unit,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::selectRoot)
     }
@@ -88,20 +122,32 @@ fun MiaoYanApp(viewModel: LibraryViewModel) {
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { insets ->
         Surface(Modifier.fillMaxSize().padding(insets), color = MaterialTheme.colorScheme.background) {
             when {
+                showSettings -> SettingsScreen(
+                    settings = editorSettings,
+                    onFontChanged = onFontChanged,
+                    onFontSizeChanged = onFontSizeChanged,
+                    onBack = { showSettings = false },
+                )
                 state.selected != null -> EditorScreen(
                     state = state,
+                    editorSettings = editorSettings,
                     onBack = viewModel::closeNote,
                     onDraftChanged = viewModel::updateDraft,
                     onPreviewChanged = viewModel::setPreview,
                     onSave = viewModel::save,
+                    onSettings = { showSettings = true },
                 )
-                state.rootUri == null -> WelcomeScreen(onChoose = { chooser.launch(null) })
+                state.rootUri == null -> WelcomeScreen(
+                    onChoose = { chooser.launch(null) },
+                    onSettings = { showSettings = true },
+                )
                 else -> LibraryScreen(
                     state = state,
                     onChoose = { chooser.launch(state.rootUri) },
                     onRefresh = viewModel::reload,
                     onQueryChanged = viewModel::updateQuery,
                     onOpenNote = viewModel::openNote,
+                    onSettings = { showSettings = true },
                 )
             }
             if (state.loading || state.saving) {
@@ -112,32 +158,47 @@ fun MiaoYanApp(viewModel: LibraryViewModel) {
 }
 
 @Composable
-private fun WelcomeScreen(onChoose: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Box(
-            Modifier.size(72.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(22.dp)),
-            contentAlignment = Alignment.Center,
+private fun WelcomeScreen(onChoose: () -> Unit, onSettings: () -> Unit) {
+    Box(Modifier.fillMaxSize()) {
+        IconButton(
+            onClick = onSettings,
+            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
         ) {
-            Text("M", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Black)
+            Icon(
+                painterResource(R.drawable.ic_settings),
+                contentDescription = stringResource(R.string.settings),
+            )
         }
-        Spacer(Modifier.height(28.dp))
-        Text(
-            stringResource(R.string.empty_title),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            stringResource(R.string.empty_message),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Spacer(Modifier.height(28.dp))
-        Button(onClick = onChoose) { Text(stringResource(R.string.choose_library)) }
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                painterResource(R.drawable.miaoyan_brand_mark),
+                contentDescription = null,
+                modifier = Modifier.size(104.dp),
+                tint = androidx.compose.ui.graphics.Color.Unspecified,
+            )
+            Spacer(Modifier.height(28.dp))
+            Text(
+                stringResource(R.string.empty_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                stringResource(R.string.empty_message),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Spacer(Modifier.height(28.dp))
+            Button(onClick = onChoose) {
+                Icon(painterResource(R.drawable.ic_folder_open), contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text(stringResource(R.string.choose_library))
+            }
+        }
     }
 }
 
@@ -148,6 +209,7 @@ private fun LibraryScreen(
     onRefresh: () -> Unit,
     onQueryChanged: (String) -> Unit,
     onOpenNote: (LibraryNote) -> Unit,
+    onSettings: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -164,14 +226,25 @@ private fun LibraryScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            TextButton(onClick = onRefresh) { Text(stringResource(R.string.refresh)) }
-            TextButton(onClick = onChoose) { Text(stringResource(R.string.choose_another_library)) }
+            IconButton(onClick = onRefresh) {
+                Icon(painterResource(R.drawable.ic_refresh), contentDescription = stringResource(R.string.refresh))
+            }
+            IconButton(onClick = onChoose) {
+                Icon(
+                    painterResource(R.drawable.ic_folder_open),
+                    contentDescription = stringResource(R.string.choose_another_library),
+                )
+            }
+            IconButton(onClick = onSettings) {
+                Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
+            }
         }
         OutlinedTextField(
             value = state.query,
             onValueChange = onQueryChanged,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             placeholder = { Text(stringResource(R.string.search_notes)) },
+            leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
             singleLine = true,
             shape = RoundedCornerShape(14.dp),
         )
@@ -222,10 +295,12 @@ private fun NoteRow(note: LibraryNote, onClick: () -> Unit) {
 @Composable
 private fun EditorScreen(
     state: LibraryUiState,
+    editorSettings: EditorSettings,
     onBack: () -> Unit,
     onDraftChanged: (String) -> Unit,
     onPreviewChanged: (Boolean) -> Unit,
     onSave: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var showDiscardDialog by remember { mutableStateOf(false) }
     val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
@@ -236,7 +311,9 @@ private fun EditorScreen(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = requestBack) { Text("‹ ${stringResource(R.string.back)}") }
+            IconButton(onClick = requestBack) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
+            }
             Text(
                 state.selected?.note?.displayName.orEmpty(),
                 modifier = Modifier.weight(1f),
@@ -245,8 +322,11 @@ private fun EditorScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            TextButton(onClick = onSave, enabled = state.dirty && !state.saving) {
-                Text(stringResource(R.string.save))
+            IconButton(onClick = onSettings) {
+                Icon(painterResource(R.drawable.ic_settings), contentDescription = stringResource(R.string.settings))
+            }
+            IconButton(onClick = onSave, enabled = state.dirty && !state.saving) {
+                Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))
             }
         }
         ModeSwitcher(preview = state.preview, onPreviewChanged = onPreviewChanged)
@@ -254,12 +334,14 @@ private fun EditorScreen(
             MarkdownPreview(
                 markdown = state.draft,
                 noteRelativePath = state.selected?.note?.relativePath,
+                editorSettings = editorSettings,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
             PlatformMarkdownEditor(
                 text = state.draft,
                 onTextChanged = onDraftChanged,
+                editorSettings = editorSettings,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -293,12 +375,14 @@ private fun ModeSwitcher(preview: Boolean, onPreviewChanged: (Boolean) -> Unit) 
     ) {
         ModeButton(
             label = stringResource(R.string.edit),
+            icon = R.drawable.ic_edit,
             selected = !preview,
             modifier = Modifier.weight(1f),
             onClick = { onPreviewChanged(false) },
         )
         ModeButton(
             label = stringResource(R.string.preview),
+            icon = R.drawable.ic_visibility,
             selected = preview,
             modifier = Modifier.weight(1f),
             onClick = { onPreviewChanged(true) },
@@ -307,7 +391,7 @@ private fun ModeSwitcher(preview: Boolean, onPreviewChanged: (Boolean) -> Unit) 
 }
 
 @Composable
-private fun ModeButton(label: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun ModeButton(label: String, icon: Int, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier.clickable(onClick = onClick)
             .background(
@@ -317,23 +401,35 @@ private fun ModeButton(label: String, selected: Boolean, modifier: Modifier, onC
             .padding(vertical = 9.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+        }
     }
 }
 
 @Composable
-private fun PlatformMarkdownEditor(text: String, onTextChanged: (String) -> Unit, modifier: Modifier = Modifier) {
-    val contentColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val backgroundColor = MaterialTheme.colorScheme.surface.toArgb()
+private fun PlatformMarkdownEditor(
+    text: String,
+    onTextChanged: (String) -> Unit,
+    editorSettings: EditorSettings,
+    modifier: Modifier = Modifier,
+) {
+    val darkMode = androidx.compose.foundation.isSystemInDarkTheme()
+    val contentColor = (if (darkMode) MiaoYanColors.EditorTextDark else MiaoYanColors.EditorTextLight).toArgb()
+    val backgroundColor =
+        (if (darkMode) MiaoYanColors.EditorBackgroundDark else MiaoYanColors.EditorBackgroundLight).toArgb()
     AndroidView(
         modifier = modifier,
         factory = { context ->
             EditText(context).apply {
                 gravity = Gravity.TOP or Gravity.START
-                setTextSize(17f)
-                typeface = android.graphics.Typeface.MONOSPACE
                 setPadding(20, 18, 20, 48)
                 setBackgroundColor(AndroidColor.TRANSPARENT)
+                includeFontPadding = false
                 setHorizontallyScrolling(false)
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -350,6 +446,10 @@ private fun PlatformMarkdownEditor(text: String, onTextChanged: (String) -> Unit
         update = { editor ->
             editor.setTextColor(contentColor)
             editor.setBackgroundColor(backgroundColor)
+            editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, editorSettings.fontSizeSp.toFloat())
+            editor.typeface = editorTypeface(editorSettings.font, editor)
+            editor.letterSpacing = 0.5f / editorSettings.fontSizeSp
+            editor.setLineSpacing(3f * editor.resources.displayMetrics.density, 1.3f)
             val composing = BaseInputConnection.getComposingSpanStart(editor.text) >= 0
             if (!composing && editor.text.toString() != text) {
                 val selection = editor.selectionStart.coerceIn(0, text.length)
@@ -364,12 +464,28 @@ private fun PlatformMarkdownEditor(text: String, onTextChanged: (String) -> Unit
 private fun MarkdownPreview(
     markdown: String,
     noteRelativePath: String?,
+    editorSettings: EditorSettings,
     modifier: Modifier = Modifier,
 ) {
     if (LocalInspectionMode.current) return
     val context = LocalContext.current
+    val resources = LocalResources.current
     val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
-    val html = remember(markdown, darkMode) { MarkdownRenderer.renderDocument(markdown, darkMode) }
+    var jetBrainsMonoData by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(resources) {
+        jetBrainsMonoData = withContext(Dispatchers.IO) {
+            loadJetBrainsMonoData(resources)
+        }
+    }
+    val html = remember(markdown, darkMode, editorSettings, jetBrainsMonoData) {
+        MarkdownRenderer.renderDocument(
+            markdown = markdown,
+            darkMode = darkMode,
+            font = editorSettings.font,
+            fontSizeSp = editorSettings.fontSizeSp,
+            jetBrainsMonoData = jetBrainsMonoData,
+        )
+    }
     val canonicalRoot = remember(context) { File(context.filesDir, "libraries/default") }
     val imageScope = remember(canonicalRoot, noteRelativePath) {
         noteRelativePath?.let { LocalImagePolicy.resolveNoteAssetScope(canonicalRoot, it) }
@@ -437,6 +553,208 @@ private fun blockedWebResourceResponse(): WebResourceResponse = WebResourceRespo
     mapOf("Cache-Control" to "no-store", "X-Content-Type-Options" to "nosniff"),
     java.io.ByteArrayInputStream(ByteArray(0)),
 )
+
+@Composable
+private fun SettingsScreen(
+    settings: EditorSettings,
+    onFontChanged: (EditorFont) -> Unit,
+    onFontSizeChanged: (Int) -> Unit,
+    onBack: () -> Unit,
+) {
+    var showLicense by remember { mutableStateOf(false) }
+    BackHandler(onBack = onBack)
+
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = stringResource(R.string.back))
+            }
+            Text(
+                stringResource(R.string.settings),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.appearance),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+                ) {
+                    SettingsInfoRow(
+                        icon = R.drawable.ic_theme_system,
+                        title = stringResource(R.string.system_theme),
+                        detail = stringResource(R.string.system_theme_detail),
+                    )
+                }
+            }
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.typography),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+                ) {
+                    SettingsDropdown(
+                        label = stringResource(R.string.font),
+                        selected = fontLabel(settings.font),
+                        options = EditorFont.entries.map { it to fontLabel(it) },
+                        onSelected = onFontChanged,
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingsDropdown(
+                        label = stringResource(R.string.font_size),
+                        selected = stringResource(R.string.font_size_value, settings.fontSizeSp),
+                        options = EDITOR_FONT_SIZES.map { it to stringResource(R.string.font_size_value, it) },
+                        onSelected = onFontSizeChanged,
+                    )
+                }
+            }
+            item {
+                Card(Modifier.fillMaxWidth().widthIn(max = 680.dp)) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            stringResource(R.string.typography_preview_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            stringResource(R.string.typography_preview_sample),
+                            fontFamily = composeFontFamily(settings.font),
+                            fontSize = settings.fontSizeSp.sp,
+                            lineHeight = (settings.fontSizeSp * 1.55f).sp,
+                        )
+                    }
+                }
+            }
+            item {
+                TextButton(onClick = { showLicense = true }) {
+                    Text(stringResource(R.string.jetbrains_mono_attribution))
+                }
+            }
+        }
+    }
+
+    if (showLicense) {
+        val resources = LocalResources.current
+        val license = remember(resources) {
+            resources.openRawResource(R.raw.jetbrains_mono_ofl).bufferedReader().use { it.readText() }
+        }
+        AlertDialog(
+            onDismissRequest = { showLicense = false },
+            title = { Text(stringResource(R.string.open_source_license)) },
+            text = {
+                Text(
+                    license,
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showLicense = false }) { Text(stringResource(R.string.close)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsSection(title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title,
+            modifier = Modifier.padding(start = 4.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Card { content() }
+    }
+}
+
+@Composable
+private fun SettingsInfoRow(icon: Int, title: String, detail: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(painterResource(icon), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun <T> SettingsDropdown(
+    label: String,
+    selected: String,
+    options: List<Pair<T, String>>,
+    onSelected: (T) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.fillMaxWidth().clickable { expanded = true }.padding(horizontal = 18.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+            Text(selected, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.size(4.dp))
+            Icon(painterResource(R.drawable.ic_arrow_drop_down), contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, title) ->
+                DropdownMenuItem(
+                    text = { Text(title) },
+                    onClick = {
+                        expanded = false
+                        onSelected(value)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun fontLabel(font: EditorFont): String = when (font) {
+    EditorFont.SYSTEM_SANS -> stringResource(R.string.font_system_sans)
+    EditorFont.SYSTEM_SERIF -> stringResource(R.string.font_system_serif)
+    EditorFont.SYSTEM_MONOSPACE -> stringResource(R.string.font_system_monospace)
+    EditorFont.JETBRAINS_MONO -> stringResource(R.string.font_jetbrains_mono)
+}
+
+private fun composeFontFamily(font: EditorFont): FontFamily = when (font) {
+    EditorFont.SYSTEM_SANS -> FontFamily.SansSerif
+    EditorFont.SYSTEM_SERIF -> FontFamily.Serif
+    EditorFont.SYSTEM_MONOSPACE -> FontFamily.Monospace
+    EditorFont.JETBRAINS_MONO -> JetBrainsMonoFamily
+}
+
+private fun editorTypeface(font: EditorFont, editor: EditText): Typeface = when (font) {
+    EditorFont.SYSTEM_SANS -> Typeface.create("sans-serif", Typeface.NORMAL)
+    EditorFont.SYSTEM_SERIF -> Typeface.create("serif", Typeface.NORMAL)
+    EditorFont.SYSTEM_MONOSPACE -> Typeface.create("monospace", Typeface.NORMAL)
+    EditorFont.JETBRAINS_MONO -> editor.resources.getFont(R.font.jetbrains_mono_regular)
+}
+
+@SuppressLint("ResourceType")
+private fun loadJetBrainsMonoData(resources: Resources): String =
+    // Font resources are compiled file resources and can be opened as streams; lint's
+    // resource annotation only lists R.raw even though Resources supports both here.
+    resources.openRawResource(R.font.jetbrains_mono_regular).use { input ->
+        Base64.encodeToString(input.readBytes(), Base64.NO_WRAP)
+    }
 
 @Composable
 private fun LoadingOverlay(label: String) {

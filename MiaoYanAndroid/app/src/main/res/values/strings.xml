@@ -16,4 +16,21 @@
     <string name="unsaved_title">Discard unsaved changes?</string>
     <string name="unsaved_message">The note changed in the editor and has not been saved to the library.</string>
     <string name="loading">Loading library…</string>
+    <string name="settings">Settings</string>
+    <string name="appearance">Appearance</string>
+    <string name="system_theme">Follow system</string>
+    <string name="system_theme_detail">Light and dark appearance changes with Android.</string>
+    <string name="typography">Typography</string>
+    <string name="font">Font</string>
+    <string name="font_size">Text size</string>
+    <string name="font_size_value">%1$d sp</string>
+    <string name="font_system_sans">System sans</string>
+    <string name="font_system_serif">System serif</string>
+    <string name="font_system_monospace">System monospace</string>
+    <string name="font_jetbrains_mono">JetBrains Mono</string>
+    <string name="typography_preview_title">Editor and preview</string>
+    <string name="typography_preview_sample">Markdown should feel calm, readable, and precise. 你好，世界。</string>
+    <string name="jetbrains_mono_attribution">JetBrains Mono 2.304 · SIL Open Font License 1.1</string>
+    <string name="open_source_license">JetBrains Mono license</string>
+    <string name="close">Close</string>
 </resources>

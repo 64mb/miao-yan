@@ -1,0 +1,11 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Android uses the alpha of the existing bird artwork as the themed-icon mask. -->
+    <item
+        android:width="72dp"
+        android:height="68dp"
+        android:gravity="center">
+        <bitmap
+            android:gravity="fill"
+            android:src="@drawable/miaoyan_brand_mark" />
+    </item>
+</layer-list>

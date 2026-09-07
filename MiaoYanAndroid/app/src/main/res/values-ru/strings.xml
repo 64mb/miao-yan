@@ -16,4 +16,21 @@
     <string name="unsaved_title">Отменить несохранённые изменения?</string>
     <string name="unsaved_message">Текст в редакторе изменён и ещё не сохранён в библиотеку.</string>
     <string name="loading">Загрузка библиотеки…</string>
+    <string name="settings">Настройки</string>
+    <string name="appearance">Оформление</string>
+    <string name="system_theme">Как в системе</string>
+    <string name="system_theme_detail">Светлое и тёмное оформление переключается вместе с Android.</string>
+    <string name="typography">Типографика</string>
+    <string name="font">Шрифт</string>
+    <string name="font_size">Размер текста</string>
+    <string name="font_size_value">%1$d sp</string>
+    <string name="font_system_sans">Системный гротеск</string>
+    <string name="font_system_serif">Системная антиква</string>
+    <string name="font_system_monospace">Системный моноширинный</string>
+    <string name="font_jetbrains_mono">JetBrains Mono</string>
+    <string name="typography_preview_title">Редактор и просмотр</string>
+    <string name="typography_preview_sample">Markdown должен выглядеть спокойно, разборчиво и точно. 你好，世界。</string>
+    <string name="jetbrains_mono_attribution">JetBrains Mono 2.304 · SIL Open Font License 1.1</string>
+    <string name="open_source_license">Лицензия JetBrains Mono</string>
+    <string name="close">Закрыть</string>
 </resources>

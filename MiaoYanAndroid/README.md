@@ -16,8 +16,24 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
    markup stays inert; the shared policy requires user activation and a sandbox for future iframe
    embedding.
 6. Save only if the document hash still matches the opened version, then verify the written bytes.
+7. Follow the Android system light/dark appearance and keep editor/preview typography in local DataStore settings.
 
 There is no broad storage permission and no network permission.
+
+## Visual source of truth
+
+The Android palette is copied from the macOS resources rather than approximated from a generic Material theme:
+
+| Surface | Light | Dark |
+| --- | --- | --- |
+| Editor background (`mainBackground.colorset`) | `#FFFFFF` | `#23282D` |
+| Editor text (`Theme.textColor`) | black at `216/255` alpha | white at `216/255` alpha |
+| Markdown preview background/text | `#FFFFFF` / `#262626` | `#23282D` / `#E7E9EA` |
+| Preview secondary/link/border/code | `#777777` / `#0C6ADA` / `#E6E6E6` / `#F7F7F7` | `#ABB2BF` / `#1D9BF0` / `#454545` / `#282E33` |
+
+`Theme.textColor` is `NSColor.labelColor` in the default system appearance; on the two editor backgrounds it composites to approximately `#272727` and `#DDDEDF`. The storyboard fallback `mainText.colorset` is `#262626` / `#E8E8EB`, but the Markdown formatter uses `Theme.textColor` at runtime.
+
+The macOS defaults in `FontConfiguration.swift` are PingFang SC Regular for editor, interface, and preview, Menlo for code, with 16 pt editor/preview text. Those Apple fonts are not redistributed. Android defaults to the platform sans stack (Roboto with the device's Noto/CJK fallbacks), uses platform serif/monospace as optional system choices, and bundles JetBrains Mono 2.304 as the only font file. JetBrains Mono is distributed unchanged under SIL Open Font License 1.1; the full license is bundled at `app/src/main/res/raw/jetbrains_mono_ofl.txt` and is readable from Settings.
 
 ## Build
 
