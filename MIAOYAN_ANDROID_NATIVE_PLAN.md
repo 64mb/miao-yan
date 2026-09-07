@@ -4,7 +4,7 @@
 
 Статус: research завершён; первый исполняемый SAF/editor/preview-прототип находится в `MiaoYanAndroid/`.
 
-Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библиотека через SAF, рекурсивный список и поиск заметок, безопасное UTF-8 редактирование с защитой IME composition, fail-closed сохранение по hash и ограниченный Markdown preview без JavaScript/raw HTML. Прототип собран и проверен на native AVD; production cmark-gfm, attachments, Room, Git и AI остаются следующими этапами.
+Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библиотека через SAF, рекурсивный список и поиск заметок, безопасное UTF-8 редактирование с защитой IME composition, fail-closed сохранение по hash и ограниченный Markdown preview без JavaScript/raw HTML. Прототип собран и проверен на native AVD; production cmark-gfm, attachments, Room и Git входят в следующие этапы. AI для Android исключён.
 
 ## 1. Scope и принятые ограничения
 
@@ -16,14 +16,17 @@ Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библ
 - одна выбранная корневая папка библиотеки;
 - вложенные папки и заметки `.md`, `.markdown`, `.txt`;
 - чтение, редактирование, preview, поиск, изображения и Trash;
-- ручная Git-синхронизация по HTTPS;
+- Git-синхронизация по HTTPS вручную и opt-in автоматически каждые 15 минут;
 - только `origin/main`;
 - авторизация Git: username + PAT;
 - максимальный размер добавляемого или изменяемого вложения — 25 MiB;
 - пользовательские метаданные, Git-служебные данные и секреты остаются локальными;
-- CI/CD пока не входит в scope.
+- CI/CD пока не входит в scope;
+- Android AI conflict resolver не входит в scope и не планируется в текущем goal;
+- системная light/dark theme, app/action icons и визуальный parity с macOS для editor/preview;
+- локальные настройки шрифта и размера: небольшой лицензируемый набор и не более 10 фиксированных размеров.
 
-AI conflict resolver и фоновая синхронизация — следующая фаза после безопасного ручного Git MVP.
+Ручной и 15-минутный автоматический sync входят в один Git MVP. Pin/favorite и остальные UI metadata остаются device-local, как на macOS.
 
 ## 2. Главный архитектурный вывод
 
@@ -61,11 +64,12 @@ filesDir/git/<library-id>/worktree — приватный Git mirror
 | Состояние | ViewModel + coroutines + Flow/StateFlow, UDF |
 | Настройки | Preferences DataStore 1.2.1 |
 | Индекс | Room, только stable channel |
-| Фоновые задачи | WorkManager, не используется в manual-sync MVP |
+| Фоновые задачи | WorkManager: opt-in periodic Git sync, минимум 15 минут |
 | Markdown | cmark-gfm 0.29.0.gfm.13 через узкий JNI API |
 | Git | libgit2 1.9.7 через узкий JNI API |
 | Preview | Android WebView + `WebViewAssetLoader` |
 | Секреты | Android Keystore + AES-256-GCM blobs в `noBackupFilesDir` |
+| Шрифты | системные equivalents; JetBrains Mono как bundled open alternative с license attribution |
 | DI | ручная constructor injection на MVP |
 
 Версии нельзя задавать динамически. Перед началом реализации нужно повторно проверить совместимость AGP/Kotlin/Compose BOM и pin-ить конкретные версии в version catalog.
@@ -212,11 +216,11 @@ WebView использует `https://appassets.androidplatform.net` через 
 
 Asset handler декодирует путь один раз и отклоняет `..`, backslash, encoded slash, absolute path, `file:`, произвольный `content:` и выход за root.
 
-Рекомендованная MVP-политика raw HTML:
+Текущая MVP-политика raw HTML:
 
 - базовые HTML-теги разрешены;
 - `<script>` из заметки не выполняется;
-- iframe заменяется placeholder с действием «Открыть внешне»;
+- iframe не загружается автоматически; окончательный UX между click-to-load в жёстком sandbox и внешним браузером требует продуктового подтверждения;
 - встроенные scripts приложения получают случайный CSP nonce;
 - `connect-src`, `object-src` и `frame-src` запрещены.
 
@@ -226,7 +230,7 @@ Golden corpus должен прогоняться через Swift и Android re
 
 Git работает только с приватным mirror. SAF нельзя checkout-ить напрямую.
 
-Ручная sync-транзакция:
+Sync-транзакция, общая для ручного и фонового запуска:
 
 1. Захватить library mutation lock.
 2. Flush активного editor и pending saves.
@@ -242,6 +246,8 @@ Git работает только с приватным mirror. SAF нельзя
 12. Обновить Room/UI.
 13. Push `refs/heads/main:refs/heads/main`.
 14. Освободить lock.
+
+Ручной запуск доступен из UI. Автоматический запуск — отдельный opt-in toggle с периодом 15 минут через WorkManager, только при наличии сети и валидной конфигурации. Период Android является inexact: Doze и battery policy могут отложить фактический запуск. Повторный запуск не пересекается с активной sync/mutation operation.
 
 Сетевые ограничения:
 
@@ -267,33 +273,23 @@ Git работает только с приватным mirror. SAF нельзя
 - merge сначала выполняется в in-memory index;
 - conflict markers не попадают ни в SAF, ни в live mirror worktree;
 - показываются путь, local timestamp и remote timestamp;
-- для текста доступны `Use Local`, `Use Remote`, опционально `Resolve with AI`;
+- для текста доступны только `Use Local` и `Use Remote`;
 - для binary доступны только local/remote;
 - после ожидания проверяются commit OID и актуальный SAF hash;
 - resolved merge commit имеет двух родителей;
 - отдельного 3-way UI/resolver нет.
 
-AI resolver:
-
-- включается отдельным checkbox;
-- настройки: HTTPS endpoint, model name, API key, editable prompt;
-- отправляются path, BASE, LOCAL, REMOTE;
-- вызов выполняется только после явного действия пользователя;
-- redirect запрещён, timeout 60 секунд, response limit 4 MiB;
-- ответ показывается как diff и применяется только после подтверждения;
-- prompt требует сохранить frontmatter, wikilinks, attachment paths, code, math, Mermaid, PlantUML, raw HTML и slide separators;
-- экран явно предупреждает, что содержимое конфликта будет отправлено пользовательскому endpoint.
+AI resolver на Android отсутствует: нет checkbox, endpoint/model/key/prompt и сетевой отправки содержимого заметок AI-провайдеру.
 
 ## 10. Секреты и backup
 
-Создать неэкспортируемый AES-256-GCM key в Android Keystore. PAT и AI API key хранить отдельными encrypted blobs в `noBackupFilesDir`. Ключ идентификации PAT — нормализованный HTTPS remote URL.
+Создать неэкспортируемый AES-256-GCM key в Android Keystore. PAT хранить как encrypted blob в `noBackupFilesDir`. Ключ идентификации PAT — нормализованный HTTPS remote URL.
 
 DataStore хранит только несекретные настройки:
 
 - library tree URI;
 - remote URL;
 - author name/email;
-- AI endpoint/model/prompt;
 - sync/UI preferences.
 
 Из Auto Backup исключаются secrets, Git mirror, `.git`, recovery/conflict journals, Room index и local version history. Иначе после restore возможны ciphertext без исходного Keystore key и рассинхронизированный Git/SAF state.
@@ -311,7 +307,7 @@ JVM unit tests:
 - remote URL normalization;
 - buffer-owner/generation guard;
 - wikilinks и duplicate titles;
-- conflict classification и AI response validation;
+- conflict classification и local/remote resolution validation;
 - recovery journal state machine.
 
 Instrumented fake `DocumentsProvider` должен моделировать:
@@ -372,19 +368,21 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 - Trash/restore;
 - local history и external-change conflicts.
 
-### Phase 3 — manual Git MVP, 3–5 недель
+### Phase 3 — manual + periodic Git MVP, 3–5 недель
 
 - private mirror и import/apply journal;
 - Keystore PAT;
 - `origin/main`, path policy, 25 MiB;
 - commit/fetch/merge/apply/push;
 - recovery ref;
-- local/remote conflict UI.
+- local/remote conflict UI;
+- ручная кнопка Sync и opt-in WorkManager каждые 15 минут.
 
-### Phase 4 — AI и background, 2–3 недели
+### Phase 4 — visual/settings и platform polish, 2–3 недели
 
-- AI conflict proposal + diff acceptance;
-- opt-in WorkManager sync;
+- adaptive app/action icons;
+- системная light/dark theme и macOS color parity;
+- лицензируемые bundled fonts и локальный font/size picker (до 10 размеров);
 - adaptive tablet layout;
 - diagnostics/polishing.
 
@@ -402,15 +400,12 @@ Instrumented fake `DocumentsProvider` должен моделировать:
 
 Ниже не абстрактная «семантика», а решения, меняющие контракт.
 
-1. Raw HTML: принимаем безопасное отличие от macOS — HTML разрешён, но scripts не выполняются, iframe открывается внешне? Рекомендация: да.
-2. Remote media: загружать внешние images/video автоматически или только по нажатию? Рекомендация: блокировать по умолчанию ради privacy.
-3. PlantUML: локальный renderer, пользовательский endpoint или не включать в MVP? Рекомендация: не включать в MVP, пока нет локального renderer.
-4. Background sync: manual-only MVP или сразу periodic? Рекомендация: manual-only, background позже и только opt-in.
-5. Pin/favorite: допустимо ли оставить только на конкретном Android-устройстве? Рекомендация: да, согласно правилу «метаданные локальные».
-6. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
-7. Restore из Trash: возвращать в исходную папку через локальный manifest или всегда в root? Рекомендация: manifest + исходная папка, fallback в root.
-8. Git author identity: какие default name/email показывать до первого push? Рекомендация: обязательные поля без скрытых фиктивных значений.
-9. AI privacy: достаточно ли disclosure непосредственно перед первым AI resolve и ссылки в Settings? Рекомендация: оба места плюс явное подтверждение первого вызова.
+1. Iframe: после явного нажатия загружать внутри preview в жёстком sandbox без scripts/forms/popups/top-navigation или открывать системный браузер?
+2. PlantUML: локальный renderer, пользовательский endpoint или не включать в MVP? Рекомендация: не включать в MVP, пока нет локального renderer.
+3. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
+4. Git author identity: какие default name/email показывать до первого push? Рекомендация: обязательные поля без скрытых фиктивных значений.
+
+Уже решено: remote media загружается только по нажатию; Git имеет ручной и opt-in 15-минутный запуск; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
 
 ## 14. Решение о старте
 
