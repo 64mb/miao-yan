@@ -26,6 +26,8 @@ Checkpoint прототипа: Android 15+ (`minSdk 35`), одна root-библ
 - системная light/dark theme, app/action icons и визуальный parity с macOS для editor/preview;
 - локальные настройки шрифта и размера: небольшой лицензируемый набор и не более 10 фиксированных размеров.
 - SAF используется только для явного импорта из выбранной пользователем папки и экспорта в неё; импортированная папка не становится live-library.
+- отдельные toolbar actions: Typesetting, полноэкранный непрерывный Preview со значком видеокамеры как на macOS и послайдовый Presentation;
+- телефонный single-pane и планшетный adaptive two-pane layout; multi-window не считается полноэкранным режимом.
 
 Ручной и 15-минутный автоматический sync входят в один Git MVP. Pin/favorite и остальные UI metadata остаются device-local, как на macOS.
 
@@ -85,6 +87,7 @@ MiaoYanAndroid/
 ├── feature/library     папки, список заметок, поиск, recent
 ├── feature/reader      Markdown preview
 ├── feature/editor      editor, highlighting, attachments
+├── feature/presentation fullscreen preview и Reveal.js slides
 ├── feature/sync        Git settings, progress, conflicts
 ├── core/model          platform-neutral domain models
 ├── core/data           app-private filesystem repository, Room index, SAF import/export
@@ -170,6 +173,7 @@ Compose используется для экранов, но редактор MV
 - smart quotes/dashes и изменения, способные переписать Markdown, отключены;
 - подсветка пересчитывается по изменённому абзацу, глобальный fence pass — только когда он нужен;
 - вставка изображения копирует файл в соседний `i/`, затем вставляет `/i/<name>`;
+- Typesetting повторяет macOS-действие над текущим owner-buffer: форматирует Markdown локально, сохраняет protected code/math/raw-HTML regions и применяет результат только если note ID/revision не изменились;
 - autosave несёт `ownerNoteId`, buffer revision и expected file generation;
 - несовпадение owner, исчезновение файла или внешнее изменение приводит к fail-closed, а не overwrite.
 
@@ -222,6 +226,17 @@ Asset handler декодирует путь один раз и отклоняе�
 - `connect-src`, `object-src` и `frame-src` запрещены.
 
 Golden corpus должен прогоняться через Swift и Android renderers; сравнивается нормализованный HTML fragment, а не platform shell.
+
+### Fullscreen и Presentation Mode
+
+Это два разных режима и две разные кнопки. Значок видеокамеры означает режим просмотра, а не доступ к hardware camera:
+
+- Fullscreen Preview (иконка видеокамеры, как на macOS) показывает текущий обычный cmark-gfm document единой непрерывной прокручиваемой простынёй, скрывает app chrome и системные bars через актуальные WindowInsets APIs, возвращается по Back/gesture и не меняет текст;
+- Slide Presentation делит документ по отдельным строкам `---`, создаёт Reveal.js sections, использует только bundled/pinned Reveal.js и локальные `/i/` assets, поддерживает swipe/keyboard navigation и сохраняет номер текущего слайда;
+- приложение не запрашивает `CAMERA` permission и не подключает CameraX/media-capture API;
+- note-provided JavaScript не выполняется ни в одном режиме; Reveal.js запускается только как доверенный bundled script под nonce/CSP;
+- rotation/configuration change и уход приложения в background сохраняют текущий режим/slide, но не удерживают Activity;
+- на планшете основной экран использует list-detail/two-pane layout, а оба presentation-режима занимают всё доступное окно; Android multi-window остаётся поддержан и не форсируется в системный fullscreen.
 
 ## 9. Git sync на Android
 
@@ -319,6 +334,8 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 Отдельные suites:
 
 - WebView CSP, traversal, external navigation и отсутствие horizontal page scroll;
+- fullscreen enter/exit, Back, rotation, tablet two-pane и Reveal.js slide navigation;
+- Typesetting owner/revision guard и protected Markdown regions;
 - Gboard, Chinese Pinyin, Japanese и Korean IME;
 - 1 MiB / 5000 lines / 64 KiB paragraph benchmarks;
 - Git initial push/pull, fast-forward, clean merge, text/binary conflicts, delete/modify, unrelated histories, push rejection, concurrent local edit и crash на каждом filesystem transition;
@@ -360,6 +377,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - CJK composition guards;
 - autosave с owner/hash generation;
 - image paste, `i/`, `files/`;
+- Typesetting action;
 - Trash/restore;
 - local history и external-change conflicts.
 
@@ -378,7 +396,8 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - adaptive app/action icons;
 - системная light/dark theme и macOS color parity;
 - лицензируемые bundled fonts и локальный font/size picker (до 10 размеров);
-- adaptive tablet layout;
+- adaptive tablet two-pane layout и корректный multi-window;
+- отдельные fullscreen continuous Preview и Reveal.js slide Presentation modes;
 - diagnostics/polishing.
 
 ### Phase 5 — beta hardening, около 2 недель
