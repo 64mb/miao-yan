@@ -25,7 +25,7 @@ object GitSyncScheduler {
         }
         val request = PeriodicWorkRequestBuilder<GitSyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(networkConstraint)
-            .setInputData(workDataOf(GitSyncWorker.AutomaticInputKey to true))
+            .setInputData(workDataOf(GitSyncWorker.TriggerInputKey to GitSyncTrigger.Periodic.serialized))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         manager.enqueueUniquePeriodicWork(PeriodicWorkName, ExistingPeriodicWorkPolicy.UPDATE, request)
@@ -34,7 +34,7 @@ object GitSyncScheduler {
     fun enqueueBackground(context: Context) {
         val request = OneTimeWorkRequestBuilder<GitSyncWorker>()
             .setConstraints(networkConstraint)
-            .setInputData(workDataOf(GitSyncWorker.AutomaticInputKey to true))
+            .setInputData(workDataOf(GitSyncWorker.TriggerInputKey to GitSyncTrigger.AppBackground.serialized))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
         WorkManager.getInstance(context).enqueueUniqueWork(
