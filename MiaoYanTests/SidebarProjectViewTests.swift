@@ -19,6 +19,52 @@ final class SidebarProjectViewTests: XCTestCase {
     }
 
     @MainActor
+    func testCompletingProjectRenameRetiresTheFieldEditor() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let outlineView = SidebarProjectView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = outlineView
+        let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 180, height: 32))
+        let label = NSTextField(frame: cell.bounds)
+        label.isEditable = true
+        label.isSelectable = true
+        cell.addSubview(label)
+        outlineView.addSubview(cell)
+
+        XCTAssertTrue(window.makeFirstResponder(label))
+        XCTAssertNotNil(label.currentEditor())
+
+        cell.projectName(label)
+
+        XCTAssertNil(label.currentEditor())
+        XCTAssertFalse(window.firstResponder is NSTextView)
+    }
+
+    @MainActor
+    func testProjectRenameFieldFitsItsContentAndKeepsTrailingPadding() {
+        let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 360, height: 40))
+        let label = NSTextField(labelWithString: "Ideas")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(label)
+        cell.label = label
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 28),
+            cell.trailingAnchor.constraint(equalTo: label.trailingAnchor, constant: 12),
+            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        cell.layoutSubtreeIfNeeded()
+
+        cell.beginProjectNameEditing()
+
+        XCTAssertLessThanOrEqual(label.frame.width, 220.5)
+        XCTAssertGreaterThanOrEqual(cell.bounds.maxX - label.frame.maxX, 11.5)
+    }
+
+    @MainActor
     func testSearchFieldPlaceholderAndEditorRectsShareVerticalCenterInLightAndDarkAppearances() throws {
         let cell = SearchFieldCell()
         let bounds = NSRect(x: 0, y: 0, width: 240, height: SearchFieldCell.height)

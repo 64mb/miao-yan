@@ -57,7 +57,10 @@ final class SidebarLabelCell: NSTextFieldCell {
 @MainActor
 class SidebarCellView: NSTableCellView {
     private enum LayoutConstants {
-        static let trailingPadding: CGFloat = 6
+        static let trailingPadding: CGFloat = 12
+        static let minimumRenameWidth: CGFloat = 96
+        static let maximumRenameWidth: CGFloat = 220
+        static let renameHorizontalPadding: CGFloat = 16
     }
 
     @IBOutlet var icon: NSImageView!
@@ -117,11 +120,45 @@ class SidebarCellView: NSTableCellView {
     private func updatePreferredLabelWidth() {
         guard let label else { return }
 
-        let availableWidth = max(0, bounds.width - label.frame.minX - LayoutConstants.trailingPadding)
+        let availableWidth = max(0, label.bounds.width)
         guard abs(label.preferredMaxLayoutWidth - availableWidth) > 0.5 else { return }
 
         label.preferredMaxLayoutWidth = availableWidth
         label.invalidateIntrinsicContentSize()
+    }
+
+    func beginProjectNameEditing() {
+        layoutSubtreeIfNeeded()
+
+        let availableWidth = max(0, bounds.width - label.frame.minX - LayoutConstants.trailingPadding)
+        let contentWidth = ceil(label.attributedStringValue.size().width) + LayoutConstants.renameHorizontalPadding
+        let preferredWidth = min(
+            max(contentWidth, min(LayoutConstants.minimumRenameWidth, availableWidth)),
+            min(LayoutConstants.maximumRenameWidth, availableWidth)
+        )
+        let trailingPadding = max(
+            LayoutConstants.trailingPadding,
+            bounds.width - label.frame.minX - preferredWidth
+        )
+        updateLabelTrailingPadding(trailingPadding)
+        layoutSubtreeIfNeeded()
+
+        label.isEditable = true
+        label.isSelectable = true
+        window?.makeFirstResponder(label)
+    }
+
+    private func updateLabelTrailingPadding(_ padding: CGFloat) {
+        guard
+            let trailingConstraint = constraints.first(where: {
+                ($0.firstItem as? NSView) === self
+                    && $0.firstAttribute == .trailing
+                    && ($0.secondItem as? NSView) === label
+                    && $0.secondAttribute == .trailing
+            })
+        else { return }
+
+        trailingConstraint.constant = padding
     }
 
     private var trackingArea: NSTrackingArea?
@@ -140,8 +177,7 @@ class SidebarCellView: NSTableCellView {
 
     @IBAction func projectName(_ sender: NSTextField) {
         defer {
-            sender.isEditable = false
-            sender.isSelectable = false
+            finishProjectNameEditing(sender)
         }
 
         let cell = sender.superview as? SidebarCellView
@@ -175,6 +211,27 @@ class SidebarCellView: NSTableCellView {
         vc.storage.removeBy(project: project)
         vc.storage.loadLabel(project)
         vc.updateTable()
+    }
+
+    private func finishProjectNameEditing(_ sender: NSTextField) {
+        let displayName = sender.stringValue
+        sender.abortEditing()
+        sender.stringValue = displayName
+        sender.isEditable = false
+        sender.isSelectable = false
+        updateLabelTrailingPadding(LayoutConstants.trailingPadding)
+        layoutSubtreeIfNeeded()
+
+        guard let window = sender.window else { return }
+
+        var ancestor: NSView? = self
+        while let view = ancestor {
+            if let outlineView = view as? SidebarProjectView {
+                window.makeFirstResponder(outlineView)
+                return
+            }
+            ancestor = view.superview
+        }
     }
 
     @IBAction func add(_ sender: Any) {
