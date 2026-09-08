@@ -1,11 +1,11 @@
-# V4.2.1 Gore Magala 🌊
+# V4.2.2 Nargacuga 🔥
 
-1. macOS 的幻灯片演示按钮改为与编辑器工具栏一致的轻量轮廓图标
-2. Android 原型版本更新至 0.1.1，可直接覆盖安装上一版原型
-3. 基于已合并的 Git 同步代码重新构建 macOS 与 Android 安装包，并提供新的 SHA-256 校验值
+1. macOS 与 Android 现在使用同一套可恢复回收站格式，删除的笔记会随 Git 安全同步
+2. macOS 支持接收、恢复和永久删除来自同步回收站的笔记，包括 Unicode 文件名与原始嵌套路径
+3. Android 编辑器恢复原生惯性滚动，并修正回收站清单未进入 Git 同步的问题
 
 ---
 
-1. The macOS slide-presentation action now uses a lightweight outline icon consistent with the editor toolbar
-2. The Android prototype is updated to 0.1.1 and can be installed directly over the previous prototype
-3. macOS and Android packages are rebuilt from the merged Git sync source with fresh SHA-256 checksums
+1. macOS and Android now share one recoverable Trash format so deleted notes sync safely through Git
+2. macOS can receive, restore, and permanently delete synced Trash notes, including Unicode names and original nested paths
+3. The Android editor restores native inertial scrolling and now includes its Trash manifest in Git sync
