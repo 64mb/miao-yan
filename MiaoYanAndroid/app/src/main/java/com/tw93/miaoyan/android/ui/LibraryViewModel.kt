@@ -207,8 +207,8 @@ class LibraryViewModel @JvmOverloads constructor(
                             loading = false,
                             formatting = false,
                             draftRevision = nextDraftRevision(),
-                            selectionStart = opened.text.length,
-                            selectionEnd = opened.text.length,
+                            selectionStart = 0,
+                            selectionEnd = 0,
                         )
                     }
                 }
@@ -283,8 +283,8 @@ class LibraryViewModel @JvmOverloads constructor(
                             formatting = false,
                             draftRevision = nextDraftRevision(),
                             mutating = false,
-                            selectionStart = opened.text.length,
-                            selectionEnd = opened.text.length,
+                            selectionStart = 0,
+                            selectionEnd = 0,
                         )
                     }
                     refreshSearch()

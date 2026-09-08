@@ -7,6 +7,8 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
 import android.view.inputmethod.BaseInputConnection
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -1215,6 +1217,11 @@ private fun PlatformMarkdownEditor(
                 setBackgroundColor(AndroidColor.TRANSPARENT)
                 includeFontPadding = false
                 setHorizontallyScrolling(false)
+                verticalScrollbarThumbDrawable = context.getDrawable(R.drawable.editor_scrollbar_thumb)
+                isVerticalScrollBarEnabled = true
+                isScrollbarFadingEnabled = false
+                scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                     android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -1303,9 +1310,22 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
         pendingHighlightEnd = maxOf(pendingHighlightEnd ?: end, end)
     }
 
-    fun scheduleSyntaxHighlight() {
+    fun scheduleSyntaxHighlight(delayMillis: Long = SYNTAX_HIGHLIGHT_DELAY_MILLIS) {
         removeCallbacks(syntaxHighlightRunnable)
-        postDelayed(syntaxHighlightRunnable, SYNTAX_HIGHLIGHT_DELAY_MILLIS)
+        postDelayed(syntaxHighlightRunnable, delayMillis)
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> scheduleSyntaxHighlight(SCROLL_IDLE_HIGHLIGHT_DELAY_MILLIS)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> scheduleSyntaxHighlight()
+        }
+        return super.onTouchEvent(event)
+    }
+
+    override fun onScrollChanged(left: Int, top: Int, oldLeft: Int, oldTop: Int) {
+        super.onScrollChanged(left, top, oldLeft, oldTop)
+        if (top != oldTop) scheduleSyntaxHighlight(SCROLL_IDLE_HIGHLIGHT_DELAY_MILLIS)
     }
 
     override fun onSelectionChanged(selectionStart: Int, selectionEnd: Int) {
@@ -1331,6 +1351,7 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
 
     private companion object {
         const val SYNTAX_HIGHLIGHT_DELAY_MILLIS = 32L
+        const val SCROLL_IDLE_HIGHLIGHT_DELAY_MILLIS = 140L
     }
 }
 
