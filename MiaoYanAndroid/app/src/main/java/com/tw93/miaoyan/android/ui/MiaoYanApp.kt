@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -833,14 +834,6 @@ private fun NoteRow(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (pinned) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_push_pin),
-                        contentDescription = stringResource(R.string.pinned),
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
                 val folder = note.relativePath.substringBeforeLast('/', missingDelimiterValue = "")
                 if (folder.isNotEmpty()) {
                     Text(
@@ -855,6 +848,16 @@ private fun NoteRow(
                             .format(Date(note.modifiedAtMillis)),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (pinned) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_push_pin),
+                        contentDescription = stringResource(R.string.pinned),
+                        modifier = Modifier
+                            .size(13.dp)
+                            .offset(y = (-1).dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

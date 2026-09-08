@@ -586,6 +586,30 @@ final class GitRepositoryClientTests: XCTestCase {
         )
     }
 
+    func testUntrackLeavesFinderMetadataInWorkingTree() async throws {
+        let repositoryURL = temporaryDirectory.appendingPathComponent("untrack-ds-store", isDirectory: true)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        let client = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await client.prepareRepository(at: repositoryURL, remoteURL: temporaryDirectory)
+
+        let metadataURL = repositoryURL.appendingPathComponent(".DS_Store")
+        try Data([1, 2, 3]).write(to: metadataURL)
+        try await client.stage(relativePaths: [".DS_Store"], in: repositoryURL)
+        let committed = try await commit(client, at: repositoryURL, message: "Track Finder metadata")
+        XCTAssertTrue(committed)
+
+        try await client.untrack(relativePaths: [".DS_Store"], in: repositoryURL)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: metadataURL.path))
+        let trackedEntries = try await client.trackedEntries(in: repositoryURL)
+        let stagedChanges = try await client.stagedChanges(in: repositoryURL)
+        XCTAssertTrue(trackedEntries.isEmpty)
+        XCTAssertEqual(
+            stagedChanges,
+            [GitSyncChange(kind: .deleted, path: ".DS_Store")]
+        )
+    }
+
     func testTrackedEntriesPreserveSymlinkModeForAllowlistValidation() async throws {
         let repositoryURL = temporaryDirectory.appendingPathComponent("tracked-symlink", isDirectory: true)
         try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)

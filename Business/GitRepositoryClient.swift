@@ -183,6 +183,26 @@ actor GitRepositoryClient {
         try Self.check(git_index_write(index), operation: "index write")
     }
 
+    /// Removes ignored paths from the index while leaving their local Finder
+    /// metadata untouched. Future `.DS_Store` files remain untracked.
+    func untrack(relativePaths: [String], in repositoryURL: URL) throws {
+        let paths = try relativePaths.map(Self.validatedRelativePath)
+        let repository = try Self.openRepository(at: repositoryURL)
+        defer { git_repository_free(repository) }
+
+        var index: OpaquePointer?
+        try Self.check(git_repository_index(&index, repository), operation: "index open")
+        defer { git_index_free(index) }
+
+        for path in paths {
+            let result = git_index_remove_bypath(index, path)
+            if result != 0, result != GIT_ENOTFOUND.rawValue {
+                try Self.check(result, operation: "untrack \(path)")
+            }
+        }
+        try Self.check(git_index_write(index), operation: "index write")
+    }
+
     func trackedEntries(in repositoryURL: URL) throws -> [GitSyncChange] {
         let repository = try Self.openRepository(at: repositoryURL)
         defer { git_repository_free(repository) }

@@ -56,6 +56,14 @@ final class GitSyncFoundationTests: XCTestCase {
         assertRejected(".gitattributes", reason: .hiddenPath)
     }
 
+    func testIgnoresFinderMetadataAtAnyLibraryDepth() {
+        XCTAssertEqual(policy.classify(relativePath: ".DS_Store"), .ignored)
+        XCTAssertEqual(policy.classify(relativePath: "Notes/.DS_Store"), .ignored)
+        XCTAssertEqual(policy.classify(relativePath: ".Trash/.DS_Store"), .ignored)
+        XCTAssertTrue(
+            policy.violations(for: [GitSyncChange(kind: .added, path: "Notes/.DS_Store")]).isEmpty)
+    }
+
     func testRejectsAbsoluteTraversalMalformedAndTrashPaths() {
         assertRejected("/tmp/note.md", reason: .absolutePath)
         assertRejected("~/note.md", reason: .absolutePath)
