@@ -205,7 +205,6 @@ class ViewController:
             applyToolbarButtonState(presentationButton, isActive: sessionPresentationMode, activeTint: Theme.accentColor, inactiveTint: Theme.inactiveIconColor)
         }
     }
-    var magicPPTButton: NSButton?
 
     // Cache menu item references to avoid repeated menu tree traversals
     private func cacheMenuItems() {
@@ -401,13 +400,10 @@ class ViewController:
         let inactive = Theme.inactiveIconColor
 
         // Toolbar Buttons (Unified Grey in all modes unless active)
-        applyToolbarButtonState(previewButton, isActive: sessionPreviewMode, activeTint: accent, inactiveTint: inactive)
+        applyToolbarButtonState(previewButton, isActive: sessionPreviewMode || sessionMagicPPTMode, activeTint: accent, inactiveTint: inactive)
 
-        // Full-screen continuous preview
-        applyToolbarButtonState(presentationButton, isActive: sessionPresentationMode, activeTint: accent, inactiveTint: inactive)
-
-        // Reveal.js slide presentation
-        applyToolbarButtonState(magicPPTButton, isActive: sessionMagicPPTMode, activeTint: accent, inactiveTint: inactive)
+        // Presentation
+        applyToolbarButtonState(presentationButton, isActive: sessionPresentationMode || sessionMagicPPTMode, activeTint: accent, inactiveTint: inactive)
 
         // Split View
         toggleSplitButton?.image?.isTemplate = true
@@ -746,31 +742,10 @@ class ViewController:
 
         formatButton.toolTip = I18n.str("Format")
         previewButton.toolTip = I18n.str("Toggle Preview")
-        presentationButton.toolTip = I18n.str("Full Screen Preview")
-        presentationButton.setAccessibilityLabel(I18n.str("Full Screen Preview"))
-
-        if magicPPTButton == nil {
-            let button = NSButton()
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.bezelStyle = .texturedRounded
-            button.isBordered = false
-            button.imagePosition = .imageOnly
-            button.target = self
-            button.action = #selector(toggleMagicPPT(_:))
-            button.toolTip = I18n.str("Slide Presentation")
-            button.setAccessibilityLabel(I18n.str("Slide Presentation"))
-            button.contentTintColor = .secondaryLabelColor
-            if let image = NSImage(named: "icon_slideshow") {
-                image.isTemplate = true
-                button.image = image
-            }
-            Theme.configureChromeIconButton(button)
-            parent.addSubview(button)
-            magicPPTButton = button
-        }
+        presentationButton.toolTip = I18n.str("Presentation")
 
         // Unify button sizes and let newer systems render their own chrome.
-        let toolbarButtons = [formatButton, previewButton, presentationButton, magicPPTButton, toggleListButton, toggleSplitButton].compactMap { $0 }
+        let toolbarButtons = [formatButton, previewButton, presentationButton, toggleListButton, toggleSplitButton].compactMap { $0 }
         for btn in toolbarButtons {
             btn.contentTintColor = .secondaryLabelColor
             Theme.configureChromeIconButton(btn)
@@ -867,10 +842,10 @@ class ViewController:
                 splitButton.heightAnchor.constraint(equalToConstant: 20),
             ])
 
-            // Recommended Order: List -> Format -> Split -> Preview -> Full-screen Preview -> Slide Presentation
+            // Recommended Order: List -> Format -> Split -> Preview -> Presentation
 
             // Clear existing horizontal constraints for all buttons
-            let allButtons = [listButton, formatButton, splitButton, previewButton, presentationButton, magicPPTButton]
+            let allButtons = [listButton, formatButton, splitButton, previewButton, presentationButton]
             for btn in allButtons {
                 guard let btn = btn else { continue }
                 for constraint in parent.constraints {
@@ -891,20 +866,10 @@ class ViewController:
             // Margin = 24 (Matches default textContainerInset width)
             // Gap = 8 (Increased from 6 as requested)
 
-            // 6. Slide Presentation (Rightmost)
-            if let magicPPTButton {
-                NSLayoutConstraint.activate([
-                    magicPPTButton.centerYAnchor.constraint(equalTo: formatButton.centerYAnchor),
-                    magicPPTButton.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -24),
-                    magicPPTButton.widthAnchor.constraint(equalToConstant: 20),
-                    magicPPTButton.heightAnchor.constraint(equalToConstant: 20),
-                ])
-            }
-
-            // 5. Full-screen Preview
+            // 5. Presentation (Rightmost)
             NSLayoutConstraint.activate([
                 presentationButton.centerYAnchor.constraint(equalTo: formatButton.centerYAnchor),
-                presentationButton.trailingAnchor.constraint(equalTo: magicPPTButton?.leadingAnchor ?? parent.trailingAnchor, constant: magicPPTButton == nil ? -24 : -8),
+                presentationButton.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -24),
             ])
 
             // 4. Preview
@@ -1041,7 +1006,7 @@ class ViewController:
             cell.backgroundColor = .clear
         }
 
-        [formatButton, previewButton, presentationButton, magicPPTButton, toggleListButton, toggleSplitButton, addProjectButton].forEach {
+        [formatButton, previewButton, presentationButton, toggleListButton, toggleSplitButton, addProjectButton].forEach {
             Theme.configureChromeIconButton($0)
         }
         for subview in notesListCustomView.subviews {

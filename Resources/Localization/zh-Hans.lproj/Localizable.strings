@@ -247,8 +247,6 @@
 /* Toolbar Tooltips */
 "Format" = "排版";
 "Presentation" = "演示";
-"Full Screen Preview" = "全屏预览";
-"Slide Presentation" = "幻灯片演示";
 "Toggle Note List" = "列表";
 "Toggle Split Mode" = "分栏";
 
