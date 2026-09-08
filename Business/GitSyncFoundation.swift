@@ -136,6 +136,9 @@ enum GitSyncManagedPathKind: String, Equatable, Sendable {
     case note
     case attachment
     case repositoryConfiguration
+    case trashManifest
+    case trashNote
+    case trashAttachment
 }
 
 enum GitSyncPathRejectionReason: String, Equatable, Sendable {
@@ -181,8 +184,9 @@ struct GitSyncRepositoryRootPolicy: Sendable {
 }
 
 /// Lexical preflight for both local status and incoming tree diffs. Symlinks,
-/// submodules, hidden areas, Trash and checkout-affecting configuration are
-/// rejected before libgit2 is allowed to mutate the worktree.
+/// submodules, arbitrary hidden areas and checkout-affecting configuration are
+/// rejected before libgit2 is allowed to mutate the worktree. The exact
+/// cross-platform `.Trash` transport layout is allowlisted separately.
 struct GitSyncPathPolicy: Sendable {
     private let noteExtensions: Set<String>
     private let attachmentDirectoryNames: Set<String>
@@ -226,6 +230,9 @@ struct GitSyncPathPolicy: Sendable {
         guard !components.contains("."), !components.contains("..") else {
             return reject(path, because: .pathTraversal)
         }
+        if components.first == ".Trash" {
+            return classifyTrash(path: path, components: components)
+        }
         guard !components.contains(where: isTrashComponent) else {
             return reject(path, because: .trashPath)
         }
@@ -255,7 +262,8 @@ struct GitSyncPathPolicy: Sendable {
                 if case .rejected(let violation) = decision {
                     return violation
                 }
-                if case .allowed(.attachment) = decision,
+                if case .allowed(let kind) = decision,
+                    kind == .attachment || kind == .trashAttachment,
                     change.kind != .deleted,
                     let maximumAttachmentBytes,
                     let byteCount = change.byteCount,
@@ -266,6 +274,33 @@ struct GitSyncPathPolicy: Sendable {
                 return nil
             }
         }
+    }
+
+    private func classifyTrash(path: String, components: [String]) -> GitSyncPathDecision {
+        if components == [".Trash", "manifest.v1"] {
+            return .allowed(.trashManifest)
+        }
+        guard components.count >= 4, components[1] == "items" else {
+            return reject(path, because: .trashPath)
+        }
+        let identifier = components[2]
+        guard let uuid = UUID(uuidString: identifier), uuid.uuidString.lowercased() == identifier else {
+            return reject(path, because: .trashPath)
+        }
+
+        let payload = Array(components.dropFirst(3))
+        guard !payload.contains(where: { $0.hasPrefix(".") || isTrashComponent($0) }) else {
+            return reject(path, because: .hiddenPath)
+        }
+        let leaf = payload[payload.count - 1]
+        let parents = payload.dropLast()
+        if parents.contains(where: attachmentDirectoryNames.contains) {
+            return .allowed(.trashAttachment)
+        }
+        if noteExtensions.contains((leaf as NSString).pathExtension.lowercased()) {
+            return .allowed(.trashNote)
+        }
+        return reject(path, because: .unsupportedFile)
     }
 
     private func isTrashComponent(_ component: String) -> Bool {
@@ -298,7 +333,9 @@ struct GitSyncChangeSummary: Equatable, Sendable {
                 switch policy.classify(relativePath: path, entryKind: change.entryKind) {
                 case .allowed(.note): notes.insert(path)
                 case .allowed(.attachment): attachments.insert(path)
-                case .allowed(.repositoryConfiguration), .rejected: break
+                case .allowed(.repositoryConfiguration), .allowed(.trashManifest),
+                    .allowed(.trashNote), .allowed(.trashAttachment), .rejected:
+                    break
                 }
             }
         }
@@ -307,6 +344,74 @@ struct GitSyncChangeSummary: Equatable, Sendable {
     }
 
     var totalChanges: Int { added + modified + deleted + renamed }
+}
+
+struct GitSyncedTrashManifestEntry: Equatable, Sendable {
+    let id: String
+    let originalRelativePath: String
+    let trashRelativePath: String
+    let deletedAtMilliseconds: Int64
+}
+
+enum GitSyncedTrashManifestCodec {
+    static let relativePath = ".Trash/manifest.v1"
+    private static let header = "MiaoYanTrashManifest\t1"
+
+    static func decode(_ content: String) -> [GitSyncedTrashManifestEntry] {
+        decodeValidated(content) ?? []
+    }
+
+    static func decodeValidated(_ content: String) -> [GitSyncedTrashManifestEntry]? {
+        let lines = content.split(whereSeparator: { $0.isNewline }).map(String.init)
+        guard lines.first == header else { return nil }
+        var entries = [GitSyncedTrashManifestEntry]()
+        var identifiers = Set<String>()
+        var trashPaths = Set<String>()
+        for line in lines.dropFirst() {
+            let encodedFields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard encodedFields.count == 4 else { return nil }
+            let fields = encodedFields.compactMap(decodeField)
+            guard fields.count == 4,
+                let deletedAt = Int64(fields[3]),
+                identifiers.insert(fields[0]).inserted,
+                trashPaths.insert(fields[2]).inserted
+            else { return nil }
+            entries.append(
+                GitSyncedTrashManifestEntry(
+                    id: fields[0],
+                    originalRelativePath: fields[1],
+                    trashRelativePath: fields[2],
+                    deletedAtMilliseconds: deletedAt))
+        }
+        return entries
+    }
+
+    static func encode(_ entries: [GitSyncedTrashManifestEntry]) -> String {
+        let body = entries.sorted { $0.id < $1.id }.map { entry in
+            [
+                entry.id,
+                entry.originalRelativePath,
+                entry.trashRelativePath,
+                String(entry.deletedAtMilliseconds),
+            ].map(encodeField).joined(separator: "\t")
+        }
+        return ([header] + body).joined(separator: "\n") + "\n"
+    }
+
+    private static func encodeField(_ value: String) -> String {
+        Data(value.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func decodeField(_ value: String) -> String? {
+        var base64 = value.replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
 }
 
 struct GitSyncConflictFile: Equatable, Sendable {

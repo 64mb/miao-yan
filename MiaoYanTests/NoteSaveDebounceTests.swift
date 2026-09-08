@@ -440,4 +440,57 @@ final class NoteSaveDebounceTests: XCTestCase {
         XCTAssertFalse(note.flushPendingSave(globalStorage: false))
         XCTAssertFalse(FileManager.default.fileExists(atPath: noteURL.path))
     }
+
+    @MainActor
+    func testSyncedTrashRoundTripsThroughMacRestoreAndRemovesManifestEntry() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        let nestedURL = rootURL.appendingPathComponent("Идеи", isDirectory: true)
+        let sourceURL = nestedURL.appendingPathComponent("22 топ.md")
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try "recoverable".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let storage = Storage()
+        for project in storage.getProjects() {
+            storage.removeBy(project: project)
+        }
+        let root = Project(url: rootURL, label: "Library", isRoot: true, isDefault: true)
+        _ = storage.add(project: root)
+
+        let trashedURL = try storage.moveToSyncedTrash(fileURL: sourceURL, root: root)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedURL.path))
+
+        storage.reLoadTrash()
+        let trashNote = try XCTUnwrap(storage.getAllTrash().first)
+        trashNote.sharedStorage = storage
+        let result = storage.restoreNotesFromTrash([trashNote])
+
+        XCTAssertEqual(result.failedCount, 0)
+        XCTAssertEqual(result.restored.count, 1)
+        XCTAssertEqual(trashNote.url, sourceURL)
+        XCTAssertEqual(try String(contentsOf: sourceURL, encoding: .utf8), "recoverable")
+        let manifestURL = rootURL.appendingPathComponent(GitSyncedTrashManifestCodec.relativePath)
+        let manifest = try String(contentsOf: manifestURL, encoding: .utf8)
+        XCTAssertTrue(GitSyncedTrashManifestCodec.decode(manifest).isEmpty)
+    }
+
+    @MainActor
+    func testSyncedTrashRefusesATrashDirectorySymlink() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        let outsideURL = tempDir.appendingPathComponent("Outside", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("note.md")
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: outsideURL, withIntermediateDirectories: true)
+        try "recoverable".write(to: sourceURL, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(
+            at: rootURL.appendingPathComponent(".Trash"),
+            withDestinationURL: outsideURL)
+
+        let storage = Storage()
+        let root = Project(url: rootURL, label: "Library", isRoot: true, isDefault: true)
+
+        XCTAssertThrowsError(try storage.moveToSyncedTrash(fileURL: sourceURL, root: root))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outsideURL.appendingPathComponent("items").path))
+    }
 }

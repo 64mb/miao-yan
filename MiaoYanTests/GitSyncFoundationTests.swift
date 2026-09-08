@@ -67,6 +67,81 @@ final class GitSyncFoundationTests: XCTestCase {
         assertRejected("Journal/.Trash/deleted.md", reason: .trashPath)
     }
 
+    func testAllowsOnlyCanonicalSyncedTrashTransportPaths() {
+        let id = "123e4567-e89b-12d3-a456-426614174000"
+        XCTAssertEqual(policy.classify(relativePath: ".Trash/manifest.v1"), .allowed(.trashManifest))
+        XCTAssertEqual(
+            policy.classify(relativePath: ".Trash/items/\(id)/22 топ.md"),
+            .allowed(.trashNote))
+        XCTAssertEqual(
+            policy.classify(relativePath: ".Trash/items/\(id)/Folder/i/photo.webp"),
+            .allowed(.trashAttachment))
+        assertRejected(".Trash/manifest.tsv", reason: .trashPath)
+        assertRejected(".Trash/items/not-a-uuid/note.md", reason: .trashPath)
+        assertRejected(".Trash/items/\(id)/.secret.md", reason: .hiddenPath)
+        assertRejected(".Trash/items/\(id)/payload.bin", reason: .unsupportedFile)
+        assertRejected("Trash/items/\(id)/note.md", reason: .trashPath)
+    }
+
+    func testSyncedTrashManifestMatchesAndroidEncodingAndRoundTripsUnicode() throws {
+        let entry = GitSyncedTrashManifestEntry(
+            id: "123e4567-e89b-12d3-a456-426614174000",
+            originalRelativePath: "Идеи/22 топ.md",
+            trashRelativePath: ".Trash/items/123e4567-e89b-12d3-a456-426614174000/22 топ.md",
+            deletedAtMilliseconds: 1_788_862_000_000)
+
+        let encoded = GitSyncedTrashManifestCodec.encode([entry])
+
+        XCTAssertTrue(encoded.hasPrefix("MiaoYanTrashManifest\t1\n"))
+        XCTAssertFalse(encoded.contains("Идеи"), "manifest fields must use Android-compatible base64url")
+        XCTAssertEqual(GitSyncedTrashManifestCodec.decode(encoded), [entry])
+    }
+
+    func testSyncedTrashManifestRejectsPartialCorruptionAndDuplicatePaths() {
+        let id = "123e4567-e89b-12d3-a456-426614174000"
+        let entry = GitSyncedTrashManifestEntry(
+            id: id,
+            originalRelativePath: "Ideas/note.md",
+            trashRelativePath: ".Trash/items/\(id)/note.md",
+            deletedAtMilliseconds: 1_788_862_000_000)
+        let validLine = GitSyncedTrashManifestCodec.encode([entry])
+            .split(whereSeparator: { $0.isNewline })[1]
+
+        XCTAssertNil(GitSyncedTrashManifestCodec.decodeValidated("MiaoYanTrashManifest\t1\ninvalid\n"))
+        XCTAssertNil(
+            GitSyncedTrashManifestCodec.decodeValidated(
+                "MiaoYanTrashManifest\t1\n\(validLine)\n\(validLine)\n"))
+    }
+
+    func testLocalPreflightCollectsTheHiddenSyncedTrashTransport() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanTrashPreflight-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = "123e4567-e89b-12d3-a456-426614174000"
+        let itemDirectory = root.appendingPathComponent(".Trash/items/\(id)", isDirectory: true)
+        try FileManager.default.createDirectory(at: itemDirectory, withIntermediateDirectories: true)
+        try "deleted".write(
+            to: itemDirectory.appendingPathComponent("22 топ.md"),
+            atomically: true,
+            encoding: .utf8)
+        try "MiaoYanTrashManifest\t1\n".write(
+            to: root.appendingPathComponent(".Trash/manifest.v1"),
+            atomically: true,
+            encoding: .utf8)
+
+        let preflight = try GitSyncFileCollector.collect(
+            rootURL: root,
+            maximumAttachmentBytes: 25 * 1024 * 1024)
+
+        XCTAssertEqual(
+            preflight.managedPaths,
+            [
+                ".Trash/items/\(id)/22 топ.md",
+                ".Trash/manifest.v1",
+            ])
+        XCTAssertTrue(preflight.violations.isEmpty)
+    }
+
     func testRejectsSymlinksAndSubmodules() {
         assertRejected("note.md", entryKind: .symbolicLink, reason: .nonRegularEntry)
         assertRejected("Journal", entryKind: .submodule, reason: .nonRegularEntry)

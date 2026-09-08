@@ -296,6 +296,23 @@ public class Note: NSObject {
         guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return nil }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
 
+        if isTrash(), Storage.isSyncedTrashProject(project) {
+            let payloadURL = url
+            do {
+                try FileManager.default.removeItem(at: payloadURL)
+                do {
+                    try sharedStorage.removeSyncedTrashMetadata(for: payloadURL)
+                } catch {
+                    AppDelegate.trackError(error, context: "Note.syncedTrashMetadata")
+                }
+                NoteVersionManager.shared.removeVersions(for: self)
+                return .hiddenFromMiaoYanTrash
+            } catch {
+                AppDelegate.trackError(error, context: "Note.syncedTrashDelete")
+                return nil
+            }
+        }
+
         if completely {
             guard isTrash() else { return nil }
             do {
@@ -332,6 +349,14 @@ public class Note: NSObject {
         }
 
         do {
+            let root = project.getParent()
+            if GitSyncConfigurationStore().configuration(for: root.url) != nil {
+                let originalURL = url
+                let destination = try sharedStorage.moveToSyncedTrash(fileURL: url, root: root)
+                overwrite(url: destination)
+                return .moved(destination: destination, original: originalURL)
+            }
+
             // A note restored from Finder keeps its xattrs. Clear the marker
             // before a later soft delete so it appears in MiaoYan Trash again.
             try? url.removeExtendedAttribute(forName: AppIdentifier.removedFromTrashKey)
