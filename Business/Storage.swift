@@ -9,6 +9,17 @@ struct DirectoryItem {
     let creationDate: Date
 }
 
+struct TrashOriginMetadata: Codable, Equatable {
+    let rootPath: String
+    let relativePath: String
+}
+
+struct TrashRestoreDestination: Equatable {
+    let rootURL: URL
+    let fileURL: URL
+    let usesOriginalFolder: Bool
+}
+
 @MainActor
 class Storage {
     static var instance: Storage?
@@ -280,6 +291,107 @@ class Storage {
             && (try? url.extendedAttribute(forName: AppIdentifier.removedFromTrashKey)) != nil
     }
 
+    static func trashOriginMetadataData(for fileURL: URL, root rootURL: URL) -> Data? {
+        let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
+        let file = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard file.path.hasPrefix(prefix) else { return nil }
+
+        let relativePath = String(file.path.dropFirst(prefix.count))
+        guard validTrashOriginRelativePath(relativePath) else { return nil }
+
+        return try? JSONEncoder().encode(
+            TrashOriginMetadata(rootPath: root.path, relativePath: relativePath))
+    }
+
+    static func trashOriginMetadata(from data: Data?) -> TrashOriginMetadata? {
+        guard let data else { return nil }
+        return try? JSONDecoder().decode(TrashOriginMetadata.self, from: data)
+    }
+
+    /// Resolves a persisted Trash origin only against roots the app currently
+    /// owns. Corrupt/stale metadata and missing original folders fall back to
+    /// the default root; an existing filename is never overwritten.
+    static func trashRestoreDestination(
+        for trashedURL: URL,
+        metadata: TrashOriginMetadata?,
+        availableRoots: [URL],
+        defaultRoot: URL
+    ) -> TrashRestoreDestination {
+        let normalizedRoots = availableRoots.map {
+            $0.standardizedFileURL.resolvingSymlinksInPath()
+        }
+        let fallbackRoot = defaultRoot.standardizedFileURL.resolvingSymlinksInPath()
+
+        var selectedRoot = fallbackRoot
+        var preferredURL: URL?
+        if let metadata,
+            validTrashOriginRelativePath(metadata.relativePath),
+            let matchedRoot = normalizedRoots.first(where: { $0.path == metadata.rootPath })
+        {
+            let candidate = matchedRoot.appendingPathComponent(metadata.relativePath)
+            let parent = candidate.deletingLastPathComponent()
+            var isDirectory = ObjCBool(false)
+            let resolvedParent = parent.resolvingSymlinksInPath().standardizedFileURL
+            let rootPrefix = matchedRoot.path.hasSuffix("/") ? matchedRoot.path : matchedRoot.path + "/"
+            let remainsInRoot =
+                resolvedParent.path == matchedRoot.path
+                || resolvedParent.path.hasPrefix(rootPrefix)
+            let isReservedTrash =
+                metadata.relativePath.split(separator: "/").first
+                .map { $0.caseInsensitiveCompare("Trash") == .orderedSame || $0 == ".Trash" }
+                ?? true
+
+            if remainsInRoot,
+                !isReservedTrash,
+                FileManager.default.fileExists(atPath: parent.path, isDirectory: &isDirectory),
+                isDirectory.boolValue
+            {
+                selectedRoot = matchedRoot
+                preferredURL = candidate
+            }
+        }
+
+        let originalName =
+            metadata
+            .flatMap { validTrashOriginRelativePath($0.relativePath) ? URL(fileURLWithPath: $0.relativePath).lastPathComponent : nil }
+        let fallbackName = originalName?.isEmpty == false ? originalName! : trashedURL.lastPathComponent
+        let desiredURL = preferredURL ?? fallbackRoot.appendingPathComponent(fallbackName)
+        let destination = availableRestoreURL(for: desiredURL)
+
+        return TrashRestoreDestination(
+            rootURL: selectedRoot,
+            fileURL: destination,
+            usesOriginalFolder: preferredURL != nil)
+    }
+
+    private static func validTrashOriginRelativePath(_ path: String) -> Bool {
+        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\") else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !components.isEmpty
+            && components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+    }
+
+    private static func availableRestoreURL(for desiredURL: URL) -> URL {
+        guard FileManager.default.fileExists(atPath: desiredURL.path) else { return desiredURL }
+
+        let directory = desiredURL.deletingLastPathComponent()
+        let baseName = desiredURL.deletingPathExtension().lastPathComponent
+        let fileExtension = desiredURL.pathExtension
+        var index = 1
+
+        while true {
+            var candidate = directory.appendingPathComponent("\(baseName) \(index)")
+            if !fileExtension.isEmpty {
+                candidate.appendPathExtension(fileExtension)
+            }
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            index += 1
+        }
+    }
+
     public func getBookmarks() -> [URL] {
         bookmarks
     }
@@ -467,6 +579,55 @@ class Storage {
 
         // Return the one with the longest path (most specific match)
         return candidates.max(by: { $0.url.path.count < $1.url.path.count })
+    }
+
+    /// Ensures the in-memory project chain exists for a note that appeared in
+    /// an externally applied Git tree. This does not rescan or replace existing
+    /// Note instances.
+    func ensureProjectForGitNote(at noteURL: URL, under root: Project) -> Project? {
+        let rootPath = root.url.standardizedFileURL.resolvingSymlinksInPath().path
+        let directory = noteURL.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+        let directoryPath = directory.path
+        guard directoryPath == rootPath || directoryPath.hasPrefix(rootPath + "/") else { return nil }
+        if directoryPath == rootPath { return root }
+
+        let relative = String(directoryPath.dropFirst(rootPath.count + 1))
+        var parent = root
+        var currentURL = root.url
+        for component in relative.split(separator: "/").map(String.init) {
+            currentURL.appendPathComponent(component, isDirectory: true)
+            if let existing = projects.first(where: { $0.url == currentURL.resolvingSymlinksInPath() }) {
+                parent = existing
+            } else {
+                let project = Project(url: currentURL, parent: parent)
+                projects.append(project)
+                parent = project
+            }
+        }
+        return parent
+    }
+
+    /// Retires in-memory descendants whose directories disappeared during a
+    /// Git checkout. Removing the project without retiring its notes would
+    /// leave stale Note objects able to schedule writes into deleted paths.
+    func retireMissingProjectsAfterGit(under root: Project) {
+        let missing =
+            projects
+            .filter {
+                $0 != root
+                    && !$0.isTrash
+                    && $0.isDescendant(of: root)
+                    && !FileManager.default.directoryExists(atUrl: $0.url)
+            }
+            .sorted { $0.url.path.count > $1.url.path.count }
+
+        for project in missing {
+            for note in getNotesBy(project: project) {
+                note.retireAfterRemoval()
+                removeBy(note: note)
+            }
+            remove(project: project)
+        }
     }
 
     func sortNotes(noteList: [Note], filter: String, project: Project? = nil, operation: Operation? = nil) -> [Note] {
@@ -950,6 +1111,11 @@ class Storage {
             }
 
             let originalPath = note.url.path
+            if completely {
+                // Close every late write sink before the unlink. If unlinking
+                // fails, the same object is reactivated below.
+                note.retireAfterRemoval()
+            }
             if let removal = note.removeFile(completely: completely) {
                 if case .moved(let destination, let original) = removal {
                     removed[destination] = original
@@ -960,6 +1126,9 @@ class Storage {
                 // Treat as success so the empty row does not linger.
                 succeeded.append(note)
             } else {
+                if completely {
+                    note.reactivateAfterFailedRemoval()
+                }
                 failedCount += 1
             }
         }
@@ -984,6 +1153,69 @@ class Storage {
         } else {
             completion(nil)
         }
+    }
+
+    func restoreNotesFromTrash(_ notes: [Note]) -> (restored: [Note], failedCount: Int) {
+        guard let defaultProject = getDefault() else { return ([], notes.count) }
+        let roots = getRootProjects().map(\.url)
+        var restored = [Note]()
+        var failedCount = notes.filter { !$0.isTrash() }.count
+
+        for note in notes where note.isTrash() {
+            guard FileManager.default.fileExists(atPath: note.url.path) else {
+                let error = NSError(
+                    domain: NSCocoaErrorDomain,
+                    code: CocoaError.fileNoSuchFile.rawValue,
+                    userInfo: [NSFilePathErrorKey: note.url.path])
+                AppDelegate.trackError(error, context: "Storage.restoreTrash.sourceMissing")
+                failedCount += 1
+                continue
+            }
+            guard note.flushPendingSave(globalStorage: false) else {
+                let error = NSError(
+                    domain: "com.tw93.miaoyan.trash",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Could not save the Trash note before restoring it"])
+                AppDelegate.trackError(error, context: "Storage.restoreTrash.flush")
+                failedCount += 1
+                continue
+            }
+
+            let originData = try? note.url.extendedAttribute(forName: AppIdentifier.trashOriginKey)
+            let destination = Self.trashRestoreDestination(
+                for: note.url,
+                metadata: Self.trashOriginMetadata(from: originData),
+                availableRoots: roots,
+                defaultRoot: defaultProject.url)
+            let rootProject =
+                getRootProjects().first {
+                    $0.url.standardizedFileURL.resolvingSymlinksInPath() == destination.rootURL
+                } ?? defaultProject
+            let targetProject =
+                ensureProjectForGitNote(
+                    at: destination.fileURL,
+                    under: rootProject) ?? rootProject
+
+            guard note.move(to: destination.fileURL, project: targetProject) else {
+                let error = NSError(
+                    domain: "com.tw93.miaoyan.trash",
+                    code: 2,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Could not restore \(note.url.path) to \(destination.fileURL.path)"
+                    ])
+                AppDelegate.trackError(error, context: "Storage.restoreTrash.move")
+                failedCount += 1
+                continue
+            }
+
+            try? note.url.removeExtendedAttribute(forName: AppIdentifier.trashOriginKey)
+            try? note.url.removeExtendedAttribute(forName: AppIdentifier.removedFromTrashKey)
+            note.invalidateCache()
+            restored.append(note)
+        }
+
+        return (restored, failedCount)
     }
 
     func getSubFolders(url: URL) -> [NSURL]? {
@@ -1176,10 +1408,10 @@ class Storage {
 
     public func removeAttachments(urls: [URL]) -> (removed: [URL], failed: [URL]) {
         var removed = [URL]()
-        var failed = [URL]()
+        var failed = urls.filter { !GitSyncLibraryMutationGate.allowsMutation(at: $0) }
         let manager = FileManager.default
 
-        for url in urls {
+        for url in urls where GitSyncLibraryMutationGate.allowsMutation(at: url) {
             do {
                 var resultingItemUrl: NSURL?
                 try manager.trashItem(at: url, resultingItemURL: &resultingItemUrl)

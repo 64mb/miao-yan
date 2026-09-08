@@ -710,7 +710,9 @@ extension ViewController {
     @objc func enableFSUpdates() {
         UserDataService.instance.fsUpdatesDisabled = false
         if let note = EditTextView.note {
-            fsManager?.recheckNote(note)
+            Task { @MainActor [weak self] in
+                await self?.fsManager?.recheckNote(note)
+            }
         }
     }
 

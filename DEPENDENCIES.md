@@ -18,6 +18,7 @@ of declared versions only).
 | [swift-cmark-gfm](https://github.com/stackotter/swift-cmark-gfm)   | 1.0.2+     | GitHub Flavored Markdown parsing (preview + export)    |
 | [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts) | 2.4.0+ | Global keyboard shortcut registration (window activation) |
 | [Prettier](https://github.com/simonbs/Prettier.git)                | 0.2.1+     | Markdown auto-format on save                           |
+| [libgit2](https://github.com/libgit2/libgit2)                      | 1.9.7      | Locally packaged C API for macOS Git-over-HTTPS sync   |
 
 ## Conditional Compilation
 
@@ -37,7 +38,7 @@ they are documented in a separate manifest:
 
 ## Platform Requirements
 
-- macOS host target: 11.5+ (Big Sur)
+- macOS host target: 13.0+ (Ventura)
 - iOS Mobile target: 18.0+
 - Swift toolchain: 6.0
 - Xcode: 16.0+ (matches the build setting in `MiaoYan.xcodeproj`)

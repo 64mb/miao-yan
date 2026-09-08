@@ -5,10 +5,9 @@ class SearchFieldCell: NSSearchFieldCell {
     static let height: CGFloat = 30
     private static let padding: CGFloat = 12
     private static let lineHeight: CGFloat = 17.0
-    /// The placeholder and field editor sat slightly high; nudge the text rect
-    /// down. The control is flipped (y grows downward) so a positive value
-    /// moves the text down on screen.
-    private static let verticalNudge: CGFloat = 2.0
+    /// Keep placeholder drawing and the field editor on the same optical
+    /// centerline. A positive value moves both down in this flipped control.
+    private static let verticalNudge: CGFloat = 0
 
     override var cellSize: NSSize {
         var size = super.cellSize

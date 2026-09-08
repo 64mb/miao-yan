@@ -156,12 +156,14 @@ class ClipboardManager {
 
             // Only Support PicGo and PicList via HTTP
             if picType == "PicGo" || picType == "PicList" {
+                guard GitSyncLibraryMutationGate.beginUpload() else { return }
                 vc.toastUpload(status: true)
                 let defaultImageString = "![](\(path))"
                 let serverURL = uploadServerURL
 
                 postToPicGo(imagePath: imagePath, serverURL: serverURL) { [weak self, weak textView, weak vc] result, error in
                     Task { @MainActor in
+                        defer { GitSyncLibraryMutationGate.endUpload() }
                         let finalImage: NSAttributedString
                         if let resultString = result {
                             finalImage = NSAttributedString(string: "![](\(resultString))")
@@ -193,6 +195,7 @@ class ClipboardManager {
                     }
                 }
             } else if picType == "uPic" || picType == "Picsee" {
+                guard GitSyncLibraryMutationGate.beginUpload() else { return }
                 // Restore uPic/Picsee support via Shell Command
                 let placeholderText = Self.makeUploadPlaceholder()
                 let uploadingPlaceholder = NSAttributedString(string: placeholderText)
@@ -324,6 +327,7 @@ class ClipboardManager {
             }
 
             DispatchQueue.main.async { [weak self] in
+                defer { GitSyncLibraryMutationGate.endUpload() }
                 guard let self = self else { return }
                 if let validURL = uploadedURL {
                     self.replacePlaceholderWithURL(

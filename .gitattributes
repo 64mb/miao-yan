@@ -1,3 +1,4 @@
 *.pbxproj merge=union
 Resources/DownView.bundle/**       linguist-vendored
 Resources/Prettier.bundle/**          linguist-vendored
+Packages/CLibGit2/Artifacts/** -whitespace

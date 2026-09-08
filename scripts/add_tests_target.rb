@@ -24,7 +24,7 @@ host_target = project.targets.find { |t| t.name == 'MiaoYan' }
 abort "MiaoYan host target not found" unless host_target
 
 # --- Create unit test target ---
-test_target = project.new_target(:unit_test_bundle, 'MiaoYanTests', :osx, '11.5')
+test_target = project.new_target(:unit_test_bundle, 'MiaoYanTests', :osx, '13.0')
 
 project.root_object.attributes['TargetAttributes'] ||= {}
 project.root_object.attributes['TargetAttributes'][test_target.uuid] = {
@@ -37,7 +37,7 @@ test_target.build_configurations.each do |config|
   s['PRODUCT_BUNDLE_IDENTIFIER']    = 'com.tw93.miaoyan.tests'
   s['PRODUCT_NAME']                 = '$(TARGET_NAME)'
   s['SWIFT_VERSION']                = '6.0'
-  s['MACOSX_DEPLOYMENT_TARGET']     = '11.5'
+  s['MACOSX_DEPLOYMENT_TARGET']     = '13.0'
   s['INFOPLIST_FILE']               = 'MiaoYanTests/Info.plist'
   s['BUNDLE_LOADER']                = '$(TEST_HOST)'
   s['TEST_HOST']                    = '$(BUILT_PRODUCTS_DIR)/MiaoYan.app/Contents/MacOS/MiaoYan'

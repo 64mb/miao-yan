@@ -86,6 +86,23 @@ final class EditorStorageOwnershipTests: XCTestCase {
     }
 
     @MainActor
+    func testClearingEditorDetachesRetiredStorageOwnerBeforeLifecycleSave() {
+        let note = makeNote("remote-deleted.md", body: "local snapshot")
+        let editor = EditTextView(frame: .zero)
+        EditTextView.note = note
+        editor.publishStorage(NSAttributedString(string: "stale editor bytes"), owner: note)
+
+        editor.clear()
+        note.retireAfterRemoval()
+        editor.saveTextStorageContent(to: note)
+
+        XCTAssertNil(editor.storageNote)
+        XCTAssertNil(EditTextView.note)
+        XCTAssertTrue(editor.string.isEmpty)
+        XCTAssertEqual(note.content.string, "local snapshot")
+    }
+
+    @MainActor
     func testUploadPlaceholdersAreUniquePerUpload() {
         // A shared "![](uploading...)" literal let one upload's completion
         // match a placeholder in a different note's buffer and cross-write

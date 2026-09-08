@@ -150,8 +150,8 @@ public class Note: NSObject {
         return false
     }
 
-    public func forceReload() {
-        if let attributedString = getContent() {
+    public func forceReloadAsync() async {
+        if let attributedString = await getContentAsync() {
             content = NSMutableAttributedString(attributedString: attributedString)
             isContentLoaded = true
             return
@@ -209,6 +209,9 @@ public class Note: NSObject {
     }
 
     func move(to: URL, project: Project? = nil) -> Bool {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url),
+            GitSyncLibraryMutationGate.allowsMutation(at: to)
+        else { return false }
         do {
             var destination = to
 
@@ -290,7 +293,20 @@ public class Note: NSObject {
     }
 
     func removeFile(completely: Bool = false) -> FileRemovalResult? {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url) else { return nil }
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+
+        if completely {
+            guard isTrash() else { return nil }
+            do {
+                try FileManager.default.removeItem(at: url)
+                NoteVersionManager.shared.removeVersions(for: self)
+                return .hiddenFromMiaoYanTrash
+            } catch {
+                AppDelegate.trackError(error, context: "Note.permanentDelete")
+                return nil
+            }
+        }
 
         if isTrash() {
             do {
@@ -319,6 +335,21 @@ public class Note: NSObject {
             // A note restored from Finder keeps its xattrs. Clear the marker
             // before a later soft delete so it appears in MiaoYan Trash again.
             try? url.removeExtendedAttribute(forName: AppIdentifier.removedFromTrashKey)
+
+            if let originData = Storage.trashOriginMetadataData(
+                for: url,
+                root: project.getParent().url)
+            {
+                do {
+                    try url.setExtendedAttribute(
+                        data: originData,
+                        forName: AppIdentifier.trashOriginKey)
+                } catch {
+                    // The note remains recoverable even when a volume does not
+                    // support xattrs; Restore will fall back to the main root.
+                    AppDelegate.trackError(error, context: "Note.storeTrashOrigin")
+                }
+            }
 
             guard let dst = Storage.sharedInstance().trashItem(url: url) else {
                 var resultingItemUrl: NSURL?
@@ -625,6 +656,7 @@ public class Note: NSObject {
     @discardableResult
     private func executeSave(attributedString: NSAttributedString, globalStorage: Bool = true) -> Bool {
         guard !isRetired else { return false }
+        guard GitSyncLibraryMutationGate.allowsMutation(at: getURL()) else { return false }
         // Cancel pending debounce if we are saving immediately
         saveWorkItem?.cancel()
 
@@ -746,6 +778,15 @@ public class Note: NSObject {
         hasUnpersistedChanges = false
         saveWorkItem?.cancel()
         saveWorkItem = nil
+    }
+
+    /// A permanent delete retires the object before unlinking the file, so a
+    /// watcher/editor callback cannot race the delete and recreate it. If the
+    /// filesystem operation fails, Storage reactivates the same object because
+    /// the row and file must remain usable.
+    func reactivateAfterFailedRemoval() {
+        guard isRetired else { return }
+        isRetired = false
     }
 
     public func getContentFileURL() -> URL? {
@@ -954,6 +995,9 @@ public class Note: NSObject {
 
         let directory = url.deletingLastPathComponent()
         let duplicateURL = directory.appendingPathComponent(duplicateName).appendingPathExtension(url.pathExtension)
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url),
+            GitSyncLibraryMutationGate.allowsMutation(at: duplicateURL)
+        else { return }
 
         try? FileManager.default.copyItem(at: self.url, to: duplicateURL)
     }

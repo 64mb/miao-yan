@@ -222,6 +222,7 @@ public class ImagesProcessor {
 
         let project = note.project
         let destination = URL(fileURLWithPath: project.url.path + prefix)
+        guard GitSyncLibraryMutationGate.allowsMutation(at: destination) else { return nil }
 
         do {
             try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false, attributes: nil)

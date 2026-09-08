@@ -108,6 +108,9 @@ final class CloudSyncManager: ObservableObject {
     }
 
     func writeFile(content: String, to url: URL) throws {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url) else {
+            throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: url.path])
+        }
         var coordinationError: NSError?
         var writeError: Error?
         let coordinator = NSFileCoordinator()

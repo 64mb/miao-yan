@@ -96,6 +96,13 @@ CA
                                                 <action selector="importFiles:" target="L4m-js-agn" id="imP-fl-ac1"/>
                                             </connections>
                                         </menuItem>
+                                        <menuItem isSeparatorItem="YES" id="Git-Sep-001"/>
+                                        <menuItem title="Sync Git Repository" image="arrow.triangle.2.circlepath" catalog="system" identifier="fileMenu.gitSync" id="Git-Sync-001">
+                                            <modifierMask key="keyEquivalentModifierMask"/>
+                                            <connections>
+                                                <action selector="syncGitRepository:" target="L4m-js-agn" id="Git-Act-001"/>
+                                            </connections>
+                                        </menuItem>
                                         <menuItem isSeparatorItem="YES" id="NDw-wG-Jov"/>
                                         <menuItem title="Search" keyEquivalent="/" identifier="fileMenu.searchAndCreate" id="hPY-aY-QOE">
                                             <connections>

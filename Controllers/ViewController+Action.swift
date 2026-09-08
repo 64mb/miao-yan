@@ -1,6 +1,37 @@
 import Carbon
 import Cocoa
 
+struct GitSyncSettingsInput {
+    let remoteURL: String
+    let username: String
+    let personalAccessToken: String
+    let authorName: String
+    let authorEmail: String
+    let automaticSyncEnabled: Bool
+    let aiEnabled: Bool
+    let aiBaseURL: String
+    let aiModel: String
+    let aiAPIKey: String
+    let aiPrompt: String
+}
+
+private enum GitSyncAutomaticRunError: LocalizedError {
+    case cloudBackedLibrary
+    case missingCredentials
+    case blocked(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cloudBackedLibrary:
+            return "Automatic Git sync refused a cloud-backed or non-local library."
+        case .missingCredentials:
+            return "Automatic Git sync could not load the configured Git credentials."
+        case .blocked(let description):
+            return "Automatic Git sync was blocked: \(description)"
+        }
+    }
+}
+
 // MARK: - User Actions and Operations
 extension ViewController {
 
@@ -265,6 +296,12 @@ extension ViewController {
 
         let newUrl = note.getNewURL(name: value)
         UserDataService.instance.focusOnImport = newUrl
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url),
+            GitSyncLibraryMutationGate.allowsMutation(at: newUrl)
+        else {
+            sender.stringValue = note.getTitleWithoutLabel()
+            return
+        }
 
         if note.url.path == newUrl.path {
             updateTitleAndFinishImport(note: note, title: value)
@@ -340,19 +377,15 @@ extension ViewController {
         guard let vc = ViewController.shared() else { return }
         guard let note = vc.notesTableView.getSelectedNote() else { return }
 
-        // Ensure content is loaded before comparison
-        note.ensureContentLoaded()
-
-        // Check if editor has unsaved changes
-        let editorContent = vc.editArea.string
-        let noteContent = note.content.string
-
-        if editorContent != noteContent {
-            vc.showReloadConfirmation(note: note)
-            return
+        Task { @MainActor [weak vc] in
+            await note.ensureContentLoadedAsync()
+            guard let vc, vc.notesTableView.getSelectedNote() === note else { return }
+            if vc.editArea.string != note.content.string {
+                vc.showReloadConfirmation(note: note)
+            } else {
+                await vc.reloadNoteFromDisk(note)
+            }
         }
-
-        vc.reloadNoteFromDisk(note)
     }
 
     private func showReloadConfirmation(note: Note) {
@@ -363,16 +396,19 @@ extension ViewController {
             for: view.window
         ) { [weak self] confirmed in
             if confirmed {
-                self?.reloadNoteFromDisk(note)
+                Task { @MainActor [weak self] in
+                    await self?.reloadNoteFromDisk(note)
+                }
             }
         }
     }
 
-    private func reloadNoteFromDisk(_ note: Note) {
+    private func reloadNoteFromDisk(_ note: Note) async {
         let oldContent = editArea.string
 
         // Force reload from disk
-        note.forceReload()
+        await note.forceReloadAsync()
+        guard notesTableView.getSelectedNote() === note else { return }
         note.loadModifiedLocalAt()
 
         let newContent = note.content.string
@@ -533,6 +569,995 @@ extension ViewController {
                 vc.presentAsSheet(controller)
                 controller.load(project: project)
             }
+        }
+    }
+
+    @IBAction func configureGitSync(_ sender: Any) {
+        configureGitSync(presentingWindow: view.window)
+    }
+
+    func configureGitSync(presentingWindow: NSWindow?, completion: (() -> Void)? = nil) {
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            MiaoYanAlert.show(
+                message: I18n.str("Git sync is unavailable in single-file mode."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+        guard let root = selectedGitSyncRoot() else {
+            MiaoYanAlert.show(
+                message: I18n.str("Select a project in the main library first."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if await GitSyncLibraryLocationPolicy.isCloudBacked(root.url) {
+                presentGitCloudMigrationOffer(for: root, presentingWindow: presentingWindow)
+            } else {
+                presentGitConfiguration(for: root, presentingWindow: presentingWindow, completion: completion)
+            }
+        }
+    }
+
+    func saveGitSyncSettings(
+        _ input: GitSyncSettingsInput,
+        presentingWindow: NSWindow?,
+        completion: (() -> Void)? = nil
+    ) {
+        guard let root = selectedGitSyncRoot() else {
+            MiaoYanAlert.show(
+                message: I18n.str("Select a project in the main library first."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if await GitSyncLibraryLocationPolicy.isCloudBacked(root.url) {
+                presentGitCloudMigrationOffer(for: root, presentingWindow: presentingWindow)
+                return
+            }
+
+            do {
+                try persistGitSyncSettings(input, for: root)
+                toast(message: I18n.str("Git sync configured~"), style: .success)
+                completion?()
+            } catch {
+                AppDelegate.trackError(error, context: "ViewController.saveGitSyncSettings")
+                MiaoYanAlert.show(
+                    message: I18n.str("Git sync configuration is invalid."),
+                    informativeText: gitConfigurationErrorDescription(error),
+                    style: .warning,
+                    for: presentingWindow ?? view.window
+                )
+            }
+        }
+    }
+
+    func requestGitLibraryMigration(presentingWindow: NSWindow?) {
+        guard let root = selectedGitSyncRoot() else {
+            MiaoYanAlert.show(
+                message: I18n.str("Select a project in the main library first."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if await GitSyncLibraryLocationPolicy.isCloudBacked(root.url) {
+                presentGitCloudMigrationOffer(for: root, presentingWindow: presentingWindow)
+            } else {
+                MiaoYanAlert.show(
+                    message: I18n.str("The current library is already stored locally."),
+                    style: .informational,
+                    for: presentingWindow ?? view.window
+                )
+            }
+        }
+    }
+
+    private func persistGitSyncSettings(_ input: GitSyncSettingsInput, for root: Project) throws {
+        let existingConfiguration = gitSyncConfigurationStore.configuration(for: root.url)
+        let existingCredential = existingConfiguration.flatMap {
+            try? AppEnvironment.current.gitCredentialStore.credential(for: $0.remoteURL)
+        }
+        let existingAI = existingConfiguration?.ai
+        let existingAIKey = existingAI.flatMap {
+            try? AppEnvironment.current.gitAIKeyStore.apiKey(for: $0.baseURL)
+        }
+
+        guard let remoteURL = URL(string: input.remoteURL),
+            !input.authorName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !input.authorEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { throw GitCredentialStoreError.invalidRemoteURL }
+
+        let aiConfiguration: GitAIConfiguration?
+        let desiredAIKey: String?
+        if input.aiEnabled {
+            guard let baseURL = URL(string: input.aiBaseURL) else {
+                throw GitAIConflictResolverError.invalidConfiguration
+            }
+            let candidate = GitAIConfiguration(
+                baseURL: baseURL,
+                model: input.aiModel.trimmingCharacters(in: .whitespacesAndNewlines),
+                prompt: input.aiPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            guard candidate.chatCompletionsURL != nil, !candidate.model.isEmpty, !candidate.prompt.isEmpty else {
+                throw GitAIConflictResolverError.invalidConfiguration
+            }
+            let enteredAIKey = input.aiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !enteredAIKey.isEmpty {
+                desiredAIKey = enteredAIKey
+            } else if existingAI?.baseURL != baseURL || existingAIKey == nil {
+                throw GitAIConflictResolverError.invalidConfiguration
+            } else {
+                desiredAIKey = existingAIKey
+            }
+            aiConfiguration = candidate
+        } else {
+            aiConfiguration = nil
+            desiredAIKey = nil
+        }
+
+        let configuration = GitSyncConfiguration(
+            remoteURL: remoteURL,
+            authorName: input.authorName.trimmingCharacters(in: .whitespacesAndNewlines),
+            authorEmail: input.authorEmail.trimmingCharacters(in: .whitespacesAndNewlines),
+            automaticSyncEnabled: input.automaticSyncEnabled,
+            ai: aiConfiguration
+        )
+        let token = input.personalAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canReuseToken: Bool
+        if let oldURL = existingConfiguration?.remoteURL {
+            canReuseToken =
+                try GitCredentialStore.normalizedRemoteURL(oldURL)
+                == GitCredentialStore.normalizedRemoteURL(remoteURL)
+        } else {
+            canReuseToken = false
+        }
+        let finalToken: String
+        if token.isEmpty, canReuseToken, let existingCredential {
+            finalToken = existingCredential.personalAccessToken
+        } else {
+            finalToken = token
+        }
+        let credential = GitHTTPSCredential(
+            username: input.username.trimmingCharacters(in: .whitespacesAndNewlines),
+            personalAccessToken: finalToken
+        )
+        try persistGitSyncSettings(
+            configuration,
+            credential: credential,
+            aiKey: desiredAIKey,
+            replacing: existingConfiguration,
+            for: root.url
+        )
+    }
+
+    private func presentGitCloudMigrationOffer(for root: Project, presentingWindow: NSWindow?) {
+        let details = I18n.str(
+            "This folder is managed by iCloud, a File Provider, or a network volume. "
+                + "MiaoYan will copy it to local Application Support and verify every file. "
+                + "An app-owned iCloud library is moved to Trash; broad cloud roots are left in place."
+        )
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Move the library before enabling Git sync?"),
+            informativeText: details,
+            style: .warning,
+            buttons: [I18n.str("Move and Restart"), I18n.str("Cancel")]
+        )
+        MiaoYanAlert.present(alert, for: presentingWindow ?? view.window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            migrateGitLibraryToLocalStorage(root, presentingWindow: presentingWindow)
+        }
+    }
+
+    private func migrateGitLibraryToLocalStorage(_ root: Project, presentingWindow: NSWindow?) {
+        guard !gitSyncCoordinator.state.isRunning else {
+            MiaoYanAlert.show(
+                message: I18n.str("The library could not be moved."),
+                informativeText: I18n.str("Wait for the current Git sync to finish."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+        if let owner = editArea.storageNote, owner.project.getParent() == root {
+            editArea.saveTextStorageContent(to: owner)
+        }
+        guard storage.flushPendingSaves() else {
+            MiaoYanAlert.show(
+                message: I18n.str("The library could not be moved."),
+                informativeText: I18n.str("Pending note changes could not be saved."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+        guard GitSyncLibraryMutationGate.beginMigration(of: root.url) else {
+            MiaoYanAlert.show(
+                message: I18n.str("The library could not be moved."),
+                informativeText: I18n.str("Wait for active image uploads or the current library migration to finish."),
+                style: .warning,
+                for: presentingWindow ?? view.window
+            )
+            return
+        }
+        editArea.isEditable = false
+        fsManager?.beginGitMutation()
+        toastPersistent(message: I18n.str("Moving library to local storage…"))
+        let previousStoragePath = UserDefaultsManagement.storagePath
+        let previousBookmark = UserDefaultsManagement.storageBookmark
+        let ownedICloudLibraryRoot = UserDefaultsManagement.iCloudDocumentsContainer
+        Task { @MainActor [weak self] in
+            defer { GitSyncLibraryMutationGate.endMigration() }
+            guard let self else { return }
+            do {
+                let result = try await Task.detached {
+                    try GitSyncLibraryMigrator.migrate(source: root.url)
+                }.value
+                UserDefaultsManagement.storagePath = result.destination.path
+                UserDefaultsManagement.clearSingleMode()
+                let bookmark = try? result.destination.bookmarkData(
+                    options: .withSecurityScope,
+                    includingResourceValuesForKeys: nil,
+                    relativeTo: nil
+                )
+                UserDefaultsManagement.storageBookmark = bookmark
+                UserDefaults.standard.synchronize()
+                var originalWasTrashed = false
+                do {
+                    originalWasTrashed = try await Task.detached {
+                        try GitSyncLibraryMigrator.trashOriginal(
+                            root.url,
+                            verifiedCopyAt: result.destination,
+                            ownedICloudLibraryRoot: ownedICloudLibraryRoot
+                        )
+                    }.value
+                } catch {
+                    if case GitSyncLibraryMigrationError.originalTrashFailed = error {
+                        originalWasTrashed = false
+                    } else if FileManager.default.fileExists(atPath: root.url.path) {
+                        UserDefaultsManagement.storagePath = previousStoragePath ?? root.url.path
+                        UserDefaultsManagement.storageBookmark = previousBookmark
+                        UserDefaults.standard.synchronize()
+                        let preservedCopy = I18n.str("The verified local copy was preserved at:")
+                        let detailedError = NSError(
+                            domain: "MiaoYan.GitLibraryMigration",
+                            code: 1,
+                            userInfo: [
+                                NSLocalizedDescriptionKey:
+                                    error.localizedDescription + "\n\n" + preservedCopy + "\n" + result.destination.path
+                            ]
+                        )
+                        throw detailedError
+                    } else {
+                        // trashItem may report a late provider error after moving
+                        // the source. In that case the verified local copy is the
+                        // only authoritative location and must remain configured.
+                        originalWasTrashed = true
+                    }
+                }
+                fsManager?.endGitMutation()
+                toastDismiss()
+                if !originalWasTrashed {
+                    MiaoYanAlert.show(
+                        message: I18n.str("Library moved, but the original remains."),
+                        informativeText: I18n.str("MiaoYan will use the local copy after restart. Remove the old cloud copy manually to avoid confusion."),
+                        style: .warning,
+                        for: presentingWindow ?? view.window
+                    ) { _ in AppDelegate.relaunchApp() }
+                } else {
+                    AppDelegate.relaunchApp()
+                }
+            } catch {
+                fsManager?.endGitMutation()
+                editArea.isEditable = true
+                toastDismiss()
+                AppDelegate.trackError(error, context: "ViewController.migrateGitLibraryToLocalStorage")
+                MiaoYanAlert.show(
+                    message: I18n.str("The library could not be moved."),
+                    informativeText: I18n.str("Please try again") + "\n\n" + error.localizedDescription,
+                    style: .warning,
+                    for: presentingWindow ?? view.window
+                )
+            }
+        }
+    }
+
+    private func presentGitConfiguration(
+        for root: Project,
+        presentingWindow: NSWindow?,
+        completion: (() -> Void)?
+    ) {
+
+        let existingConfiguration = gitSyncConfigurationStore.configuration(for: root.url)
+        let existingCredential = existingConfiguration.flatMap {
+            try? AppEnvironment.current.gitCredentialStore.credential(for: $0.remoteURL)
+        }
+        let remoteField = NSTextField(string: existingConfiguration?.remoteURL.absoluteString ?? "")
+        remoteField.placeholderString = "https://github.com/owner/notes.git"
+        let usernameField = NSTextField(string: existingCredential?.username ?? "")
+        usernameField.placeholderString = I18n.str("Git username")
+        let tokenField = NSSecureTextField(string: "")
+        tokenField.placeholderString = existingCredential == nil ? I18n.str("Personal access token") : I18n.str("Stored token (leave blank to keep)")
+        let authorNameField = NSTextField(string: existingConfiguration?.authorName ?? "")
+        authorNameField.placeholderString = I18n.str("Commit author name")
+        let authorEmailField = NSTextField(string: existingConfiguration?.authorEmail ?? "")
+        authorEmailField.placeholderString = I18n.str("Commit author email")
+        let existingAI = existingConfiguration?.ai
+        let aiEnabledButton = NSButton(
+            checkboxWithTitle: I18n.str("Enable AI conflict resolution"),
+            target: nil,
+            action: nil
+        )
+        aiEnabledButton.state = existingAI == nil ? .off : .on
+        let aiBaseURLField = NSTextField(string: existingAI?.baseURL.absoluteString ?? GitAIConfiguration.defaultBaseURL.absoluteString)
+        aiBaseURLField.placeholderString = "https://api.deepseek.com"
+        let aiModelField = NSTextField(string: existingAI?.model ?? GitAIConfiguration.defaultModel)
+        aiModelField.placeholderString = "deepseek-v4-flash"
+        let existingAIKey = existingAI.flatMap { try? AppEnvironment.current.gitAIKeyStore.apiKey(for: $0.baseURL) }
+        let aiKeyField = NSSecureTextField(string: "")
+        aiKeyField.placeholderString = existingAIKey == nil ? I18n.str("AI API key") : I18n.str("Stored API key (leave blank to keep)")
+        let promptView = NSTextView(frame: NSRect(x: 0, y: 0, width: 410, height: 150))
+        promptView.isRichText = false
+        promptView.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        promptView.string = existingAI?.prompt ?? GitAIConfiguration.defaultPrompt
+        let promptScrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 430, height: 150))
+        promptScrollView.hasVerticalScroller = true
+        promptScrollView.borderType = .bezelBorder
+        promptScrollView.documentView = promptView
+        promptScrollView.heightAnchor.constraint(equalToConstant: 150).isActive = true
+
+        let stack = NSStackView(views: [
+            labeledGitField(I18n.str("Repository HTTPS URL"), field: remoteField),
+            labeledGitField(I18n.str("Username"), field: usernameField),
+            labeledGitField(I18n.str("Personal access token"), field: tokenField),
+            labeledGitField(I18n.str("Author name"), field: authorNameField),
+            labeledGitField(I18n.str("Author email"), field: authorEmailField),
+            aiEnabledButton,
+            labeledGitField(I18n.str("AI API base URL"), field: aiBaseURLField),
+            labeledGitField(I18n.str("AI model name"), field: aiModelField),
+            labeledGitField(I18n.str("AI API key"), field: aiKeyField),
+            labeledGitView(I18n.str("Conflict resolution prompt"), view: promptScrollView),
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.frame = NSRect(x: 0, y: 0, width: 430, height: 560)
+        stack.views.forEach { $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Configure Git Sync"),
+            informativeText: I18n.str("The token is stored in macOS Keychain. MiaoYan syncs only the main branch over HTTPS."),
+            buttons: [I18n.str("Save"), I18n.str("Cancel")]
+        )
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = remoteField
+        MiaoYanAlert.present(alert, for: presentingWindow ?? view.window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            do {
+                guard let remoteURL = URL(string: remoteField.stringValue),
+                    !authorNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    !authorEmailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else {
+                    throw GitCredentialStoreError.invalidRemoteURL
+                }
+                let aiConfiguration: GitAIConfiguration?
+                let desiredAIKey: String?
+                if aiEnabledButton.state == .on {
+                    guard let baseURL = URL(string: aiBaseURLField.stringValue) else {
+                        throw GitAIConflictResolverError.invalidConfiguration
+                    }
+                    let candidate = GitAIConfiguration(
+                        baseURL: baseURL,
+                        model: aiModelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+                        prompt: promptView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    )
+                    guard candidate.chatCompletionsURL != nil, !candidate.model.isEmpty, !candidate.prompt.isEmpty else {
+                        throw GitAIConflictResolverError.invalidConfiguration
+                    }
+                    let enteredAIKey = aiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !enteredAIKey.isEmpty {
+                        desiredAIKey = enteredAIKey
+                    } else if existingAI?.baseURL != baseURL || existingAIKey == nil {
+                        throw GitAIConflictResolverError.invalidConfiguration
+                    } else {
+                        desiredAIKey = existingAIKey
+                    }
+                    aiConfiguration = candidate
+                } else {
+                    aiConfiguration = nil
+                    desiredAIKey = nil
+                }
+                let configuration = GitSyncConfiguration(
+                    remoteURL: remoteURL,
+                    authorName: authorNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+                    authorEmail: authorEmailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+                    automaticSyncEnabled: existingConfiguration?.automaticSyncEnabled ?? false,
+                    ai: aiConfiguration
+                )
+                let token = tokenField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                let canReuseToken: Bool
+                if let oldURL = existingConfiguration?.remoteURL {
+                    canReuseToken =
+                        try GitCredentialStore.normalizedRemoteURL(oldURL)
+                        == GitCredentialStore.normalizedRemoteURL(remoteURL)
+                } else {
+                    canReuseToken = false
+                }
+                let finalToken: String
+                if token.isEmpty, canReuseToken, let existingCredential {
+                    finalToken = existingCredential.personalAccessToken
+                } else {
+                    finalToken = token
+                }
+                let credential = GitHTTPSCredential(
+                    username: usernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines),
+                    personalAccessToken: finalToken
+                )
+                try self.persistGitSyncSettings(
+                    configuration,
+                    credential: credential,
+                    aiKey: desiredAIKey,
+                    replacing: existingConfiguration,
+                    for: root.url
+                )
+                self.toast(message: I18n.str("Git sync configured~"), style: .success)
+                completion?()
+            } catch {
+                AppDelegate.trackError(error, context: "ViewController.configureGitSync")
+                MiaoYanAlert.show(
+                    message: I18n.str("Git sync configuration is invalid."),
+                    informativeText: gitConfigurationErrorDescription(error),
+                    style: .warning,
+                    for: presentingWindow ?? self.view.window
+                )
+            }
+        }
+    }
+
+    private func gitConfigurationErrorDescription(_ error: Error) -> String {
+        if error is GitAIConflictResolverError {
+            return I18n.str("Check the AI HTTPS endpoint, model name, prompt, and API key.")
+        }
+        if let credentialError = error as? GitCredentialStoreError {
+            switch credentialError {
+            case .invalidRemoteURL, .unsupportedRemoteScheme, .missingRemoteHost, .missingRepositoryPath:
+                return I18n.str("Use an HTTPS repository URL without embedded credentials, query, or fragment.")
+            case .emptyUsername, .emptyPersonalAccessToken:
+                return I18n.str("Username and personal access token are required.")
+            case .serializationFailed, .invalidStoredCredential, .keychain:
+                return I18n.str("The Git credential could not be stored in macOS Keychain.")
+            }
+        }
+        return I18n.str("Review the Git sync settings and try again.")
+    }
+
+    private func persistGitSyncSettings(
+        _ configuration: GitSyncConfiguration,
+        credential: GitHTTPSCredential,
+        aiKey: String?,
+        replacing previousConfiguration: GitSyncConfiguration?,
+        for rootURL: URL
+    ) throws {
+        let credentialStore = AppEnvironment.current.gitCredentialStore
+        let aiKeyStore = AppEnvironment.current.gitAIKeyStore
+        let previousTargetCredential = try credentialStore.credential(for: configuration.remoteURL)
+        let previousTargetAIKey: String?
+        if let ai = configuration.ai {
+            guard let aiKey, !aiKey.isEmpty else { throw GitAIConflictResolverError.invalidConfiguration }
+            previousTargetAIKey = try aiKeyStore.apiKey(for: ai.baseURL)
+        } else {
+            previousTargetAIKey = nil
+        }
+
+        do {
+            try credentialStore.save(credential, for: configuration.remoteURL)
+            if let ai = configuration.ai, let aiKey {
+                try aiKeyStore.save(aiKey, for: ai.baseURL)
+            }
+            try gitSyncConfigurationStore.save(configuration, for: rootURL)
+        } catch {
+            let originalError = error
+            do {
+                if let previousTargetCredential {
+                    try credentialStore.save(previousTargetCredential, for: configuration.remoteURL)
+                } else {
+                    try credentialStore.deleteCredential(for: configuration.remoteURL)
+                }
+                if let ai = configuration.ai {
+                    if let previousTargetAIKey {
+                        try aiKeyStore.save(previousTargetAIKey, for: ai.baseURL)
+                    } else {
+                        try aiKeyStore.deleteAPIKey(for: ai.baseURL)
+                    }
+                }
+            } catch let rollbackError {
+                AppDelegate.trackError(rollbackError, context: "ViewController.persistGitSyncSettings.rollback")
+            }
+            throw originalError
+        }
+
+        if let previousRemote = previousConfiguration?.remoteURL,
+            (try? GitCredentialStore.normalizedRemoteURL(previousRemote))
+                != (try? GitCredentialStore.normalizedRemoteURL(configuration.remoteURL))
+        {
+            do {
+                try credentialStore.deleteCredential(for: previousRemote)
+            } catch {
+                AppDelegate.trackError(error, context: "ViewController.persistGitSyncSettings.oldGitCredentialCleanup")
+            }
+        }
+        if let previousAI = previousConfiguration?.ai {
+            let shouldDeletePreviousKey: Bool
+            if let newAI = configuration.ai {
+                shouldDeletePreviousKey = (try? aiKeyStore.referencesSameKey(previousAI.baseURL, newAI.baseURL)) == false
+            } else {
+                shouldDeletePreviousKey = true
+            }
+            if shouldDeletePreviousKey {
+                do {
+                    try aiKeyStore.deleteAPIKey(for: previousAI.baseURL)
+                } catch {
+                    AppDelegate.trackError(error, context: "ViewController.persistGitSyncSettings.oldAIKeyCleanup")
+                }
+            }
+        }
+        (NSApplication.shared.delegate as? AppDelegate)?.refreshAutomaticGitSyncSchedule()
+    }
+
+    @IBAction func syncGitRepository(_ sender: Any) {
+        // Main-menu actions are connected to the storyboard's proxy
+        // ViewController object, which has no outlets. Resolve the live window
+        // controller before touching view state or starting a sync.
+        Self.routeGitSyncAction(to: ViewController.shared(), sender: sender)
+    }
+
+    static func routeGitSyncAction(to viewController: ViewController?, sender: Any) {
+        guard let viewController, viewController.isViewLoaded else { return }
+        viewController.performGitRepositorySync(sender)
+    }
+
+    private func performGitRepositorySync(_ sender: Any) {
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode) else {
+            MiaoYanAlert.show(
+                message: I18n.str("Git sync is unavailable in single-file mode."),
+                style: .warning,
+                for: view.window
+            )
+            return
+        }
+        guard let root = selectedGitSyncRoot(),
+            let configuration = gitSyncConfigurationStore.configuration(for: root.url)
+        else {
+            configureGitSync(sender)
+            return
+        }
+
+        let credential: GitHTTPSCredential
+        do {
+            guard let stored = try AppEnvironment.current.gitCredentialStore.credential(for: configuration.remoteURL) else {
+                configureGitSync(sender)
+                return
+            }
+            credential = stored
+        } catch {
+            AppDelegate.trackError(error, context: "ViewController.syncGitRepository.credentials")
+            MiaoYanAlert.show(
+                message: I18n.str("Git credentials are unavailable."),
+                informativeText: I18n.str("Review the Git sync settings and try again."),
+                style: .warning,
+                for: view.window
+            )
+            return
+        }
+
+        runGitSync(root: root, configuration: configuration, credential: credential)
+    }
+
+    func performAutomaticGitSync(for scheduledRootURL: URL) async -> GitSyncResult? {
+        guard !gitSyncCoordinator.state.isRunning,
+            let root = selectedGitSyncRoot(),
+            root.url.standardizedFileURL.resolvingSymlinksInPath()
+                == scheduledRootURL.standardizedFileURL.resolvingSymlinksInPath(),
+            let configuration = gitSyncConfigurationStore.configuration(for: root.url),
+            configuration.automaticSyncEnabled
+        else { return nil }
+
+        guard !(await GitSyncLibraryLocationPolicy.isCloudBacked(root.url)) else {
+            AppDelegate.trackError(
+                GitSyncAutomaticRunError.cloudBackedLibrary,
+                context: "ViewController.performAutomaticGitSync.location"
+            )
+            return nil
+        }
+
+        let credential: GitHTTPSCredential
+        do {
+            guard let stored = try AppEnvironment.current.gitCredentialStore.credential(for: configuration.remoteURL) else {
+                throw GitSyncAutomaticRunError.missingCredentials
+            }
+            credential = stored
+        } catch {
+            AppDelegate.trackError(error, context: "ViewController.performAutomaticGitSync.credentials")
+            return nil
+        }
+
+        let result = await gitSyncCoordinator.sync(
+            root: root,
+            configuration: configuration,
+            credential: credential,
+            viewController: self
+        )
+        if case .blocked(let reason) = result {
+            AppDelegate.trackError(
+                GitSyncAutomaticRunError.blocked(gitSyncBlockDescription(reason)),
+                context: "ViewController.performAutomaticGitSync.blocked"
+            )
+        }
+        return result
+    }
+
+    private func runGitSync(
+        root: Project,
+        configuration: GitSyncConfiguration,
+        credential: GitHTTPSCredential,
+        unrelatedHistoryResolution: GitSyncUnrelatedHistoryResolution = .keepLocal
+    ) {
+        guard !gitSyncCoordinator.state.isRunning else {
+            toast(message: I18n.str("Wait for the current Git sync to finish."), style: .failure)
+            return
+        }
+        toastPersistent(message: I18n.str("Syncing Git repository…"))
+        gitSyncCoordinator.stateDidChange = { [weak self] state in
+            guard state.isRunning else { return }
+            self?.toastUpdate(message: self?.gitSyncStatusMessage(state) ?? "")
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await gitSyncCoordinator.sync(
+                root: root,
+                configuration: configuration,
+                credential: credential,
+                viewController: self,
+                unrelatedHistoryResolution: unrelatedHistoryResolution
+            )
+            gitSyncCoordinator.stateDidChange = nil
+            toastDismiss()
+            if (NSApplication.shared.delegate as? AppDelegate)?.hasStartedTermination == true {
+                return
+            }
+            presentGitSyncResult(result, root: root, configuration: configuration, credential: credential)
+        }
+    }
+
+    func selectedGitSyncRoot() -> Project? {
+        guard GitSyncModePolicy.allowsGitSync(isSingleFileMode: UserDefaultsManagement.isSingleMode),
+            let root = storage.getDefault(),
+            root.isDefault
+        else { return nil }
+        return root
+    }
+
+    private func labeledGitField(_ title: String, field: NSTextField) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        let stack = NSStackView(views: [label, field])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        field.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func labeledGitView(_ title: String, view: NSView) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        let stack = NSStackView(views: [label, view])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func gitSyncStatusMessage(_ state: GitSyncState) -> String {
+        switch state {
+        case .flushingEdits: return I18n.str("Saving notes before Git sync…")
+        case .inspectingLocalChanges: return I18n.str("Inspecting Git changes…")
+        case .fetching: return I18n.str("Fetching Git repository…")
+        case .validatingIncomingChanges: return I18n.str("Validating incoming files…")
+        case .resolvingConflicts: return I18n.str("Resolving Git conflicts…")
+        case .committing: return I18n.str("Committing note changes…")
+        case .applying: return I18n.str("Applying Git changes…")
+        case .reloading: return I18n.str("Reloading notes…")
+        case .pushing: return I18n.str("Pushing Git changes…")
+        case .idle: return ""
+        }
+    }
+
+    private func presentGitSyncResult(
+        _ result: GitSyncResult,
+        root: Project,
+        configuration: GitSyncConfiguration,
+        credential: GitHTTPSCredential
+    ) {
+        switch result {
+        case .upToDate:
+            toast(message: I18n.str("Git repository is up to date~"), style: .success)
+        case .updated:
+            toast(message: I18n.str("Notes updated from Git~"), style: .success)
+        case .published:
+            toast(message: I18n.str("Notes synced with Git~"), style: .success)
+        case .blocked(.conflicts(let context)):
+            presentGitConflictChoices(context, root: root, configuration: configuration, credential: credential)
+        case .blocked(.divergedHistory):
+            presentUnrelatedHistoryChoice(root: root, configuration: configuration, credential: credential)
+        case .blocked(let reason):
+            MiaoYanAlert.show(
+                message: I18n.str("Git sync was blocked for safety."),
+                informativeText: gitSyncBlockDescription(reason),
+                style: .warning,
+                for: view.window
+            )
+        case .failed(let failure):
+            if case .restoreRevision(let revision) = failure.recovery {
+                presentGitRecoveryChoice(failure: failure, revision: revision, root: root)
+            } else {
+                MiaoYanAlert.show(
+                    message: I18n.str("Git sync failed."),
+                    informativeText: gitSyncFailureDescription(failure),
+                    style: .warning,
+                    for: view.window
+                )
+            }
+        }
+    }
+
+    private func presentGitRecoveryChoice(failure: GitSyncFailure, revision: String, root: Project) {
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Git sync failed."),
+            informativeText: gitSyncFailureDescription(failure)
+                + "\n\n"
+                + I18n.str("Restore the preserved local Git revision? Current post-failure working tree changes will be replaced."),
+            style: .critical,
+            buttons: [I18n.str("Cancel"), I18n.str("Restore Local Revision")]
+        )
+        alert.buttons.last?.keyEquivalent = ""
+        alert.buttons.last?.hasDestructiveAction = true
+        MiaoYanAlert.present(alert, for: view.window) { [weak self] response in
+            guard response == .alertSecondButtonReturn, let self else { return }
+            toastPersistent(message: I18n.str("Restoring Git recovery revision…"))
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let result = await gitSyncCoordinator.restoreRecoveryRevision(
+                    root: root,
+                    revision: revision,
+                    viewController: self
+                )
+                toastDismiss()
+                switch result {
+                case .updated, .upToDate, .published:
+                    toast(message: I18n.str("Git recovery revision restored~"), style: .success)
+                case .blocked(let reason):
+                    MiaoYanAlert.show(
+                        message: I18n.str("Git sync was blocked for safety."),
+                        informativeText: gitSyncBlockDescription(reason),
+                        style: .warning,
+                        for: view.window
+                    )
+                case .failed(let recoveryFailure):
+                    MiaoYanAlert.show(
+                        message: I18n.str("Git sync could not complete safety recovery. Review diagnostics before retrying."),
+                        informativeText: recoveryFailure.description,
+                        style: .warning,
+                        for: view.window
+                    )
+                }
+            }
+        }
+    }
+
+    private func gitSyncFailureDescription(_ failure: GitSyncFailure) -> String {
+        switch failure.stage {
+        case .flush:
+            return I18n.str("Could not save notes before Git sync. No repository changes were made.")
+        case .inspectLocalChanges, .preflight, .commit:
+            return I18n.str("Could not inspect or commit local Git changes. Review the library and try again.")
+        case .fetch, .push:
+            return I18n.str("Could not contact origin/main. Check network access and Git credentials.")
+        case .apply, .reload:
+            return I18n.str("Could not safely apply incoming Git changes. The recovery revision was preserved.")
+        case .recovery:
+            return I18n.str("Git sync could not complete safety recovery. Review diagnostics before retrying.")
+        }
+    }
+
+    private enum GitConflictDialogChoice {
+        case local
+        case remote
+        case ai
+    }
+
+    private func presentUnrelatedHistoryChoice(
+        root: Project,
+        configuration: GitSyncConfiguration,
+        credential: GitHTTPSCredential
+    ) {
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Local and remote histories are unrelated."),
+            informativeText: I18n.str("Replace Local downloads origin/main and replaces the local library. Keep Local leaves every library file unchanged and does not push anything."),
+            style: .critical,
+            buttons: [I18n.str("Keep Local"), I18n.str("Replace Local")]
+        )
+        // The non-destructive choice owns Return. Destructive replacement must
+        // always require an explicit click and must never be activated by Esc.
+        alert.buttons.last?.keyEquivalent = ""
+        alert.buttons.last?.hasDestructiveAction = true
+        MiaoYanAlert.present(alert, for: view.window) { [weak self] response in
+            guard response == .alertSecondButtonReturn, let self else { return }
+            runGitSync(
+                root: root,
+                configuration: configuration,
+                credential: credential,
+                unrelatedHistoryResolution: .replaceLocalWithRemote
+            )
+        }
+    }
+
+    private func presentGitConflictChoices(
+        _ context: GitSyncConflictContext,
+        root: Project,
+        configuration: GitSyncConfiguration,
+        credential: GitHTTPSCredential
+    ) {
+        let editorWasEditable = editArea.isEditable
+        editArea.isEditable = false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { editArea.isEditable = editorWasEditable }
+            var resolutions = [GitSyncConflictResolution]()
+            for file in context.files {
+                guard let choice = await chooseGitConflictVersion(file, configuration: configuration) else { return }
+                switch choice {
+                case .local:
+                    resolutions.append(.init(path: file.path, choice: .local))
+                case .remote:
+                    resolutions.append(.init(path: file.path, choice: .remote))
+                case .ai:
+                    guard let ai = configuration.ai,
+                        let apiKey = try? AppEnvironment.current.gitAIKeyStore.apiKey(for: ai.baseURL),
+                        !apiKey.isEmpty
+                    else { return }
+                    do {
+                        toastPersistent(message: I18n.str("Resolving conflict with AI…"))
+                        let merged = try await gitAIConflictResolver.resolve(file, configuration: ai, apiKey: apiKey)
+                        toastDismiss()
+                        guard let accepted = await confirmAIConflictResult(merged, path: file.path) else { return }
+                        resolutions.append(.init(path: file.path, choice: .mergedText(accepted)))
+                    } catch {
+                        toastDismiss()
+                        AppDelegate.trackError(error, context: "ViewController.resolveGitConflictWithAI")
+                        MiaoYanAlert.show(
+                            message: I18n.str("AI conflict resolution failed."),
+                            informativeText: I18n.str("Check the AI endpoint credentials and response, then try again."),
+                            style: .warning,
+                            for: view.window
+                        )
+                        return
+                    }
+                }
+            }
+
+            toastPersistent(message: I18n.str("Resolving Git conflicts…"))
+            gitSyncCoordinator.stateDidChange = { [weak self] state in
+                guard state.isRunning else { return }
+                self?.toastUpdate(message: self?.gitSyncStatusMessage(state) ?? "")
+            }
+            let result = await gitSyncCoordinator.resolveConflicts(
+                root: root,
+                configuration: configuration,
+                credential: credential,
+                context: context,
+                resolutions: resolutions,
+                viewController: self
+            )
+            gitSyncCoordinator.stateDidChange = nil
+            toastDismiss()
+            presentGitSyncResult(result, root: root, configuration: configuration, credential: credential)
+        }
+    }
+
+    private func chooseGitConflictVersion(
+        _ file: GitSyncConflictFile,
+        configuration: GitSyncConfiguration
+    ) async -> GitConflictDialogChoice? {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        let localDate = file.localModifiedAt.map(formatter.string) ?? I18n.str("unknown")
+        let remoteDate = file.remoteModifiedAt.map(formatter.string) ?? I18n.str("unknown")
+        let localState = file.localExists ? localDate : I18n.str("file deleted")
+        let remoteState = file.remoteExists ? remoteDate : I18n.str("file deleted")
+        var buttons = [I18n.str("Use Local"), I18n.str("Use Remote")]
+        let aiAvailable = configuration.ai != nil && file.canResolveWithAI
+        if aiAvailable { buttons.append(I18n.str("Resolve with AI")) }
+        buttons.append(I18n.str("Cancel"))
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Choose a version for the conflicted file"),
+            informativeText: "\(file.path)\n\n\(I18n.str("Local modified:")) \(localState)\n\(I18n.str("Remote modified:")) \(remoteState)",
+            style: .warning,
+            buttons: buttons
+        )
+        return await withCheckedContinuation { continuation in
+            MiaoYanAlert.present(alert, for: view.window) { response in
+                switch response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue {
+                case 0: continuation.resume(returning: .local)
+                case 1: continuation.resume(returning: .remote)
+                case 2 where aiAvailable: continuation.resume(returning: .ai)
+                default: continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private func confirmAIConflictResult(_ result: String, path: String) async -> String? {
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 560, height: 320))
+        textView.isRichText = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        textView.string = result
+        let scrollView = NSScrollView(frame: textView.frame)
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .bezelBorder
+        scrollView.documentView = textView
+        let alert = MiaoYanAlert.make(
+            message: I18n.str("Review AI conflict resolution"),
+            informativeText: path,
+            buttons: [I18n.str("Use AI Result"), I18n.str("Cancel")]
+        )
+        alert.accessoryView = scrollView
+        return await withCheckedContinuation { continuation in
+            MiaoYanAlert.present(alert, for: view.window) { response in
+                continuation.resume(returning: response == .alertFirstButtonReturn ? textView.string : nil)
+            }
+        }
+    }
+
+    private func gitSyncBlockDescription(_ reason: GitSyncBlockReason) -> String {
+        switch reason {
+        case .pendingSaveFailed:
+            return I18n.str("Pending note changes could not be saved. Git sync did not start.")
+        case .workingTreeNotClean(let paths):
+            return I18n.str("Git sync found local worktree changes that must be resolved first:")
+                + "\n" + paths.joined(separator: "\n")
+        case .disallowedLocalChanges(let violations):
+            return I18n.str("Git sync found unsupported local paths:")
+                + "\n" + violations.map(\.path).joined(separator: "\n")
+        case .disallowedIncomingChanges(let violations):
+            return I18n.str("Git sync found unsupported incoming paths:")
+                + "\n" + violations.map(\.path).joined(separator: "\n")
+        case .conflicts:
+            return I18n.str("Git sync found conflicts.")
+        case .divergedHistory:
+            return I18n.str("Local and remote Git histories cannot be merged automatically.")
+        case .missingAuthorIdentity:
+            return I18n.str("Commit author name and email are required.")
+        case .repositoryUnavailable:
+            return I18n.str("The selected project cannot be used as a Git repository.")
+        case .cloudBackedRepository:
+            return I18n.str("Choose a local folder so only one sync engine owns the working copy.")
+        case .singleFileMode:
+            return I18n.str("Git sync is unavailable in single-file mode.")
         }
     }
 
@@ -785,6 +1810,9 @@ extension ViewController {
     }
 
     public func move(notes: [Note], project: Project) {
+        guard GitSyncLibraryMutationGate.allowsMutation(at: project.url),
+            notes.allSatisfy({ GitSyncLibraryMutationGate.allowsMutation(at: $0.url) })
+        else { return }
         let selectedRow = notesTableView.selectedRowIndexes.min()
         for note in notes {
             if note.project == project {
@@ -827,6 +1855,9 @@ extension ViewController {
     private func move(note: Note, from imageURL: URL, imagePath: String, to project: Project, copy: Bool = false) {
         let dstPrefix = NotesTextProcessor.getAttachPrefix(url: imageURL)
         let dest = project.url.appendingPathComponent(dstPrefix)
+        guard GitSyncLibraryMutationGate.allowsMutation(at: imageURL),
+            GitSyncLibraryMutationGate.allowsMutation(at: dest)
+        else { return }
 
         if !FileManager.default.fileExists(atPath: dest.path) {
             try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: false, attributes: nil)
@@ -1043,9 +2074,9 @@ extension ViewController {
         guard let window = MainWindowController.shared() else { return }
 
         MiaoYanAlert.confirm(
-            message: String(format: I18n.str("Are you sure you want to move %d note(s) to the system Trash?"), notes.count),
-            informativeText: I18n.str("The note(s) will be moved to the system Trash and can be recovered."),
-            confirmTitle: I18n.str("Move to Trash"),
+            message: String(format: I18n.str("Delete %d note(s) permanently?"), notes.count),
+            informativeText: I18n.str("This action cannot be undone."),
+            confirmTitle: I18n.str("Delete Permanently"),
             for: window
         ) { confirmed in
             if confirmed {
@@ -1053,13 +2084,14 @@ extension ViewController {
                 let onPartialFailure: (Int) -> Void = { failedCount in
                     DispatchQueue.main.async {
                         vc.toast(
-                            message: String(format: I18n.str("Failed to move %d note(s) to Trash~"), failedCount),
+                            message: String(format: I18n.str("Failed to delete %d note(s) permanently~"), failedCount),
                             style: .failure
                         )
                     }
                 }
                 vc.storage.removeNotes(
                     notes: notes,
+                    completely: true,
                     partialFailure: onPartialFailure,
                     didRemove: { removedNotes in
                         vc.notesTableView.removeAndReselect(
@@ -1079,6 +2111,39 @@ extension ViewController {
                     }
                 }
             }
+        }
+    }
+
+    @objc func deleteNotesPermanently(_ sender: Any) {
+        removeForever()
+    }
+
+    @objc func restoreNotesFromTrash(_ sender: Any) {
+        guard let notes = notesTableView.getSelectedNotes() else { return }
+        let selectedRow = notesTableView.selectedRowIndexes.min() ?? -1
+        let result = storage.restoreNotesFromTrash(notes)
+
+        if !result.restored.isEmpty {
+            notesTableView.removeAndReselect(
+                notes: result.restored,
+                originalRow: selectedRow)
+            storageOutlineView.reloadSidebar()
+            toast(
+                message: String(
+                    format: I18n.str("Restored %d note(s) from Trash~"),
+                    result.restored.count),
+                style: .success)
+            if notesTableView.noteList.isEmpty {
+                editArea.clear()
+            }
+        }
+
+        if result.failedCount > 0 {
+            toast(
+                message: String(
+                    format: I18n.str("Failed to restore %d note(s) from Trash~"),
+                    result.failedCount),
+                style: .failure)
         }
     }
 
@@ -1162,6 +2227,9 @@ extension ViewController {
     // MARK: - File Operations
     public func copy(project: Project, url: URL) -> URL {
         let fileName = url.lastPathComponent
+        guard GitSyncLibraryMutationGate.allowsMutation(at: url),
+            GitSyncLibraryMutationGate.allowsMutation(at: project.url)
+        else { return url }
 
         do {
             let destination = project.url.appendingPathComponent(fileName)
@@ -1204,6 +2272,8 @@ extension ViewController {
         if let prevHistory = noteMenu.item(withTitle: historyTitle) {
             noteMenu.removeItem(prevHistory)
         }
+
+        configureTrashNoteActions(isTrash: note.isTrash(), viewController: vc)
 
         let moveMenuItem = NSMenuItem()
         moveMenuItem.title = I18n.str("Move")
@@ -1278,6 +2348,40 @@ extension ViewController {
         }
 
         noteMenu.setSubmenu(moveMenu, for: moveMenuItem)
+    }
+
+    private func configureTrashNoteActions(isTrash: Bool, viewController vc: ViewController) {
+        let restoreIdentifier = NSUserInterfaceItemIdentifier("noteMenu.restore")
+        if let previousRestore = noteMenu.items.first(where: { $0.identifier == restoreIdentifier }) {
+            noteMenu.removeItem(previousRestore)
+        }
+
+        guard
+            let deleteItem = noteMenu.items.first(where: {
+                $0.identifier == NSUserInterfaceItemIdentifier("noteMenu.delete")
+            })
+                ?? noteMenu.items.first(where: {
+                    $0.action == #selector(vc.deleteNote(_:))
+                        || $0.action == #selector(vc.deleteNotesPermanently(_:))
+                })
+        else { return }
+
+        deleteItem.identifier = NSUserInterfaceItemIdentifier("noteMenu.delete")
+        if isTrash {
+            deleteItem.title = I18n.str("Delete Permanently")
+            deleteItem.action = #selector(vc.deleteNotesPermanently(_:))
+
+            let restoreItem = NSMenuItem(
+                title: I18n.str("Restore"),
+                action: #selector(vc.restoreNotesFromTrash(_:)),
+                keyEquivalent: "")
+            restoreItem.identifier = restoreIdentifier
+            restoreItem.target = vc
+            noteMenu.insertItem(restoreItem, at: noteMenu.index(of: deleteItem))
+        } else {
+            deleteItem.title = I18n.str("Delete")
+            deleteItem.action = #selector(vc.deleteNote(_:))
+        }
     }
 
     @IBAction func showVersionHistory(_ sender: Any) {
