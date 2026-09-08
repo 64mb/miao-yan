@@ -1,11 +1,11 @@
-# V4.2.5 Barioth ⚡️
+# V4.2.6 Astalos 🧩
 
-1. Android 置顶标记改用与操作菜单一致的原生图钉，并在副标题末尾精确对齐
-2. macOS Git 同步现在忽略任意层级的 `.DS_Store`，不再因传入的 Finder 元数据阻塞
-3. 已被 Git 跟踪的 Finder 元数据会在同步后安全移出索引，同时保留本地文件
+1. macOS Git 同步现在使用跨平台 NFC 路径，文件夹名与笔记名中的 emoji 和 Unicode 字符可被完整保留
+2. 旧版 macOS 创建的分解 Unicode 索引项会在下次同步时自动修复，无需手动重命名文件
+3. Android 会拦截规范等价的 Unicode 路径冲突，避免同步产生重复或歧义文件
 
 ---
 
-1. Android pinned notes now use the same native push pin as the action menu, precisely aligned at the end of the subtitle
-2. macOS Git Sync now ignores `.DS_Store` at any library depth instead of blocking on incoming Finder metadata
-3. Previously tracked Finder metadata is safely removed from the Git index after sync while its local file remains available
+1. macOS Git Sync now uses cross-platform NFC paths, preserving emoji and Unicode characters in folder and note names
+2. Decomposed Unicode index entries created by older macOS builds are repaired automatically during the next sync without manual renaming
+3. Android rejects canonically equivalent Unicode path collisions before they can create duplicate or ambiguous synced files
