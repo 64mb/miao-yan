@@ -164,6 +164,12 @@ enum GitSyncPathDecision: Equatable, Sendable {
     case rejected(GitSyncPathViolation)
 }
 
+enum GitSyncPathNormalization {
+    static func repositoryPath(_ path: String) -> String {
+        path.precomposedStringWithCanonicalMapping
+    }
+}
+
 /// Only exact root projects that MiaoYan already opened are eligible. This
 /// deliberately rejects descendants and same-prefix sibling directories.
 struct GitSyncRepositoryRootPolicy: Sendable {
@@ -210,6 +216,7 @@ struct GitSyncPathPolicy: Sendable {
     }
 
     func classify(relativePath path: String, entryKind: GitSyncEntryKind = .regularFile) -> GitSyncPathDecision {
+        let path = GitSyncPathNormalization.repositoryPath(path)
         guard !path.isEmpty else { return reject(path, because: .emptyPath) }
         guard path.utf8.count <= maximumPathByteCount,
             !path.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),

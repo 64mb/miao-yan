@@ -256,7 +256,9 @@ enum GitSyncFileCollector {
             if values.isDirectory == true { continue }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(rootPath + "/") else { continue }
-            let relativePath = String(path.dropFirst(rootPath.count + 1))
+            let relativePath = GitSyncPathNormalization.repositoryPath(
+                String(path.dropFirst(rootPath.count + 1))
+            )
 
             switch policy.classify(relativePath: relativePath) {
             case .allowed(let kind):
@@ -291,7 +293,9 @@ enum GitSyncFileCollector {
                 }
                 let path = url.standardizedFileURL.path
                 guard path.hasPrefix(rootPath + "/") else { continue }
-                let relativePath = String(path.dropFirst(rootPath.count + 1))
+                let relativePath = GitSyncPathNormalization.repositoryPath(
+                    String(path.dropFirst(rootPath.count + 1))
+                )
 
                 switch policy.classify(relativePath: relativePath) {
                 case .allowed(let kind):

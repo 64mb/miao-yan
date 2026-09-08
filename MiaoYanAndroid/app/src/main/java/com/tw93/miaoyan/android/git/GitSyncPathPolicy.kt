@@ -1,5 +1,6 @@
 package com.tw93.miaoyan.android.git
 
+import java.text.Normalizer
 import java.util.Locale
 import java.util.UUID
 
@@ -34,7 +35,8 @@ object GitSyncPathPolicy {
         }
     }
 
-    fun collisionKey(path: String): String = path.lowercase(Locale.ROOT)
+    fun collisionKey(path: String): String =
+        Normalizer.normalize(path, Normalizer.Form.NFC).lowercase(Locale.ROOT)
 
     fun isAttachment(path: String): Boolean = path.split('/').dropLast(1).any { it in attachmentDirectories }
 
