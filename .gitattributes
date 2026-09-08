@@ -2,3 +2,6 @@
 Resources/DownView.bundle/**       linguist-vendored
 Resources/Prettier.bundle/**          linguist-vendored
 Packages/CLibGit2/Artifacts/** -whitespace
+# Keep verified third-party distribution bytes unchanged. The upstream notices
+# use Markdown hard-break spaces and minified JavaScript contains literal spaces.
+MiaoYanAndroid/app/src/main/assets/prettier/** -whitespace linguist-vendored

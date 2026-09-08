@@ -51,6 +51,11 @@ Thumbs.db
 !.vscode/launch.json
 !.vscode/tasks.json
 .idea/
+.gradle/
+.kotlin/
+.cxx/
+local.properties
+MiaoYanAndroid/prototype-*.png
 *.swp
 *.swo
 ~*
