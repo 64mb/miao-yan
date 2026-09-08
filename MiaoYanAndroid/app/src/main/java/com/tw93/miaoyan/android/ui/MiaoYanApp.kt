@@ -14,6 +14,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.widget.EditText
+import android.widget.ScrollView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -1210,40 +1211,46 @@ private fun PlatformMarkdownEditor(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            SelectionAwareEditText(context).apply {
-                gravity = Gravity.TOP or Gravity.START
-                val padding = editorPaddingPixels(resources.displayMetrics.density)
-                setPadding(padding.horizontal, padding.top, padding.horizontal, padding.bottom)
-                setBackgroundColor(AndroidColor.TRANSPARENT)
-                includeFontPadding = false
-                setHorizontallyScrolling(false)
-                verticalScrollbarThumbDrawable = context.getDrawable(R.drawable.editor_scrollbar_thumb)
-                isVerticalScrollBarEnabled = true
-                isScrollbarFadingEnabled = false
-                scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
-                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                setText(text)
-                setSelection(selectionStart.coerceIn(0, text.length), selectionEnd.coerceIn(0, text.length))
-                selectionListener = onSelectionChanged
-                updateSyntaxPalette(syntaxPalette)
-                addTextChangedListener(object : TextWatcher {
-                    override fun beforeTextChanged(value: CharSequence?, start: Int, count: Int, after: Int) = Unit
-                    override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) {
-                        noteSyntaxChange(start, count)
-                    }
-                    override fun afterTextChanged(value: Editable?) {
-                        onTextChanged(value?.toString().orEmpty())
-                        scheduleSyntaxHighlight()
-                    }
-                })
-                scheduleSyntaxHighlight()
+            MarkdownEditorScrollView(context).apply {
+                editor.apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    val padding = editorPaddingPixels(resources.displayMetrics.density)
+                    setPadding(padding.horizontal, padding.top, padding.horizontal, padding.bottom)
+                    setBackgroundColor(AndroidColor.TRANSPARENT)
+                    includeFontPadding = false
+                    setHorizontallyScrolling(false)
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                        android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                        android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    setText(text)
+                    setSelection(selectionStart.coerceIn(0, text.length), selectionEnd.coerceIn(0, text.length))
+                    selectionListener = onSelectionChanged
+                    updateSyntaxPalette(syntaxPalette)
+                    addTextChangedListener(object : TextWatcher {
+                        override fun beforeTextChanged(
+                            value: CharSequence?,
+                            start: Int,
+                            count: Int,
+                            after: Int,
+                        ) = Unit
+
+                        override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) {
+                            noteSyntaxChange(start, count)
+                        }
+
+                        override fun afterTextChanged(value: Editable?) {
+                            onTextChanged(value?.toString().orEmpty())
+                            scheduleSyntaxHighlight()
+                        }
+                    })
+                    scheduleSyntaxHighlight()
+                }
             }
         },
-        update = { editor ->
+        update = { scrollView ->
+            val editor = scrollView.editor
             editor.setTextColor(contentColor)
+            scrollView.setBackgroundColor(backgroundColor)
             editor.setBackgroundColor(backgroundColor)
             editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, editorSettings.fontSizeSp.toFloat())
             editor.typeface = editorTypeface(editorSettings.font, editor)
@@ -1266,7 +1273,42 @@ private fun PlatformMarkdownEditor(
     )
 }
 
-private class SelectionAwareEditText(context: Context) : EditText(context) {
+/**
+ * Gives the editor Android's native drag and fling physics. TextView's own internal scrolling
+ * follows the finger but does not continue with inertial scrolling after the gesture ends.
+ */
+internal class MarkdownEditorScrollView(context: Context) : ScrollView(context) {
+    internal val editor = SelectionAwareEditText(context)
+
+    init {
+        isFillViewport = true
+        isSmoothScrollingEnabled = true
+        verticalScrollbarThumbDrawable = context.getDrawable(R.drawable.editor_scrollbar_thumb)
+        isVerticalScrollBarEnabled = true
+        isScrollbarFadingEnabled = false
+        scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+        editor.isVerticalScrollBarEnabled = false
+        editor.overScrollMode = View.OVER_SCROLL_NEVER
+        addView(
+            editor,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
+        )
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        editor.deferSyntaxHighlightForScroll()
+        return super.onTouchEvent(event)
+    }
+
+    override fun onScrollChanged(left: Int, top: Int, oldLeft: Int, oldTop: Int) {
+        super.onScrollChanged(left, top, oldLeft, oldTop)
+        if (top != oldTop) editor.deferSyntaxHighlightForScroll()
+    }
+}
+
+internal class SelectionAwareEditText(context: Context) : EditText(context) {
     var selectionListener: ((Int, Int) -> Unit)? = null
     private var syntaxPalette: MarkdownSyntaxPalette = MarkdownEditorPalettes.Light
     private var textVersion = 0
@@ -1315,18 +1357,7 @@ private class SelectionAwareEditText(context: Context) : EditText(context) {
         postDelayed(syntaxHighlightRunnable, delayMillis)
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> scheduleSyntaxHighlight(SCROLL_IDLE_HIGHLIGHT_DELAY_MILLIS)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> scheduleSyntaxHighlight()
-        }
-        return super.onTouchEvent(event)
-    }
-
-    override fun onScrollChanged(left: Int, top: Int, oldLeft: Int, oldTop: Int) {
-        super.onScrollChanged(left, top, oldLeft, oldTop)
-        if (top != oldTop) scheduleSyntaxHighlight(SCROLL_IDLE_HIGHLIGHT_DELAY_MILLIS)
-    }
+    fun deferSyntaxHighlightForScroll() = scheduleSyntaxHighlight(SCROLL_IDLE_HIGHLIGHT_DELAY_MILLIS)
 
     override fun onSelectionChanged(selectionStart: Int, selectionEnd: Int) {
         super.onSelectionChanged(selectionStart, selectionEnd)
