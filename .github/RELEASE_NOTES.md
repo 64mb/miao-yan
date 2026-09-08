@@ -1,11 +1,11 @@
-# V4.2.4 Mizutsune 🌊
+# V4.2.5 Barioth ⚡️
 
-1. Android 幻灯片支持点击后加载隔离的 HTTPS iframe，并兼容 macOS 的颜色、渐变、本地图片与网页背景
-2. Android 置顶笔记现在会稳定排在前面并显示图钉，搜索输入增加防抖以减少无效刷新
-3. 幻灯片切换不再重建 WebView，macOS 文件夹重命名完成后也会正确退出编辑状态
+1. Android 置顶标记改用与操作菜单一致的原生图钉，并在副标题末尾精确对齐
+2. macOS Git 同步现在忽略任意层级的 `.DS_Store`，不再因传入的 Finder 元数据阻塞
+3. 已被 Git 跟踪的 Finder 元数据会在同步后安全移出索引，同时保留本地文件
 
 ---
 
-1. Android slides now load isolated HTTPS iframes on tap and support macOS-compatible colors, gradients, local images, and web backgrounds
-2. Pinned Android notes stay at the top with a visible pin, while debounced search avoids unnecessary refreshes during typing
-3. Slide navigation no longer rebuilds its WebView, and macOS folder labels correctly leave editing mode after rename
+1. Android pinned notes now use the same native push pin as the action menu, precisely aligned at the end of the subtitle
+2. macOS Git Sync now ignores `.DS_Store` at any library depth instead of blocking on incoming Finder metadata
+3. Previously tracked Finder metadata is safely removed from the Git index after sync while its local file remains available
