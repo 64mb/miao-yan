@@ -27,11 +27,11 @@ class DemoLibrarySeedInstrumentedTest {
     fun bundledAssetsAreTheExactUtf8DesktopDemoFiles() {
         val expectedHashes = mapOf(
             "Brainstorming.md" to "dd82c1f9763511d8ddacbce2b5e3070c766e3c260f0291a42111737999c2b718",
-            "Introduction to MiaoYan.md" to "5f1c6a47a5e4885cdbeef879af7a23a9ffa17f33138034849d57f297d8c3adbc",
+            "Introduction to MiaoYan.md" to "e2d4c5b44eb9d218d998261a064cc7c0ddaa9abd936afb8b986df774937fc758",
             "MiaoYan Markdown Syntax Guide.md" to "1f2a44bfe33b9ccf0f605a0a10b14a179c79a33b69f35afd1c7cc95d8149295f",
             "MiaoYan PPT.md" to "5e340eb179a6d4615d639059118b174016760f2e804a2bc431b6c15f43239b25",
             "Welcome.md" to "f7d94034fdd33dfe82a98828e74419271dce7c50dc15a09e8880cfe3a3360227",
-            "介绍妙言.md" to "1fba6b0f1acd5c99ae36071ec55a0b5080181cfc0e68bfdd76d8e87b019e5b12",
+            "介绍妙言.md" to "c6c5f15cca21e26a26a60378f55615432161feae86ffeb1ea4a722ee201b23f2",
             "头脑风暴.md" to "88dd38c1df253b53307baa737089b24a0f8f417f8c0561ded3ada04e6f5b2da8",
             "妙言 Markdown 语法指南.md" to "bc2491b3aea0157135b809bfb2971c7bdf8a18c172a1be5f5a67d746a0fb0782",
             "妙言 PPT.md" to "d3178375e9ad1cc8f2ca31f938176b41f34935db4ed1f0ecee42c41979947d10",
