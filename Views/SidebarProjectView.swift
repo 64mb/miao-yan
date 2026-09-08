@@ -939,9 +939,7 @@ class SidebarProjectView: NSOutlineView,
             return
         }
 
-        cell.label.isEditable = true
-        cell.label.isSelectable = true
-        cell.label.becomeFirstResponder()
+        cell.beginProjectNameEditing()
     }
 
     @IBAction func deleteMenu(_ sender: Any) {
