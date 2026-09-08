@@ -148,6 +148,9 @@ class PresentationDocumentTest {
         assertTrue(slides.contains(".reveal p,.reveal li { line-height: 1.5; }"))
         assertTrue(slides.contains("max-height: 360px"))
         assertTrue(slides.contains("line-height: 1.45"))
+        assertTrue(slides.contains("center: false"))
+        assertTrue(slides.contains(".reveal .slides > section.present"))
+        assertTrue(slides.contains("scroll-padding-bottom: max(96px"))
     }
 
     @Test

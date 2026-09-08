@@ -40,7 +40,7 @@ class PresentationTestActivity : ComponentActivity() {
                 if (session.mode == PresentationMode.Slides) {
                     PresentationHost(
                         mode = PresentationMode.Slides,
-                        markdown = "# One\n---\n# Two",
+                        markdown = TestSlides,
                         editorSettings = EditorSettings(),
                         initialSlide = session.slide,
                         imageHandler = PresentationImageHandler.DenyAll,
@@ -59,6 +59,19 @@ class PresentationTestActivity : ComponentActivity() {
 
     companion object {
         val reportedSlide = AtomicInteger(-1)
+
+        private val TestSlides = buildString {
+            appendLine("# One")
+            appendLine("---")
+            appendLine("# Two")
+            appendLine("---")
+            appendLine("# Long slide")
+            repeat(40) {
+                appendLine("Line ${it + 1} remains readable.")
+                appendLine()
+            }
+            appendLine("Last visible line")
+        }
     }
 }
 

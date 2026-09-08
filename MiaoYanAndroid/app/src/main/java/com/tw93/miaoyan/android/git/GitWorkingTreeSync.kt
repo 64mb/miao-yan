@@ -397,7 +397,7 @@ class GitWorkingTreeSync(context: Context) {
     private fun commit(git: Git, config: GitSyncConfig) {
         val identity = PersonIdent(config.authorName, config.authorEmail, Instant.now(), ZoneId.systemDefault())
         git.commit()
-            .setMessage("Sync from MiaoYan Android")
+            .setMessage("Sync from Android")
             .setAuthor(identity)
             .setCommitter(identity)
             .call()

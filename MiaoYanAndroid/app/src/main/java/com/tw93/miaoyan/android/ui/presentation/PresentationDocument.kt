@@ -134,7 +134,7 @@ object PresentationDocument {
                   touch: true,
                   overview: false,
                   help: false,
-                  center: true,
+                  center: false,
                   transition: 'slide',
                   backgroundTransition: 'fade'
                 }).then(() => {
@@ -202,6 +202,16 @@ object PresentationDocument {
         .reveal { color: ${colors.foreground}; font-family: ${colors.fontStack}; font-size: ${colors.slideFontSize}px; line-height: 1.5; }
         .reveal .slides { text-align: left; }
         .reveal .slides section { max-height: 100%; overflow-x: hidden; overflow-y: auto; overflow-wrap: anywhere; padding: 10px; box-sizing: border-box; }
+        .reveal .slides > section.present {
+          top: 0 !important;
+          height: 100%;
+          max-height: 100%;
+          overflow-y: auto;
+          overscroll-behavior-y: contain;
+          scroll-padding-bottom: max(96px, calc(env(safe-area-inset-bottom) + 64px));
+          padding: max(40px, env(safe-area-inset-top)) max(48px, env(safe-area-inset-right)) max(96px, calc(env(safe-area-inset-bottom) + 64px)) max(48px, env(safe-area-inset-left));
+          box-sizing: border-box;
+        }
         .reveal h1,.reveal h2,.reveal h3,.reveal h4,.reveal h5,.reveal h6 { color: ${colors.heading}; line-height: 1.25; text-transform: none; }
         .reveal p,.reveal li { line-height: 1.5; }
         .reveal p { margin: .55em 0; }

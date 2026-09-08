@@ -9,9 +9,13 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 @Suppress("DEPRECATION")
 class PresentationHostInstrumentedTest {
@@ -48,6 +52,44 @@ class PresentationHostInstrumentedTest {
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
 
         compose.onNodeWithText("Presentation closed").assertIsDisplayed()
+    }
+
+    @Test
+    fun tallSlideScrollsUntilItsLastLineIsInsideTheViewport() {
+        compose.waitUntil(timeoutMillis = 30_000) { PresentationTestActivity.reportedSlide.get() == 0 }
+
+        evaluateJavaScript("Reveal.slide(2)")
+        compose.waitUntil(timeoutMillis = 30_000) { PresentationTestActivity.reportedSlide.get() == 2 }
+
+        val metrics = evaluateJavaScript(
+            """
+            (() => {
+              const slide = document.querySelector('section.present');
+              slide.scrollTop = slide.scrollHeight;
+              const last = slide.lastElementChild.getBoundingClientRect();
+              const viewport = slide.getBoundingClientRect();
+              return [slide.scrollTop, slide.scrollHeight, slide.clientHeight, last.top, last.bottom, viewport.top, viewport.bottom].join('|');
+            })()
+            """.trimIndent(),
+        ).trim('"').split('|').map(String::toFloat)
+
+        assertTrue("The fixture must be taller than one slide", metrics[1] > metrics[2])
+        assertTrue("The slide must have scrolled", metrics[0] > 0f)
+        assertTrue("The last line must start inside the slide: $metrics", metrics[3] >= metrics[5])
+        assertTrue("The last line must end inside the slide: $metrics", metrics[4] <= metrics[6])
+    }
+
+    private fun evaluateJavaScript(script: String): String {
+        val result = AtomicReference<String>()
+        val completed = CountDownLatch(1)
+        compose.activityRule.scenario.onActivity { activity ->
+            requireNotNull(findWebView(activity.window.decorView)).evaluateJavascript(script) { value ->
+                result.set(value)
+                completed.countDown()
+            }
+        }
+        assertTrue("JavaScript evaluation timed out", completed.await(10, TimeUnit.SECONDS))
+        return requireNotNull(result.get())
     }
 
     private fun findWebView(view: View): WebView? {
