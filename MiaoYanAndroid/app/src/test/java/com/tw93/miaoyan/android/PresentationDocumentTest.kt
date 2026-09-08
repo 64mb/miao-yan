@@ -97,6 +97,22 @@ class PresentationDocumentTest {
     }
 
     @Test
+    fun continuousPreviewInstallsSafeHeadingAnchorNavigation() {
+        val html = PresentationDocument.renderContinuous(
+            "[Jump](#hello-world)\n\n# Hello, World!",
+            darkMode = false,
+        ) { "<p><a href=\"#hello-world\">Jump</a></p><h1>Hello, World!</h1>" }
+
+        assertTrue(html.contains("document.querySelectorAll('h1,h2,h3,h4,h5,h6')"))
+        assertTrue(html.contains(".replace(/[^\\p{L}\\p{M}\\p{N}\\s_-]/gu, '')"))
+        assertTrue(html.contains("event.target instanceof Element"))
+        assertTrue(html.contains("event.target.closest('a[href^=\"#\"]')"))
+        assertTrue(html.contains("target.scrollIntoView({ block: 'start' })"))
+        assertTrue(html.contains("history.replaceState(null, '', '#' + encodeURIComponent(targetId))"))
+        assertTrue(html.contains("scroll-margin-top: 16px"))
+    }
+
+    @Test
     fun usesApprovedPreviewTokensAndCurrentEditorTypography() {
         val html = PresentationDocument.renderContinuous(
             markdown = "text",

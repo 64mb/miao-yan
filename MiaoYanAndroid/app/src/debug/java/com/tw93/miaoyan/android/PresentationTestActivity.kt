@@ -131,9 +131,13 @@ class ContinuousPreviewTestActivity : ComponentActivity() {
         }
         private val TestMarkdown = buildString {
             appendLine("# Retained preview")
+            appendLine("[Jump to destination](#destination-heading)")
             appendLine("![](/i/test.png)")
             appendLine("<iframe src=\"https://example.com/embed\"></iframe>")
             repeat(120) { appendLine("Paragraph $it keeps this document scrollable.") }
+            appendLine("# Destination heading")
+            appendLine("# Destination heading")
+            appendLine("# 标题格式")
         }
     }
 }

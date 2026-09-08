@@ -52,6 +52,7 @@ object PresentationDocument {
             <script nonce="$nonce">
               (() => {
                 'use strict';
+                ${headingAnchorScript()}
                 ${syntaxHighlightScript()}
                 document.addEventListener('click', event => {
                   const button = event.target.closest('button.embed-placeholder[data-embed]');
@@ -193,6 +194,48 @@ object PresentationDocument {
         .media-placeholder { display: inline-block; max-width: 100%; color: ${colors.muted}; font-style: italic; overflow-wrap: anywhere; }
         .embed-placeholder { display: block; max-width: 100%; margin: 1em auto; padding: .65em .9em; color: ${colors.link}; background: transparent; border: 1px solid ${colors.border}; border-radius: 8px; font: inherit; cursor: pointer; }
         iframe { display: block; width: 100%; min-height: min(62vh, 640px); margin: 1em auto; border: 1px solid ${colors.border}; border-radius: 8px; }
+        h1[id],h2[id],h3[id],h4[id],h5[id],h6[id] { scroll-margin-top: 16px; }
+    """.trimIndent()
+
+    private fun headingAnchorScript(): String = """
+        const usedHeadingIds = new Set(
+          Array.from(document.querySelectorAll('[id]'), element => element.id)
+        );
+        const slugOccurrences = new Map();
+        const headingSlug = value => value
+          .trim()
+          .toLocaleLowerCase('en-US')
+          .replace(/[^\p{L}\p{M}\p{N}\s_-]/gu, '')
+          .replace(/\s+/g, '-');
+        document.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(heading => {
+          if (heading.id) return;
+          const base = headingSlug(heading.textContent || '');
+          if (!base) return;
+          let occurrence = slugOccurrences.get(base) || 0;
+          let candidate = occurrence === 0 ? base : base + '-' + occurrence;
+          while (usedHeadingIds.has(candidate)) {
+            occurrence += 1;
+            candidate = base + '-' + occurrence;
+          }
+          slugOccurrences.set(base, occurrence + 1);
+          heading.id = candidate;
+          usedHeadingIds.add(candidate);
+        });
+        document.addEventListener('click', event => {
+          const link = event.target instanceof Element
+            ? event.target.closest('a[href^="#"]')
+            : null;
+          if (!link) return;
+          const href = link.getAttribute('href');
+          if (!href || href.length <= 1) return;
+          let targetId;
+          try { targetId = decodeURIComponent(href.substring(1)); } catch (_) { return; }
+          const target = document.getElementById(targetId);
+          if (!target) return;
+          event.preventDefault();
+          target.scrollIntoView({ block: 'start' });
+          try { history.replaceState(null, '', '#' + encodeURIComponent(targetId)); } catch (_) {}
+        });
     """.trimIndent()
 
     private fun slideStyle(colors: PresentationColors): String = """
