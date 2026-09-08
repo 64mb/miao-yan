@@ -49,6 +49,7 @@
     <string name="cancel">Cancel</string>
     <string name="note_name">Note name</string>
     <string name="pin">Pin</string>
+    <string name="pinned">Pinned</string>
     <string name="unpin">Unpin</string>
     <string name="name_error_empty">Enter a note name.</string>
     <string name="name_error_reserved">That name is reserved.</string>

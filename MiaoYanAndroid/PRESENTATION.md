@@ -11,10 +11,12 @@ has only its three legacy dynamic-`Function` fallbacks replaced with equivalent
 CSP-safe behavior, so the slide runtime does not require `unsafe-eval`. The WebView
 serves only those bundled files and the synthetic appassets image origin.
 JavaScript is enabled for Slides and for the continuous preview's small nonce-scoped
-iframe-activation/readiness script. Slides permit only the bundled Reveal runtime and
-never permit network frames. Continuous preview permits a validated HTTPS frame only
-after an explicit tap and creates it with an empty sandbox. File/content access, ambient
-storage, popups, forms, scripts inside the frame, and top navigation remain disabled.
+iframe-activation/readiness script. Both surfaces permit a validated HTTPS frame only
+after an explicit tap and create it with an empty sandbox. Slide-level `.slide:` background
+directives accept safe colors/gradients and app-private `/i/` images. A validated
+`data-background-iframe` remains an inert button until tapped, then loads into Reveal's
+background layer with the same sandbox. File/content access, ambient storage, popups,
+forms, scripts inside the frame, and top navigation remain disabled.
 
 Active slides are top-anchored scroll containers sized to the WebView viewport. Their
 bottom padding includes the Android safe area and Reveal controls, so a long slide can

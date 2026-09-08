@@ -56,6 +56,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.tw93.miaoyan.android.BuildConfig
 import com.tw93.miaoyan.android.R
 import com.tw93.miaoyan.android.data.EditorSettings
+import com.tw93.miaoyan.android.data.LocalImagePolicy
 import com.tw93.miaoyan.android.ui.DeferredIframePolicy
 import com.tw93.miaoyan.android.ui.PreviewNavigationPolicy
 import kotlinx.coroutines.Dispatchers
@@ -338,8 +339,8 @@ fun PresentationHost(
 
     val context = LocalContext.current
     val darkMode = MaterialTheme.colorScheme.background.luminance() < .5f
-    val request = remember(markdown, darkMode, editorSettings, initialSlide) {
-        SlidesRequest(markdown, darkMode, editorSettings, initialSlide)
+    val request = remember(markdown, darkMode, editorSettings) {
+        SlidesRequest(markdown, darkMode, editorSettings)
     }
     var prepared by remember { mutableStateOf<PreparedSlides?>(null) }
     val controller = remember { PreviewWebViewController().also { it.markRequested("slides") } }
@@ -394,7 +395,7 @@ fun PresentationHost(
                         current.request,
                         current.html,
                         javaScriptEnabled = true,
-                        allowsNetworkFrames = false,
+                        allowsNetworkFrames = true,
                         maximumSlideIndex = current.maximumSlideIndex,
                         preparationMillis = current.preparationMillis,
                     ),
@@ -486,6 +487,16 @@ private fun SecureDocumentWebView(
                     ): android.webkit.WebResourceResponse? {
                         val currentSession = view.tag as PreviewWebViewSession
                         if (request.url.scheme == "data") return null
+                        if (
+                            request.url.scheme == "https" &&
+                            request.url.encodedAuthority == LocalImagePolicy.AssetHost
+                        ) {
+                            return if (request.method == "GET") {
+                                currentSession.router.open(request.url)
+                            } else {
+                                blockedResponse()
+                            }
+                        }
                         if (
                             request.method == "GET" && currentSession.allowsNetworkFrames &&
                             DeferredIframePolicy.isAllowedFrameUrl(request.url.toString())
@@ -606,7 +617,6 @@ private data class SlidesRequest(
     val markdown: String,
     val darkMode: Boolean,
     val editorSettings: EditorSettings,
-    val initialSlide: Int,
 )
 
 private data class PreparedSlides(

@@ -67,11 +67,95 @@ class PresentationDocumentTest {
 
         assertTrue(html.contains("script-src 'nonce-abcdefghijklmnop' 'strict-dynamic'"))
         assertTrue(html.contains("connect-src 'none'"))
-        assertTrue(html.contains("frame-src 'none'"))
+        assertTrue(html.contains("frame-src https:"))
         assertTrue(html.contains("base-uri 'none'"))
         assertTrue(html.contains("https://appassets.androidplatform.net/presentation/reveal.js"))
+        assertTrue(html.contains("frame.setAttribute('sandbox', '')"))
+        assertFalse(html.contains("allow-scripts"))
+        assertFalse(html.contains("allow-forms"))
+        assertFalse(html.contains("allow-popups"))
+        assertFalse(html.contains("allow-top-navigation"))
         assertFalse(html.contains("plugin/markdown"))
         assertFalse(html.contains("http://"))
+    }
+
+    @Test
+    fun slideIframePlaceholderLoadsOnlyAfterExplicitSandboxedActivation() {
+        val html = PresentationDocument.renderSlides(
+            markdown = "<iframe src=\"https://video.example/embed\"></iframe>",
+            darkMode = true,
+            initialSlide = 0,
+            nonce = "abcdefghijklmnop",
+        ) {
+            "<button type=\"button\" class=\"embed-placeholder\" " +
+                "data-embed=\"https://video.example/embed\">Embedded content — tap to load</button>"
+        }
+
+        assertTrue(html.contains("Embedded content — tap to load"))
+        assertTrue(html.contains("button.embed-placeholder[data-embed]"))
+        assertTrue(html.contains("event.preventDefault()"))
+        assertTrue(html.indexOf("frame.setAttribute('sandbox', '')") < html.indexOf("frame.src = url.href"))
+        assertFalse(html.contains("<iframe src=\"https://video.example"))
+    }
+
+    @Test
+    fun supportsSafeMacCompatibleSlideBackgroundDirectives() {
+        val renderedMarkdown = mutableListOf<String>()
+        val html = PresentationDocument.renderSlides(
+            markdown = """
+                <!-- .slide: data-background="#F8CB9E" -->
+                # Color
+                ---
+                <!-- .slide: data-background-image="/i/cover photo.png" data-background-size="contain" -->
+                # Image
+                ---
+                <!-- .slide: data-background-gradient="linear-gradient(135deg, #ffffff 0%, #23282d 100%)" -->
+                # Gradient
+                ---
+                <!-- .slide: data-background-iframe="https://miaoyan.app/" -->
+                <!-- .slide: data-background-interactive -->
+            """.trimIndent(),
+            darkMode = false,
+            initialSlide = 0,
+            nonce = "abcdefghijklmnop",
+        ) { slide ->
+            renderedMarkdown += slide
+            "<p>${slide.substringAfterLast('#').trim()}</p>"
+        }
+
+        assertTrue(html.contains("data-background-color=\"#F8CB9E\""))
+        assertTrue(
+            html.contains(
+                "data-background-image=\"https://appassets.androidplatform.net/i/cover%20photo.png\"",
+            ),
+        )
+        assertTrue(html.contains("data-background-size=\"contain\""))
+        assertTrue(html.contains("data-background-gradient=\"linear-gradient(135deg, #ffffff 0%, #23282d 100%)\""))
+        assertTrue(html.contains("data-background-embed=\"https://miaoyan.app/\""))
+        assertTrue(html.contains("Embedded background — tap to load"))
+        assertTrue(html.contains("Reveal.getSlideBackground(slide)"))
+        assertTrue(renderedMarkdown.none { it.contains(".slide:") })
+    }
+
+    @Test
+    fun rejectsRemoteImageAndUnsafeSlideBackgroundDirectives() {
+        val html = PresentationDocument.renderSlides(
+            markdown = """
+                <!-- .slide: data-background-image="https://example.com/remote.png" -->
+                <!-- .slide: data-background="url(javascript:alert(1))" -->
+                <!-- .slide: data-background-iframe="http://insecure.example/" -->
+                # Safe content
+            """.trimIndent(),
+            darkMode = false,
+            initialSlide = 0,
+            nonce = "abcdefghijklmnop",
+        ) { "<h1>Safe content</h1>" }
+
+        assertFalse(html.contains("remote.png"))
+        assertFalse(html.contains("javascript:"))
+        assertFalse(html.contains("insecure.example"))
+        assertFalse(html.contains("data-background-image="))
+        assertFalse(html.contains("data-background-embed="))
     }
 
     @Test
