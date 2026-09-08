@@ -10,9 +10,15 @@ Reveal.js 4.3.1 core JavaScript and CSS come from the pinned macOS bundle under
 has only its three legacy dynamic-`Function` fallbacks replaced with equivalent
 CSP-safe behavior, so the slide runtime does not require `unsafe-eval`. The WebView
 serves only those bundled files and the synthetic appassets image origin.
-JavaScript is enabled only for Slides, where a nonce CSP permits the bundled
-Reveal runtime and bootstrap. Network, file, content, frames, media, storage,
-and popup access remain disabled.
+JavaScript is enabled for Slides and for the continuous preview's small nonce-scoped
+iframe-activation/readiness script. Slides permit only the bundled Reveal runtime and
+never permit network frames. Continuous preview permits a validated HTTPS frame only
+after an explicit tap and creates it with an empty sandbox. File/content access, ambient
+storage, popups, forms, scripts inside the frame, and top navigation remain disabled.
+
+Active slides are top-anchored scroll containers sized to the WebView viewport. Their
+bottom padding includes the Android safe area and Reveal controls, so a long slide can
+always scroll its final line fully into view instead of clipping it below the viewport.
 
 ## Integration points
 

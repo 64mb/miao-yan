@@ -43,7 +43,7 @@ Android-версия доводится одним цельным этапом; 
 | P2 | Progress overlay | Delay 150 ms, после появления minimum 800 ms; state-machine tests есть | runtime Reload smoke |
 | P2 | Initial unrelated history | Whole-library выбор Keep Local или Replace with Remote без content merge реализован | minified Git regression suite |
 | P3 | Subtitle/toast punctuation | EN/RU subtitle/detail без декоративных финальных точек; snackbar удаляет финальную точку у status messages | resource/lint gate |
-| Release gate | APK | `test`, `lint`, Debug/test APK и minified `localRelease` собраны; 43/43 instrumentation tests и release JGit failure-path smoke прошли на `emulator-5554` | checksum, fresh Debug reinstall и fork PR |
+| Release gate | APK | `test`, `lint`, Debug/test APK и minified `localRelease` собраны; 44/44 instrumentation tests и release JGit failure-path smoke прошли на `emulator-5554`, включая viewport длинного slide | checksum, fresh Debug reinstall и обновление fork PR |
 
 ## 1. Scope и принятые ограничения
 
@@ -482,7 +482,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 - ✅ строгий Git allowlist для app-managed `.Trash`;
 - ✅ opt-in WorkManager каждые 15 минут;
 - ✅ ручные Reload/Sync Now и короткий best-effort exit sync независимо от periodic toggle;
-- ✅ minified release собран; полный device regression — 43/43 instrumentation tests.
+- ✅ minified release собран; 44/44 device regressions включают проверку доступности последней строки длинного слайда.
 
 ### Phase 4 — visual/settings и platform polish, 2–3 недели
 
@@ -510,9 +510,7 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 
 1. PlantUML: локальный renderer, пользовательский endpoint или не включать в MVP? Рекомендация: не включать в MVP, пока нет локального renderer.
 2. Перемещение заметки между папками: переносить ли автоматически её `i/` attachments и разрешать collision rename? Рекомендация: переносить только реально referenced attachments, collision решать новым именем и переписывать ссылки транзакционно.
-3. Android system backup: требование «только локально» запрещает также зашифрованный Android Backup или app-private library можно включать в системную backup-модель? До ответа библиотека не должна рекламироваться как имеющая внешнюю резервную копию без успешного Git sync/Export.
-
-Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; iframe и remote media загружаются только по нажатию внутри изолированного in-app view; Git имеет ручной и opt-in 15-минутный запуск; username + PAT используются только для HTTPS-аутентификации, а обязательные отдельные author name/email формируют JGit `PersonIdent`, как в macOS; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
+Уже решено: canonical Android library хранится в `filesDir/libraries/default`, SAF используется только для Import/Export; Android Backup и device transfer отключены для библиотеки, Git/secrets, DataStore и Room; iframe и remote media загружаются только по нажатию внутри изолированного in-app view; Git имеет ручной и opt-in 15-минутный запуск; username + PAT используются только для HTTPS-аутентификации, а обязательные отдельные author name/email формируют JGit `PersonIdent`, как в macOS; pin/favorite локальны; Restore использует локальный manifest исходного пути с fallback в root; Android AI resolver отсутствует.
 
 ## 14. Реализованные feasibility decisions
 

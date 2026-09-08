@@ -24,14 +24,15 @@ contract is `context.filesDir/libraries/default`; SAF is reserved for explicit I
 6. Search titles, nested paths, and bodies through a rebuildable Room FTS4 projection. Wikilinks
    and backlinks update transactionally; pins stay authoritative in DataStore.
 7. Edit through a platform `EditText` that does not replace text during IME composition.
-8. Preview GitHub Flavored Markdown through the official cmark-gfm native library, with JavaScript,
-   raw HTML, frames, and network loads disabled.
+8. Preview GitHub Flavored Markdown through the official cmark-gfm native library. Arbitrary raw
+   HTML and automatic remote loads stay disabled; a nonce-scoped local script may turn a validated
+   standalone HTTPS iframe into an explicit click-to-load placeholder.
    Local `/i/<name>` images are streamed from the `i` directory next to the selected note through a
    restricted synthetic origin. Canonical-path checks keep the loader inside both the selected
    note's parent and the app-private root, rejecting traversal and symlink escape. External images
-   remain explicit tap-to-open links and are never loaded automatically. External video and iframe
-   markup stays inert; the shared policy requires user activation and a sandbox for future iframe
-   embedding.
+   remain explicit tap-to-open links and are never loaded automatically. External video stays
+   inert. A validated HTTPS iframe loads only after user activation and receives an empty sandbox,
+   so scripts, forms, popups and top navigation remain unavailable.
 9. Keep Auto/System, Dark, or Light appearance plus editor/preview typography in local DataStore
    settings. The selected theme applies consistently to app chrome, editor, preview, and presentation.
 10. Enter a view-only fullscreen continuous Preview from the video-camera action, or a separate
@@ -74,10 +75,11 @@ broad storage/media permission.
   is stored under `noBackupFilesDir`, bound to the normalized complete repository URL, and is not
   reused after that URL changes. At transport time the provider additionally answers only for the
   exact configured HTTPS host and effective port.
-- Syncable files are notes, root `.gitignore`, and content below any `i/` or `files/` attachment
-  directory. Trash, hidden paths, symlinks, submodules, non-regular entries, case collisions, and
-  unsupported paths stop sync. The 25 MiB ceiling applies independently to each added or modified
-  attachment, not notes, deletions, or total library size.
+- Syncable files are notes, root `.gitignore`, content below any `i/` or `files/` attachment
+  directory, and the strictly validated app-managed `.Trash/manifest.tsv` plus UUID item tree.
+  Legacy `Trash`, other hidden paths, symlinks, submodules, non-regular entries, case collisions,
+  and unsupported paths stop sync. The 25 MiB ceiling applies independently to each added or
+  modified attachment, not notes, deletions, or total library size.
 - Diverged histories never receive a textual/3-way merge or conflict markers. MiaoYan shows the
   local filesystem modification time and remote Git last-change time, then requires a whole-file
   Local/Remote choice for every differing path, with choose-all shortcuts. A recoverable ref guards
@@ -108,8 +110,8 @@ dependency versions, including JGit, JavaEWAH, Commons Codec, and SLF4J, are rec
 
 ```bash
 cd MiaoYanAndroid
-./gradlew test lint assembleDebug
-./gradlew assembleDebugAndroidTest
+./gradlew test lint assembleDebug assembleDebugAndroidTest assembleLocalRelease
+./gradlew connectedDebugAndroidTest
 ```
 
 The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compose BOM
@@ -127,7 +129,7 @@ notices, and the update procedure are recorded in
 JavaScript only for this bundled page and disables network loads, file/content
 access, storage, and new windows. No JavaScript interface is exposed.
 
-The renderer enables the table, strikethrough, autolink, tagfilter, and task-list extensions. It does not pass `CMARK_OPT_UNSAFE`: raw HTML (including iframes) is omitted by cmark before reaching WebView. The single post-render content-policy boundary maps valid local images to the synthetic origin and changes remote images to explicit external links. CSP and `blockNetworkLoads` independently prevent automatic remote media loading.
+The renderer enables the table, strikethrough, autolink, tagfilter, and task-list extensions. It does not pass `CMARK_OPT_UNSAFE`: arbitrary raw HTML is omitted by cmark before reaching WebView. Before cmark, only a standalone empty HTTPS iframe outside fenced code can become a signed-looking internal token; the post-render policy converts that token to a click-to-load button. The frame receives an empty sandbox and no ambient credentials. The same post-render boundary maps valid local images to the synthetic origin and changes remote images to explicit external links. CSP, request routing, and `blockNetworkLoads` prevent automatic remote media loading.
 
 Presentation uses the same native cmark-gfm content-policy pipeline for every slide and the current editor font/size settings. Reveal.js 4.3.1 core assets are copied from the pinned macOS bundle and run under a nonce CSP; WebView network, file, and content access stay disabled. Only bundled Reveal assets and images accepted by the shared app-private `LocalImagePolicy`/`LocalFileImageLoader` are served through the synthetic appassets origin. The current mode and slide are saveable across rotation. System bars are hidden with `WindowInsetsController` outside multi-window and restored on Back.
 
