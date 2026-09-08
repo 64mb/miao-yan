@@ -286,6 +286,12 @@ class Storage {
             == project.url.resolvingSymlinksInPath().standardizedFileURL
     }
 
+    static func isSyncedTrashProject(_ project: Project) -> Bool {
+        project.isTrash
+            && project.url.lastPathComponent == "items"
+            && project.url.deletingLastPathComponent().lastPathComponent == ".Trash"
+    }
+
     static func shouldHideRemovedTrashItem(at url: URL, in project: Project) -> Bool {
         project.isTrash
             && (try? url.extendedAttribute(forName: AppIdentifier.removedFromTrashKey)) != nil
@@ -831,9 +837,236 @@ class Storage {
     public func reLoadTrash() {
         noteList.removeAll(where: { $0.isTrash() })
 
-        for project in projects where project.isTrash {
+        let systemTrashProjects = projects.filter { $0.isTrash && !Self.isSyncedTrashProject($0) }
+        for project in systemTrashProjects {
             loadLabel(project, loadContent: true)
         }
+        for root in getRootProjects() {
+            loadSyncedTrash(for: root)
+        }
+    }
+
+    private func loadSyncedTrash(for root: Project) {
+        guard let project = ensureSyncedTrashProject(for: root, createDirectories: false) else { return }
+        let itemsURL = project.url
+        guard
+            let itemDirectories = try? FileManager.default.contentsOfDirectory(
+                at: itemsURL,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles])
+        else { return }
+
+        let entries: [GitSyncedTrashManifestEntry]
+        do {
+            entries = try readSyncedTrashManifest(for: root.url)
+        } catch {
+            AppDelegate.trackError(error, context: "Storage.syncedTrash.readManifest")
+            entries = []
+        }
+        var entriesByPath = [String: GitSyncedTrashManifestEntry]()
+        for entry in entries {
+            entriesByPath[entry.trashRelativePath] = entry
+        }
+        let policy = GitSyncPathPolicy()
+        for itemDirectory in itemDirectories {
+            let values = try? itemDirectory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values?.isDirectory == true, values?.isSymbolicLink != true,
+                let uuid = UUID(uuidString: itemDirectory.lastPathComponent),
+                uuid.uuidString.lowercased() == itemDirectory.lastPathComponent,
+                let payloads = try? FileManager.default.contentsOfDirectory(
+                    at: itemDirectory,
+                    includingPropertiesForKeys: [
+                        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .creationDateKey,
+                    ],
+                    options: [.skipsHiddenFiles])
+            else { continue }
+
+            for payload in payloads {
+                let relativePath = ".Trash/items/\(itemDirectory.lastPathComponent)/\(payload.lastPathComponent)"
+                guard case .allowed(.trashNote) = policy.classify(relativePath: relativePath),
+                    let payloadValues = try? payload.resourceValues(forKeys: [
+                        .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .creationDateKey,
+                    ]),
+                    payloadValues.isRegularFile == true,
+                    payloadValues.isSymbolicLink != true
+                else { continue }
+
+                let note = Note(url: payload.resolvingSymlinksInPath(), with: project)
+                let entry = entriesByPath[relativePath].flatMap {
+                    $0.id == itemDirectory.lastPathComponent ? $0 : nil
+                }
+                note.modifiedLocalAt = payloadValues.contentModificationDate ?? Date.distantPast
+                note.creationDate =
+                    entry.map {
+                        Date(timeIntervalSince1970: TimeInterval($0.deletedAtMilliseconds) / 1_000)
+                    } ?? payloadValues.creationDate
+                note.load()
+                noteList.append(note)
+            }
+        }
+    }
+
+    private func ensureSyncedTrashProject(for root: Project, createDirectories: Bool) -> Project? {
+        let itemsURL: URL
+        do {
+            guard
+                let validatedURL = try syncedTrashItemsURL(
+                    for: root.url,
+                    createDirectories: createDirectories)
+            else { return nil }
+            itemsURL = validatedURL
+        } catch {
+            AppDelegate.trackError(error, context: "Storage.syncedTrash.validate")
+            return nil
+        }
+        if let existing = projects.first(where: { $0.url == itemsURL && Self.isSyncedTrashProject($0) }) {
+            return existing
+        }
+
+        let project = Project(url: itemsURL, label: "Trash", isTrash: true, parent: root)
+        project.showInSidebar = false
+        projects.append(project)
+        return project
+    }
+
+    func moveToSyncedTrash(fileURL: URL, root: Project) throws -> URL {
+        let normalizedRoot = root.url.standardizedFileURL.resolvingSymlinksInPath()
+        let normalizedFile = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        let rootPrefix = normalizedRoot.path.hasSuffix("/") ? normalizedRoot.path : normalizedRoot.path + "/"
+        guard normalizedFile.path.hasPrefix(rootPrefix) else {
+            throw syncedTrashError("The note is outside the configured library")
+        }
+        let originalRelativePath = String(normalizedFile.path.dropFirst(rootPrefix.count))
+        guard case .allowed(.note) = GitSyncPathPolicy().classify(relativePath: originalRelativePath) else {
+            throw syncedTrashError("The note path is not supported by Git sync")
+        }
+        guard let project = ensureSyncedTrashProject(for: root, createDirectories: true) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+
+        let previousEntries = try readSyncedTrashManifest(for: normalizedRoot)
+        let identifier = UUID().uuidString.lowercased()
+        let itemDirectory = project.url.appendingPathComponent(identifier, isDirectory: true)
+        let destination = itemDirectory.appendingPathComponent(normalizedFile.lastPathComponent)
+        let trashRelativePath = ".Trash/items/\(identifier)/\(normalizedFile.lastPathComponent)"
+        let entry = GitSyncedTrashManifestEntry(
+            id: identifier,
+            originalRelativePath: originalRelativePath,
+            trashRelativePath: trashRelativePath,
+            deletedAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000))
+
+        try FileManager.default.createDirectory(at: itemDirectory, withIntermediateDirectories: false)
+        do {
+            try writeSyncedTrashManifest(previousEntries + [entry], for: normalizedRoot)
+            try FileManager.default.moveItem(at: normalizedFile, to: destination)
+        } catch {
+            try? writeSyncedTrashManifest(previousEntries, for: normalizedRoot)
+            try? FileManager.default.removeItem(at: itemDirectory)
+            throw error
+        }
+        return destination
+    }
+
+    private func syncedTrashContext(for payloadURL: URL) -> (root: Project, entry: GitSyncedTrashManifestEntry?)? {
+        let payload = payloadURL.standardizedFileURL.resolvingSymlinksInPath()
+        for root in getRootProjects() {
+            let normalizedRoot = root.url.standardizedFileURL.resolvingSymlinksInPath()
+            let itemsURL = normalizedRoot.appendingPathComponent(".Trash/items", isDirectory: true)
+            let prefix = itemsURL.path.hasSuffix("/") ? itemsURL.path : itemsURL.path + "/"
+            guard payload.path.hasPrefix(prefix) else { continue }
+            let suffix = String(payload.path.dropFirst(prefix.count))
+            let components = suffix.split(separator: "/", omittingEmptySubsequences: false)
+            guard components.count == 2 else { return nil }
+            let relativePath = ".Trash/items/\(suffix)"
+            guard case .allowed(.trashNote) = GitSyncPathPolicy().classify(relativePath: relativePath) else {
+                return nil
+            }
+            let entries: [GitSyncedTrashManifestEntry]
+            do {
+                entries = try readSyncedTrashManifest(for: normalizedRoot)
+            } catch {
+                AppDelegate.trackError(error, context: "Storage.syncedTrash.readContext")
+                entries = []
+            }
+            let entry = entries.first {
+                $0.id == String(components[0]) && $0.trashRelativePath == relativePath
+            }
+            return (root, entry)
+        }
+        return nil
+    }
+
+    func removeSyncedTrashMetadata(for payloadURL: URL) throws {
+        guard let context = syncedTrashContext(for: payloadURL) else { return }
+        if let entry = context.entry {
+            var entries = try readSyncedTrashManifest(for: context.root.url)
+            entries.removeAll { $0.id == entry.id }
+            try writeSyncedTrashManifest(entries, for: context.root.url)
+        }
+        let itemDirectory = payloadURL.deletingLastPathComponent()
+        if (try? FileManager.default.contentsOfDirectory(atPath: itemDirectory.path).isEmpty) == true {
+            try? FileManager.default.removeItem(at: itemDirectory)
+        }
+    }
+
+    private func readSyncedTrashManifest(for rootURL: URL) throws -> [GitSyncedTrashManifestEntry] {
+        guard let itemsURL = try syncedTrashItemsURL(for: rootURL, createDirectories: false) else { return [] }
+        let manifestURL = itemsURL.deletingLastPathComponent().appendingPathComponent("manifest.v1")
+        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return [] }
+        let values = try manifestURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw syncedTrashError("The Trash manifest is not a regular file")
+        }
+        let content = try String(contentsOf: manifestURL, encoding: .utf8)
+        guard let entries = GitSyncedTrashManifestCodec.decodeValidated(content) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return entries
+    }
+
+    private func writeSyncedTrashManifest(_ entries: [GitSyncedTrashManifestEntry], for rootURL: URL) throws {
+        guard let itemsURL = try syncedTrashItemsURL(for: rootURL, createDirectories: true) else {
+            throw syncedTrashError("The Trash directory could not be created")
+        }
+        let manifestURL = itemsURL.deletingLastPathComponent().appendingPathComponent("manifest.v1")
+        if FileManager.default.fileExists(atPath: manifestURL.path) {
+            let values = try manifestURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw syncedTrashError("The Trash manifest is not a regular file")
+            }
+        }
+        try GitSyncedTrashManifestCodec.encode(entries).write(to: manifestURL, atomically: true, encoding: .utf8)
+    }
+
+    private func syncedTrashItemsURL(for rootURL: URL, createDirectories: Bool) throws -> URL? {
+        let root = rootURL.standardizedFileURL.resolvingSymlinksInPath()
+        let trashURL = root.appendingPathComponent(".Trash", isDirectory: true).standardizedFileURL
+        let itemsURL = trashURL.appendingPathComponent("items", isDirectory: true).standardizedFileURL
+        for directory in [trashURL, itemsURL] {
+            var isDirectory = ObjCBool(false)
+            if FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory) {
+                let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard isDirectory.boolValue, values.isDirectory == true, values.isSymbolicLink != true else {
+                    throw syncedTrashError("The Trash path contains an unsafe link or file")
+                }
+            } else if createDirectories {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            } else {
+                return nil
+            }
+        }
+
+        guard itemsURL.resolvingSymlinksInPath() == itemsURL else {
+            throw syncedTrashError("The Trash path escapes the configured library")
+        }
+        return itemsURL
+    }
+
+    private func syncedTrashError(_ description: String) -> NSError {
+        NSError(
+            domain: "com.tw93.miaoyan.syncedTrash",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: description])
     }
 
     /// Reconcile a Trash project before presenting it. FSEvents can coalesce
@@ -1181,12 +1414,22 @@ class Storage {
                 continue
             }
 
-            let originData = try? note.url.extendedAttribute(forName: AppIdentifier.trashOriginKey)
+            let sourceURL = note.url
+            let syncedTrash = syncedTrashContext(for: sourceURL)
+            let originData = try? sourceURL.extendedAttribute(forName: AppIdentifier.trashOriginKey)
+            let originMetadata: TrashOriginMetadata?
+            if let syncedTrash, let entry = syncedTrash.entry {
+                originMetadata = TrashOriginMetadata(
+                    rootPath: syncedTrash.root.url.path,
+                    relativePath: entry.originalRelativePath)
+            } else {
+                originMetadata = Self.trashOriginMetadata(from: originData)
+            }
             let destination = Self.trashRestoreDestination(
-                for: note.url,
-                metadata: Self.trashOriginMetadata(from: originData),
+                for: sourceURL,
+                metadata: originMetadata,
                 availableRoots: roots,
-                defaultRoot: defaultProject.url)
+                defaultRoot: syncedTrash?.root.url ?? defaultProject.url)
             let rootProject =
                 getRootProjects().first {
                     $0.url.standardizedFileURL.resolvingSymlinksInPath() == destination.rootURL
@@ -1209,6 +1452,13 @@ class Storage {
                 continue
             }
 
+            if syncedTrash != nil {
+                do {
+                    try removeSyncedTrashMetadata(for: sourceURL)
+                } catch {
+                    AppDelegate.trackError(error, context: "Storage.restoreTrash.syncedMetadata")
+                }
+            }
             try? note.url.removeExtendedAttribute(forName: AppIdentifier.trashOriginKey)
             try? note.url.removeExtendedAttribute(forName: AppIdentifier.removedFromTrashKey)
             note.invalidateCache()
