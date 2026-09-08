@@ -50,6 +50,7 @@ class FileSystemEventManager {
         flushedEditorText: String?
     ) async throws {
         let noteExtensions = Set(storage.allowedExtensions)
+        let gitPathPolicy = GitSyncPathPolicy()
         let resolvedSnapshotOwnerURL = editorOwnerURL?.standardizedFileURL.resolvingSymlinksInPath()
         let storageOwnerNote = delegate?.editArea.storageNote
         let selectedNote = EditTextView.note
@@ -92,6 +93,7 @@ class FileSystemEventManager {
             }
         }
         for path in removedPaths where noteExtensions.contains((path as NSString).pathExtension.lowercased()) {
+            guard case .allowed(.note) = gitPathPolicy.classify(relativePath: path) else { continue }
             let url = root.url.appendingPathComponent(path)
             if let note = storage.getBy(url: url) {
                 storage.removeNotes(notes: [note], fsRemove: false) { _ in }
@@ -107,6 +109,7 @@ class FileSystemEventManager {
             }
         }
         for path in currentPaths where noteExtensions.contains((path as NSString).pathExtension.lowercased()) {
+            guard case .allowed(.note) = gitPathPolicy.classify(relativePath: path) else { continue }
             let url = root.url.appendingPathComponent(path).resolvingSymlinksInPath()
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let note: Note
@@ -145,18 +148,32 @@ class FileSystemEventManager {
 
         storage.retireMissingProjectsAfterGit(under: root)
 
-        let gitPathPolicy = GitSyncPathPolicy()
         let attachmentChanged = changes.contains { change in
-            if case .allowed(.attachment) = gitPathPolicy.classify(
-                relativePath: change.path,
-                entryKind: change.entryKind
-            ) {
-                return true
+            change.affectedPaths.contains { path in
+                if case .allowed(.attachment) = gitPathPolicy.classify(
+                    relativePath: path,
+                    entryKind: change.entryKind
+                ) {
+                    return true
+                }
+                return false
             }
-            return false
         }
         if attachmentChanged, delegate?.shouldShowPreview == true {
             delegate?.refillEditArea(previewOnly: true, force: true, animatePreview: false, suppressSave: true)
+        }
+        let trashChanged = changes.contains { change in
+            change.affectedPaths.contains { path in
+                switch gitPathPolicy.classify(relativePath: path, entryKind: change.entryKind) {
+                case .allowed(.trashManifest), .allowed(.trashNote), .allowed(.trashAttachment):
+                    return true
+                case .allowed, .rejected:
+                    return false
+                }
+            }
+        }
+        if trashChanged {
+            storage.reLoadTrash()
         }
 
         guard let delegate else { return }

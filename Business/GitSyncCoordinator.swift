@@ -229,12 +229,12 @@ final class GitSyncConfigurationStore {
     }
 }
 
-private struct GitSyncLocalPreflight: Sendable {
+struct GitSyncLocalPreflight: Sendable {
     let managedPaths: [String]
     let violations: [GitSyncPathViolation]
 }
 
-private enum GitSyncFileCollector {
+enum GitSyncFileCollector {
     static func collect(rootURL: URL, maximumAttachmentBytes: Int64) throws -> GitSyncLocalPreflight {
         let policy = GitSyncPathPolicy()
         let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
@@ -274,6 +274,42 @@ private enum GitSyncFileCollector {
                 // The tracked-path pass below still blocks unsupported files
                 // that would otherwise be silently left in repository history.
                 continue
+            }
+        }
+
+        let trashURL = rootURL.appendingPathComponent(".Trash", isDirectory: true)
+        if let trashEnumerator = FileManager.default.enumerator(
+            at: trashURL,
+            includingPropertiesForKeys: keys,
+            options: [.skipsPackageDescendants]
+        ) {
+            for case let url as URL in trashEnumerator {
+                let values = try url.resourceValues(forKeys: Set(keys))
+                if values.isDirectory == true {
+                    if values.isSymbolicLink == true { trashEnumerator.skipDescendants() }
+                    continue
+                }
+                let path = url.standardizedFileURL.path
+                guard path.hasPrefix(rootPath + "/") else { continue }
+                let relativePath = String(path.dropFirst(rootPath.count + 1))
+
+                switch policy.classify(relativePath: relativePath) {
+                case .allowed(let kind):
+                    guard kind == .trashManifest || kind == .trashNote || kind == .trashAttachment else {
+                        continue
+                    }
+                    guard values.isSymbolicLink != true, values.isRegularFile == true else {
+                        violations.append(GitSyncPathViolation(path: relativePath, reason: .nonRegularEntry))
+                        continue
+                    }
+                    if kind == .trashAttachment, Int64(values.fileSize ?? 0) > maximumAttachmentBytes {
+                        violations.append(GitSyncPathViolation(path: relativePath, reason: .oversizedAttachment))
+                        continue
+                    }
+                    managed.insert(relativePath)
+                case .rejected:
+                    continue
+                }
             }
         }
 
