@@ -57,5 +57,5 @@ object GitSyncPathPolicy {
 
     private const val TrashRoot = ".Trash"
     private const val TrashItems = "items"
-    private const val TrashManifest = "manifest.tsv"
+    private const val TrashManifest = "manifest.v1"
 }
