@@ -1,11 +1,11 @@
-# V4.2.3 Brachydios 🍝
+# V4.2.4 Mizutsune 🌊
 
-1. Android 预览现在支持点击文档内链接并直接跳转到对应标题
-2. Unicode 标题与重复标题会生成稳定且唯一的锚点，普通预览和全屏预览行为一致
-3. 文件夹返回按钮恢复标准的 48dp 点击区域，按压光晕与箭头保持居中
+1. Android 幻灯片支持点击后加载隔离的 HTTPS iframe，并兼容 macOS 的颜色、渐变、本地图片与网页背景
+2. Android 置顶笔记现在会稳定排在前面并显示图钉，搜索输入增加防抖以减少无效刷新
+3. 幻灯片切换不再重建 WebView，macOS 文件夹重命名完成后也会正确退出编辑状态
 
 ---
 
-1. Android Preview now follows in-document links directly to their matching headings
-2. Unicode and duplicate headings receive stable unique anchors with matching behavior in inline and fullscreen Preview
-3. The folder back button now uses a standard 48dp touch target with its press halo centered on the arrow
+1. Android slides now load isolated HTTPS iframes on tap and support macOS-compatible colors, gradients, local images, and web backgrounds
+2. Pinned Android notes stay at the top with a visible pin, while debounced search avoids unnecessary refreshes during typing
+3. Slide navigation no longer rebuilds its WebView, and macOS folder labels correctly leave editing mode after rename
