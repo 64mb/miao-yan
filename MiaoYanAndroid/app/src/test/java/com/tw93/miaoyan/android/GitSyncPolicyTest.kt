@@ -42,7 +42,8 @@ class GitSyncPolicyTest {
     @Test
     fun allowsOnlyTheAppManagedTrashShape() {
         val id = "92e5c30f-0c40-4a78-9ab6-52b58229b691"
-        assertTrue(GitSyncPathPolicy.isAllowed(".Trash/manifest.tsv"))
+        assertTrue(GitSyncPathPolicy.isAllowed(".Trash/manifest.v1"))
+        assertFalse(GitSyncPathPolicy.isAllowed(".Trash/manifest.tsv"))
         assertTrue(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Welcome.md"))
         assertTrue(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Folder/Nested.md"))
         assertTrue(GitSyncPathPolicy.isAllowed(".Trash/items/$id/Folder/i/photo.webp"))
