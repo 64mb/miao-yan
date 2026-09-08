@@ -49,6 +49,7 @@
     <string name="cancel">Отмена</string>
     <string name="note_name">Имя заметки</string>
     <string name="pin">Закрепить</string>
+    <string name="pinned">Закреплено</string>
     <string name="unpin">Открепить</string>
     <string name="name_error_empty">Введите имя заметки.</string>
     <string name="name_error_reserved">Это имя зарезервировано.</string>

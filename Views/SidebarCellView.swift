@@ -139,6 +139,11 @@ class SidebarCellView: NSTableCellView {
     }
 
     @IBAction func projectName(_ sender: NSTextField) {
+        defer {
+            sender.isEditable = false
+            sender.isSelectable = false
+        }
+
         let cell = sender.superview as? SidebarCellView
         guard let si = cell?.objectValue as? SidebarItem, let project = si.project else { return }
 

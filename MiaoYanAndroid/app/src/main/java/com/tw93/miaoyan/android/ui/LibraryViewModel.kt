@@ -78,7 +78,8 @@ data class LibraryUiState(
     val gitSyncStatus: GitSyncStatus = GitSyncStatus(),
 ) {
     val visibleNotes: List<LibraryNote>
-        get() = if (query.isBlank()) notes else searchResults
+        get() = (if (query.isBlank()) notes else searchResults)
+            .sortedByDescending { it.relativePath in pinnedPaths }
 
     val hasValidGitSetup: Boolean
         get() = hasGitCredentials && gitConfig?.let { config ->
@@ -1159,7 +1160,7 @@ class LibraryViewModel @JvmOverloads constructor(
     }
 
     private companion object {
-        const val SearchDebounceMillis = 120L
+        const val SearchDebounceMillis = 300L
     }
 }
 

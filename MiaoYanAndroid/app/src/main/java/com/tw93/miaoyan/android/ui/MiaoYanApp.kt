@@ -829,7 +829,18 @@ private fun NoteRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (pinned) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_push_pin),
+                        contentDescription = stringResource(R.string.pinned),
+                        modifier = Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 val folder = note.relativePath.substringBeforeLast('/', missingDelimiterValue = "")
                 if (folder.isNotEmpty()) {
                     Text(

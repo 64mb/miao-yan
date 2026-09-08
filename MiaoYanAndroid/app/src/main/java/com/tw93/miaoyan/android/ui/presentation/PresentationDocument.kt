@@ -54,20 +54,7 @@ object PresentationDocument {
                 'use strict';
                 ${headingAnchorScript()}
                 ${syntaxHighlightScript()}
-                document.addEventListener('click', event => {
-                  const button = event.target.closest('button.embed-placeholder[data-embed]');
-                  if (!button) return;
-                  let url;
-                  try { url = new URL(button.dataset.embed); } catch (_) { return; }
-                  if (url.protocol !== 'https:') return;
-                  const frame = document.createElement('iframe');
-                  frame.src = url.href;
-                  frame.setAttribute('sandbox', '');
-                  frame.setAttribute('referrerpolicy', 'no-referrer');
-                  frame.setAttribute('loading', 'lazy');
-                  frame.setAttribute('title', 'Embedded content');
-                  button.replaceWith(frame);
-                });
+                ${iframeActivationScript()}
               })();
             </script>
             </body></html>
@@ -101,8 +88,17 @@ object PresentationDocument {
         val slides = split(markdown)
         val start = initialSlide.coerceIn(0, slides.lastIndex)
         val sections = slides.joinToString("\n") { slide ->
-            val fragment = fragmentRenderer(slide)
-            "<section>$fragment</section>"
+            val prepared = prepareSlide(slide)
+            val fragment = fragmentRenderer(prepared.markdown)
+            val attributes = prepared.attributes.entries.joinToString(separator = "", prefix = "") { (name, value) ->
+                " $name=\"${escapeHtmlAttribute(value)}\""
+            }
+            val backgroundEmbed = prepared.backgroundIframeUrl?.let { url ->
+                "<button type=\"button\" class=\"embed-placeholder background-embed-placeholder\" " +
+                    "data-background-embed=\"${escapeHtmlAttribute(url)}\">" +
+                    "Embedded background — tap to load</button>"
+            }.orEmpty()
+            "<section$attributes>$backgroundEmbed$fragment</section>"
         }
         val colors = PresentationColors(darkMode, editorSettings, bundledFontDataUri)
         return """
@@ -110,7 +106,7 @@ object PresentationDocument {
             <html><head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce' 'strict-dynamic'; style-src 'unsafe-inline' $AssetOrigin; font-src $AssetOrigin data:; img-src $AssetOrigin data:; media-src 'none'; frame-src 'none'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-$nonce' 'strict-dynamic'; style-src 'unsafe-inline' $AssetOrigin; font-src $AssetOrigin data:; img-src $AssetOrigin data:; media-src 'none'; frame-src https:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'none'">
             <link rel="icon" href="data:,">
             ${colors.fontPreload}
             <link nonce="$nonce" rel="stylesheet" href="$AssetOrigin/presentation/reveal.css">
@@ -122,6 +118,7 @@ object PresentationDocument {
               (() => {
                 'use strict';
                 ${syntaxHighlightScript()}
+                ${iframeActivationScript(backgroundsEnabled = true)}
                 const report = (index) => {
                   window.location.href = 'miaoyan-slide://state/' + index;
                 };
@@ -164,10 +161,135 @@ object PresentationDocument {
         return slides.map(StringBuilder::toString)
     }
 
+    private fun prepareSlide(markdown: String): PreparedSlide {
+        val attributes = linkedMapOf<String, String>()
+        var backgroundIframeUrl: String? = null
+        val content = markdown.lineSequence().filterNot { line ->
+            val directive = SlideDirective.matchEntire(line) ?: return@filterNot false
+            parseSlideAttributes(directive.groupValues[1]).forEach { (name, rawValue) ->
+                when (name.lowercase()) {
+                    "data-background", "data-background-color" -> {
+                        safeBackgroundColor(rawValue)?.let { attributes["data-background-color"] = it }
+                            ?: safeBackgroundGradient(rawValue)?.let { attributes["data-background-gradient"] = it }
+                            ?: localBackgroundUrl(rawValue)?.let { attributes["data-background-image"] = it }
+                    }
+                    "data-background-image" -> localBackgroundUrl(rawValue)
+                        ?.let { attributes["data-background-image"] = it }
+                    "data-background-gradient" -> safeBackgroundGradient(rawValue)
+                        ?.let { attributes["data-background-gradient"] = it }
+                    "data-background-size" -> rawValue.lowercase()
+                        .takeIf { it in BackgroundSizes }
+                        ?.let { attributes["data-background-size"] = it }
+                    "data-background-position" -> rawValue.lowercase()
+                        .takeIf(BackgroundPosition::matches)
+                        ?.let { attributes["data-background-position"] = it }
+                    "data-background-repeat" -> rawValue.lowercase()
+                        .takeIf { it in BackgroundRepeats }
+                        ?.let { attributes["data-background-repeat"] = it }
+                    "data-background-opacity" -> rawValue.toDoubleOrNull()
+                        ?.takeIf { it in 0.0..1.0 }
+                        ?.let { attributes["data-background-opacity"] = it.toString() }
+                    "data-background-transition" -> rawValue.lowercase()
+                        .takeIf { it in BackgroundTransitions }
+                        ?.let { attributes["data-background-transition"] = it }
+                    "data-background-iframe" -> allowedFrameUrl(rawValue)?.let { backgroundIframeUrl = it }
+                }
+            }
+            true
+        }.joinToString("\n")
+        return PreparedSlide(content, attributes, backgroundIframeUrl)
+    }
+
+    private fun parseSlideAttributes(source: String): List<Pair<String, String>> {
+        val matches = SlideAttribute.findAll(source).toList()
+        var cursor = 0
+        for (match in matches) {
+            if (source.substring(cursor, match.range.first).isNotBlank()) return emptyList()
+            cursor = match.range.last + 1
+        }
+        if (source.substring(cursor).isNotBlank()) return emptyList()
+        return matches.map { it.groupValues[1] to it.groupValues[2] }
+    }
+
+    private fun localBackgroundUrl(rawValue: String): String? =
+        (LocalImagePolicy.classifyMarkdownSource(rawValue) as? LocalImagePolicy.MarkdownSource.Local)?.assetUrl
+
+    private fun allowedFrameUrl(rawValue: String): String? =
+        LocalImagePolicy.deferredExternalMedia(rawValue, LocalImagePolicy.ExternalMediaKind.Iframe)
+            ?.url
+            ?.takeIf { it.startsWith("https://", ignoreCase = true) }
+
+    private fun safeBackgroundColor(rawValue: String): String? = rawValue.trim().takeIf { value ->
+        HexColor.matches(value) || NamedColor.matches(value) || FunctionalColor.matches(value)
+    }
+
+    private fun safeBackgroundGradient(rawValue: String): String? = rawValue.trim().takeIf { value ->
+        value.length <= MaximumGradientLength && SafeGradient.matches(value) &&
+            !value.contains("url", ignoreCase = true)
+    }
+
+    private fun escapeHtmlAttribute(value: String): String = buildString(value.length) {
+        value.forEach { character ->
+            append(
+                when (character) {
+                    '&' -> "&amp;"
+                    '<' -> "&lt;"
+                    '>' -> "&gt;"
+                    '"' -> "&quot;"
+                    '\'' -> "&#39;"
+                    else -> character
+                },
+            )
+        }
+    }
+
     private fun createNonce(): String {
         val bytes = ByteArray(18)
         SecureRandom().nextBytes(bytes)
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
+
+    private fun iframeActivationScript(backgroundsEnabled: Boolean = false): String {
+        val backgroundBranch = if (backgroundsEnabled) {
+            """
+              if (button.hasAttribute('data-background-embed')) {
+                const slide = button.closest('section');
+                const background = slide && Reveal.getSlideBackground(slide);
+                const container = background && background.querySelector('.slide-background-content');
+                if (!slide || !container) return;
+                frame.classList.add('slide-background-iframe');
+                container.replaceChildren(frame);
+                slide.setAttribute('data-background-interactive', '');
+                button.remove();
+                frame.src = url.href;
+                return;
+              }
+            """.trimIndent()
+        } else {
+            ""
+        }
+        return """
+            document.addEventListener('click', event => {
+              const button = event.target instanceof Element
+                ? event.target.closest('button.embed-placeholder[data-embed], button.embed-placeholder[data-background-embed]')
+                : null;
+              if (!button) return;
+              event.preventDefault();
+              event.stopPropagation();
+              const source = button.dataset.embed || button.dataset.backgroundEmbed;
+              let url;
+              try { url = new URL(source); } catch (_) { return; }
+              if (url.protocol !== 'https:') return;
+              const frame = document.createElement('iframe');
+              frame.setAttribute('sandbox', '');
+              frame.setAttribute('referrerpolicy', 'no-referrer');
+              frame.setAttribute('loading', 'lazy');
+              frame.setAttribute('title', 'Embedded content');
+              $backgroundBranch
+              frame.src = url.href;
+              button.replaceWith(frame);
+            });
+        """.trimIndent()
     }
 
     private fun continuousStyle(colors: PresentationColors): String = """
@@ -274,6 +396,10 @@ object PresentationDocument {
         .reveal .controls { color: ${colors.link}; }
         .reveal .progress { color: ${colors.link}; }
         .media-placeholder { color: ${colors.muted}; font-style: italic; }
+        .embed-placeholder { display: block; max-width: 100%; margin: 1em auto; padding: .65em .9em; color: ${colors.link}; background: ${colors.background}; border: 1px solid ${colors.border}; border-radius: 8px; font: inherit; font-size: .5em; cursor: pointer; }
+        .background-embed-placeholder { position: relative; z-index: 1; margin-top: min(32vh, 220px); }
+        .reveal section > iframe { display: block; width: 100%; min-height: min(62vh, 640px); margin: 1em auto; border: 1px solid ${colors.border}; border-radius: 8px; }
+        .reveal .slide-background-content iframe.slide-background-iframe { width: 100%; height: 100%; max-width: 100%; max-height: 100%; border: 0; }
         @media (max-width: 600px), (max-height: 500px) { .reveal { font-size: ${colors.compactSlideFontSize}px; } }
     """.trimIndent()
 
@@ -357,6 +483,29 @@ object PresentationDocument {
     }
 
     private val Nonce = Regex("[A-Za-z0-9_-]{16,64}")
+    private val SlideDirective = Regex("""^[ \t]*<!--\s*\.slide:\s*(.*?)\s*-->[ \t]*$""", RegexOption.IGNORE_CASE)
+    private val SlideAttribute = Regex("""([A-Za-z][A-Za-z0-9-]*)(?:\s*=\s*\"([^\"]*)\")?""")
+    private val HexColor = Regex("""(?:#[0-9A-Fa-f]{3}|#[0-9A-Fa-f]{4}|#[0-9A-Fa-f]{6}|#[0-9A-Fa-f]{8})""")
+    private val NamedColor = Regex("""[A-Za-z][A-Za-z-]{0,31}""")
+    private val FunctionalColor = Regex(
+        """(?i)(?:rgb|rgba|hsl|hsla)\(\s*[0-9.%+-]+(?:\s*[,/]\s*|\s+)[0-9.%+-]+(?:\s*[,/]\s*|\s+)[0-9.%+-]+(?:\s*[/,]\s*[0-9.%+-]+)?\s*\)""",
+    )
+    private val SafeGradient = Regex(
+        """(?i)(?:repeating-)?(?:linear|radial)-gradient\([#(),.%+\-\sA-Za-z0-9]+\)""",
+    )
+    private val BackgroundPosition = Regex(
+        """(?i)(?:center|top|bottom|left|right)(?:\s+(?:center|top|bottom|left|right))?""",
+    )
+    private val BackgroundSizes = setOf("cover", "contain", "auto")
+    private val BackgroundRepeats = setOf("no-repeat", "repeat", "repeat-x", "repeat-y")
+    private val BackgroundTransitions = setOf("none", "fade", "slide", "convex", "concave", "zoom")
+    private const val MaximumGradientLength = 512
+
+    private data class PreparedSlide(
+        val markdown: String,
+        val attributes: Map<String, String>,
+        val backgroundIframeUrl: String?,
+    )
 }
 
 /** URL policy shared by the HTML rewriter and the native request handler. */
