@@ -35,7 +35,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -619,22 +618,21 @@ private fun FolderBreadcrumb(
     onOpenFolderPath: (String) -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(end = 16.dp),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 4.dp, end = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (relativePath.isNotEmpty()) {
-            IconButton(onClick = onNavigateUp, modifier = Modifier.size(40.dp).testTag("folder-back")) {
+            IconButton(onClick = onNavigateUp, modifier = Modifier.size(48.dp).testTag("folder-back")) {
                 Icon(
                     painterResource(R.drawable.ic_arrow_back),
                     contentDescription = stringResource(R.string.back),
-                    modifier = Modifier.offset(x = 4.dp),
                 )
             }
         } else {
-            Spacer(Modifier.width(16.dp))
+            Spacer(Modifier.width(12.dp))
         }
         Box(
-            Modifier.height(40.dp).clickable { onOpenFolderPath("") },
+            Modifier.height(48.dp).clickable { onOpenFolderPath("") },
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(stringResource(R.string.library_root), maxLines = 1)
@@ -649,7 +647,7 @@ private fun FolderBreadcrumb(
                 modifier = Modifier.size(24.dp).padding(3.dp),
             )
             Box(
-                Modifier.height(40.dp).clickable { onOpenFolderPath(destination) },
+                Modifier.height(48.dp).clickable { onOpenFolderPath(destination) },
                 contentAlignment = Alignment.CenterStart,
             ) {
                 Text(

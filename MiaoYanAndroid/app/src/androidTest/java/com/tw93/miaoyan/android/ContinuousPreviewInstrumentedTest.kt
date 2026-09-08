@@ -96,6 +96,37 @@ class ContinuousPreviewInstrumentedTest {
         assertEquals("true", result.get())
     }
 
+    @Test
+    fun headingAnchorsUseStableSlugsAndScrollInsidePreview() {
+        compose.waitUntil(timeoutMillis = 30_000) {
+            ContinuousPreviewTestActivity.previewController.readyRevision != null
+        }
+        compose.activityRule.scenario.onActivity { it.showInlinePreview() }
+        val result = AtomicReference<String?>()
+        compose.activityRule.scenario.onActivity { activity ->
+            requireNotNull(findWebView(activity.window.decorView)).evaluateJavascript(
+                """
+                (() => {
+                  const headings = Array.from(document.querySelectorAll('h1'));
+                  const link = document.querySelector('a[href="#destination-heading"]');
+                  if (!link || headings.length < 3) return 'missing';
+                  link.click();
+                  return [
+                    headings[1].id,
+                    headings[2].id,
+                    document.getElementById('标题格式')?.id,
+                    location.hash,
+                    window.scrollY > 0
+                  ].join('|');
+                })()
+                """.trimIndent(),
+            ) { value -> result.set(value) }
+        }
+        compose.waitUntil(timeoutMillis = 5_000) { result.get() != null }
+
+        assertEquals("\"destination-heading|destination-heading-1|标题格式|#destination-heading|true\"", result.get())
+    }
+
     private fun findWebView(view: View): WebView? {
         if (view is WebView) return view
         if (view !is ViewGroup) return null

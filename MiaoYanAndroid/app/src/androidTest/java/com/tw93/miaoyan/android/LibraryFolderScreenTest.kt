@@ -1,12 +1,15 @@
 package com.tw93.miaoyan.android
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertHeightIsEqualTo
+import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.tw93.miaoyan.android.model.LibraryFolder
 import com.tw93.miaoyan.android.model.LibraryNote
@@ -67,6 +70,15 @@ class LibraryFolderScreenTest {
         compose.onNodeWithTag("folder-name").performTextInput("Drafts")
         compose.onNodeWithTag("folder-name-confirm").performClick()
         assertEquals("Drafts", created.get())
+    }
+
+    @Test
+    fun breadcrumbBackUsesAStandardCenteredTouchTarget() {
+        showLibrary(state = LibraryUiState(currentFolder = folder("Projects")))
+
+        compose.onNodeWithTag("folder-back")
+            .assertWidthIsEqualTo(48.dp)
+            .assertHeightIsEqualTo(48.dp)
     }
 
     @Test
