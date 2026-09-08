@@ -5,6 +5,20 @@ import XCTest
 
 final class SidebarProjectViewTests: XCTestCase {
     @MainActor
+    func testCompletingProjectRenameReturnsLabelToDisplayMode() {
+        let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 180, height: 32))
+        let label = NSTextField(frame: cell.bounds)
+        label.isEditable = true
+        label.isSelectable = true
+        cell.addSubview(label)
+
+        cell.projectName(label)
+
+        XCTAssertFalse(label.isEditable)
+        XCTAssertFalse(label.isSelectable)
+    }
+
+    @MainActor
     func testSearchFieldPlaceholderAndEditorRectsShareVerticalCenterInLightAndDarkAppearances() throws {
         let cell = SearchFieldCell()
         let bounds = NSRect(x: 0, y: 0, width: 240, height: SearchFieldCell.height)

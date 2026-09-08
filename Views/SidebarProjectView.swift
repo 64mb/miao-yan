@@ -689,6 +689,8 @@ class SidebarProjectView: NSOutlineView,
         }
 
         cell.textField?.stringValue = sidebarItem.name
+        cell.textField?.isEditable = false
+        cell.textField?.isSelectable = false
 
         let baseFont = UserDefaultsManagement.nameFont ?? NSFont.systemFont(ofSize: 14)
         let accentColor = Theme.accentColor
@@ -938,6 +940,7 @@ class SidebarProjectView: NSOutlineView,
         }
 
         cell.label.isEditable = true
+        cell.label.isSelectable = true
         cell.label.becomeFirstResponder()
     }
 
