@@ -15,8 +15,8 @@ android {
         applicationId = "com.tw93.miaoyan.android"
         minSdk = 35
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.6-prototype"
+        versionCode = 8
+        versionName = "0.1.7-prototype"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
