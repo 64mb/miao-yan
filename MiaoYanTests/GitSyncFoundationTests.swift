@@ -48,6 +48,44 @@ final class GitSyncFoundationTests: XCTestCase {
         assertRejected("assets/photo.png", reason: .unsupportedFile)
     }
 
+    func testAllowsEmojiInFolderAndNoteNames() throws {
+        let folderNotePath = "🔮 Идеи/Сергей ✨.md"
+        let rootNotePath = "🪄 Scratch.md"
+        XCTAssertEqual(policy.classify(relativePath: folderNotePath), .allowed(.note))
+        XCTAssertEqual(policy.classify(relativePath: rootNotePath), .allowed(.note))
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanEmojiPreflight-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("🔮 Идеи", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "folder note".write(
+            to: root.appendingPathComponent(folderNotePath),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "root note".write(
+            to: root.appendingPathComponent(rootNotePath),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let preflight = try GitSyncFileCollector.collect(
+            rootURL: root,
+            maximumAttachmentBytes: 25 * 1024 * 1024
+        )
+        XCTAssertEqual(Set(preflight.managedPaths), [folderNotePath, rootNotePath])
+        XCTAssertTrue(
+            preflight.managedPaths.contains {
+                Array($0.utf8) == Array(folderNotePath.precomposedStringWithCanonicalMapping.utf8)
+            },
+            "Git paths emitted by the macOS collector must use cross-platform NFC bytes"
+        )
+        XCTAssertTrue(preflight.violations.isEmpty)
+    }
+
     func testAllowsOnlyGitignoreFromRepositoryConfiguration() {
         XCTAssertEqual(policy.classify(relativePath: ".gitignore"), .allowed(.repositoryConfiguration))
         assertRejected(".git/config", reason: .hiddenPath)

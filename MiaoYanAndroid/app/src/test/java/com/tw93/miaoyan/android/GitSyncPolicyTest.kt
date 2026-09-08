@@ -30,6 +30,8 @@ class GitSyncPolicyTest {
         assertTrue(GitSyncPathPolicy.isAllowed("Project/i/photo.webp"))
         assertTrue(GitSyncPathPolicy.isAllowed("files/archive/data.bin"))
         assertTrue(GitSyncPathPolicy.isAllowed(".gitignore"))
+        assertTrue(GitSyncPathPolicy.isAllowed("🔮 Ideas/✨ Forecast.md"))
+        assertTrue(GitSyncPathPolicy.isAllowed("🪄 Scratch.md"))
         assertFalse(GitSyncPathPolicy.isAllowed("README.pdf"))
         assertFalse(GitSyncPathPolicy.isAllowed(".git/config"))
         assertFalse(GitSyncPathPolicy.isAllowed("Trash/deleted.md"))
@@ -172,6 +174,17 @@ class GitSyncPolicyTest {
     fun rejectsCaseCollisions() {
         assertThrows(GitSyncException.Conflict::class.java) {
             GitContentGate.validate(mapOf("Note.md" to 1L, "note.md" to 1L), "test")
+        }
+    }
+
+    @Test
+    fun treatsCanonicallyEquivalentUnicodeFolderAndNoteNamesAsCollisions() {
+        val composed = "🔮 Идеи/Сергей ✨.md"
+        val decomposed = "🔮 Идеи/Сергеи\u0306 ✨.md"
+
+        assertEquals(GitSyncPathPolicy.collisionKey(composed), GitSyncPathPolicy.collisionKey(decomposed))
+        assertThrows(GitSyncException.Conflict::class.java) {
+            GitContentGate.validate(mapOf(composed to 1L, decomposed to 1L), "test")
         }
     }
 

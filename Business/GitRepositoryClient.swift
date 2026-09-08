@@ -88,7 +88,7 @@ actor GitRepositoryClient {
     }
 
     /// Creates an empty repository with an HTTPS `origin` and an unborn main
-    /// branch. Existing repositories are opened without rewriting config.
+    /// branch. Existing repositories keep their remote and branch configuration.
     func prepareRepository(at repositoryURL: URL, remoteURL: URL) throws {
         try Self.validate(remoteURL: remoteURL, allowFile: allowFileRemotesForTesting)
 
@@ -101,6 +101,7 @@ actor GitRepositoryClient {
             )
         }
         defer { git_repository_free(repository) }
+        try Self.enablePrecomposedUnicode(in: repository)
 
         guard git_repository_is_bare(repository) == 0,
             let workdirPointer = git_repository_workdir(repository)
@@ -168,6 +169,18 @@ actor GitRepositoryClient {
         try Self.check(git_repository_index(&index, repository), operation: "index open")
         defer { git_index_free(index) }
 
+        let requestedPaths = Set(paths)
+        for existingPath in Self.indexPaths(in: index) {
+            let normalizedPath = GitSyncPathNormalization.repositoryPath(existingPath)
+            guard requestedPaths.contains(normalizedPath), !Self.hasIdenticalUTF8(existingPath, normalizedPath) else {
+                continue
+            }
+            try Self.check(
+                git_index_remove_bypath(index, existingPath),
+                operation: "normalize index path \(existingPath)"
+            )
+        }
+
         for path in paths {
             let fileURL = repositoryURL.appendingPathComponent(path)
             if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -194,7 +207,9 @@ actor GitRepositoryClient {
         try Self.check(git_repository_index(&index, repository), operation: "index open")
         defer { git_index_free(index) }
 
-        for path in paths {
+        let requestedPaths = Set(paths)
+        for path in Self.indexPaths(in: index)
+        where requestedPaths.contains(GitSyncPathNormalization.repositoryPath(path)) {
             let result = git_index_remove_bypath(index, path)
             if result != 0, result != GIT_ENOTFOUND.rawValue {
                 try Self.check(result, operation: "untrack \(path)")
@@ -218,7 +233,11 @@ actor GitRepositoryClient {
             case UInt32(GIT_FILEMODE_COMMIT.rawValue): entryKind = .submodule
             default: entryKind = .regularFile
             }
-            return GitSyncChange(kind: .modified, path: String(cString: path), entryKind: entryKind)
+            return GitSyncChange(
+                kind: .modified,
+                path: GitSyncPathNormalization.repositoryPath(String(cString: path)),
+                entryKind: entryKind
+            )
         }
     }
 
@@ -794,16 +813,20 @@ actor GitRepositoryClient {
         defer { git_index_free(index) }
 
         for path in expectedPaths.sorted() {
+            let indexPath = try Self.rawConflictPath(matching: path, in: index)
             var ancestor: UnsafePointer<git_index_entry>?
             var ours: UnsafePointer<git_index_entry>?
             var theirs: UnsafePointer<git_index_entry>?
-            try Self.check(git_index_conflict_get(&ancestor, &ours, &theirs, index, path), operation: "conflict entry lookup")
+            try Self.check(
+                git_index_conflict_get(&ancestor, &ours, &theirs, index, indexPath),
+                operation: "conflict entry lookup"
+            )
             guard let choice = choices[path] else { continue }
             switch choice {
             case .local:
-                try Self.addResolvedEntry(ours, to: index)
+                try Self.addResolvedEntry(ours, path: path, to: index)
             case .remote:
-                try Self.addResolvedEntry(theirs, to: index)
+                try Self.addResolvedEntry(theirs, path: path, to: index)
             case .mergedText(let text):
                 guard let template = ours ?? theirs ?? ancestor else {
                     throw GitRepositoryError.operationFailed(operation: "AI conflict resolution", message: "No file entry is available")
@@ -819,9 +842,12 @@ actor GitRepositoryClient {
                 var entry = template.pointee
                 entry.id = blobOID
                 entry.flags &= ~UInt16(0x3000)
-                try Self.check(git_index_add(index, &entry), operation: "AI resolution index update")
+                try path.withCString { normalizedPath in
+                    entry.path = normalizedPath
+                    try Self.check(git_index_add(index, &entry), operation: "AI resolution index update")
+                }
             }
-            try Self.check(git_index_conflict_remove(index, path), operation: "conflict entry removal")
+            try Self.check(git_index_conflict_remove(index, indexPath), operation: "conflict entry removal")
         }
         guard git_index_has_conflicts(index) == 0 else {
             throw GitRepositoryError.operationFailed(operation: "conflict resolution", message: "Unresolved conflict entries remain")
@@ -866,11 +892,47 @@ actor GitRepositoryClient {
         return .mergeCommit
     }
 
-    private static func addResolvedEntry(_ source: UnsafePointer<git_index_entry>?, to index: OpaquePointer?) throws {
+    private static func addResolvedEntry(
+        _ source: UnsafePointer<git_index_entry>?,
+        path: String,
+        to index: OpaquePointer?
+    ) throws {
         guard let source else { return }
         var entry = source.pointee
         entry.flags &= ~UInt16(0x3000)
-        try check(git_index_add(index, &entry), operation: "resolved conflict index update")
+        try path.withCString { normalizedPath in
+            entry.path = normalizedPath
+            try check(git_index_add(index, &entry), operation: "resolved conflict index update")
+        }
+    }
+
+    private static func rawConflictPath(matching normalizedPath: String, in index: OpaquePointer?) throws -> String {
+        var iterator: OpaquePointer?
+        try check(git_index_conflict_iterator_new(&iterator, index), operation: "conflict path lookup")
+        defer { git_index_conflict_iterator_free(iterator) }
+
+        var matches = [String]()
+        while true {
+            var ancestor: UnsafePointer<git_index_entry>?
+            var ours: UnsafePointer<git_index_entry>?
+            var theirs: UnsafePointer<git_index_entry>?
+            let result = git_index_conflict_next(&ancestor, &ours, &theirs, iterator)
+            if result == GIT_ITEROVER.rawValue { break }
+            try check(result, operation: "conflict path lookup")
+            guard let pathPointer = ours?.pointee.path ?? theirs?.pointee.path ?? ancestor?.pointee.path else { continue }
+            let path = String(cString: pathPointer)
+            if GitSyncPathNormalization.repositoryPath(path) == normalizedPath {
+                matches.append(path)
+            }
+        }
+
+        guard matches.count == 1, let match = matches.first else {
+            throw GitRepositoryError.operationFailed(
+                operation: "conflict path lookup",
+                message: matches.isEmpty ? "The conflict no longer exists" : "Multiple canonically equivalent paths conflict"
+            )
+        }
+        return match
     }
 
     private static func validateExpectedRevision(_ expected: String?, actual: GitOID?, operation: String) throws {
@@ -916,9 +978,10 @@ actor GitRepositoryClient {
     }
 
     private static func validatedRelativePath(_ path: String) throws -> String {
-        let standardized = NSString(string: path).standardizingPath
-        guard !path.isEmpty,
-            !path.hasPrefix("/"),
+        let normalized = GitSyncPathNormalization.repositoryPath(path)
+        let standardized = NSString(string: normalized).standardizingPath
+        guard !normalized.isEmpty,
+            !normalized.hasPrefix("/"),
             standardized != ".",
             standardized != "..",
             !standardized.hasPrefix("../"),
@@ -928,7 +991,30 @@ actor GitRepositoryClient {
         else {
             throw GitRepositoryError.invalidRelativePath(path)
         }
-        return standardized
+        return GitSyncPathNormalization.repositoryPath(standardized)
+    }
+
+    private static func enablePrecomposedUnicode(in repository: OpaquePointer?) throws {
+        var config: OpaquePointer?
+        try check(git_repository_config(&config, repository), operation: "repository config open")
+        defer { git_config_free(config) }
+        try check(
+            git_config_set_bool(config, "core.precomposeunicode", 1),
+            operation: "Unicode path configuration"
+        )
+    }
+
+    private static func indexPaths(in index: OpaquePointer?) -> [String] {
+        (0..<git_index_entrycount(index)).compactMap { position in
+            guard let entry = git_index_get_byindex(index, position), let path = entry.pointee.path else {
+                return nil
+            }
+            return String(cString: path)
+        }
+    }
+
+    private static func hasIdenticalUTF8(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.elementsEqual(rhs.utf8)
     }
 
     private static func openRepository(at url: URL) throws -> OpaquePointer {
@@ -1186,12 +1272,13 @@ actor GitRepositoryClient {
             if result == GIT_ITEROVER.rawValue { break }
             try check(result, operation: "conflict scan")
             guard let pathPointer = ours?.pointee.path ?? theirs?.pointee.path ?? ancestor?.pointee.path else { continue }
-            let path = String(cString: pathPointer)
+            let rawPath = String(cString: pathPointer)
+            let path = GitSyncPathNormalization.repositoryPath(rawPath)
             files.append(
                 GitSyncConflictFile(
                     path: path,
-                    localModifiedAt: try lastChangeDate(for: path, startingAt: localOID, repository: repository),
-                    remoteModifiedAt: try lastChangeDate(for: path, startingAt: remoteOID, repository: repository),
+                    localModifiedAt: try lastChangeDate(for: rawPath, startingAt: localOID, repository: repository),
+                    remoteModifiedAt: try lastChangeDate(for: rawPath, startingAt: remoteOID, repository: repository),
                     ancestorText: try blobText(for: ancestor, repository: repository),
                     localText: try blobText(for: ours, repository: repository),
                     remoteText: try blobText(for: theirs, repository: repository),
@@ -1275,8 +1362,12 @@ actor GitRepositoryClient {
     }
 
     private static func syncChange(from delta: git_diff_delta, repository: OpaquePointer) throws -> GitSyncChange? {
-        let oldPath = delta.old_file.path.map(String.init(cString:))
-        let newPath = delta.new_file.path.map(String.init(cString:))
+        let oldPath = delta.old_file.path.map {
+            GitSyncPathNormalization.repositoryPath(String(cString: $0))
+        }
+        let newPath = delta.new_file.path.map {
+            GitSyncPathNormalization.repositoryPath(String(cString: $0))
+        }
         let kind: GitSyncChangeKind
         let path: String
         let previousPath: String?

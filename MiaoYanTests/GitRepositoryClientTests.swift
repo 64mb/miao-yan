@@ -185,6 +185,215 @@ final class GitRepositoryClientTests: XCTestCase {
         }
     }
 
+    func testEmojiFolderAndNoteNamesRoundTripThroughPushAndClone() async throws {
+        git_libgit2_init()
+        defer { git_libgit2_shutdown() }
+
+        let remoteURL = temporaryDirectory.appendingPathComponent("emoji-remote.git", isDirectory: true)
+        var bareRepository: OpaquePointer?
+        XCTAssertEqual(git_repository_init(&bareRepository, remoteURL.path, 1), 0)
+        git_repository_free(bareRepository)
+
+        let sourceURL = temporaryDirectory.appendingPathComponent("emoji-source", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        let sourceClient = GitRepositoryClient(allowFileRemotesForTesting: true)
+        let authentication = GitHTTPAuthentication(username: "", token: "")
+        try await sourceClient.prepareRepository(at: sourceURL, remoteURL: remoteURL)
+
+        let folderName = "🔮 Идеи"
+        let folderNotePath = "\(folderName)/Сергей ✨.md"
+        let rootNotePath = "🪄 Заметка.md"
+        try FileManager.default.createDirectory(
+            at: sourceURL.appendingPathComponent(folderName, isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "inside emoji folder\n".write(
+            to: sourceURL.appendingPathComponent(folderNotePath),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "emoji note name\n".write(
+            to: sourceURL.appendingPathComponent(rootNotePath),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let worktreePaths = Set(try await sourceClient.worktreeChanges(in: sourceURL).map(\.path))
+        XCTAssertEqual(worktreePaths, [folderNotePath, rootNotePath])
+        try await sourceClient.stage(relativePaths: [folderNotePath, rootNotePath], in: sourceURL)
+        let stagedPaths = rawIndexPaths(at: sourceURL)
+        XCTAssertTrue(stagedPaths.contains { $0.utf8.elementsEqual(folderNotePath.utf8) })
+        XCTAssertTrue(stagedPaths.contains { $0.utf8.elementsEqual(rootNotePath.utf8) })
+        let committed = try await sourceClient.commitIndex(
+            in: sourceURL,
+            message: "Emoji paths",
+            authorName: "MiaoYan Tests",
+            authorEmail: "tests@localhost"
+        )
+        XCTAssertTrue(committed)
+        try await sourceClient.pushMain(
+            in: sourceURL,
+            configuredRemoteURL: remoteURL,
+            authentication: authentication
+        )
+
+        let cloneURL = temporaryDirectory.appendingPathComponent("emoji-clone", isDirectory: true)
+        let cloneClient = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await cloneClient.clone(remoteURL: remoteURL, to: cloneURL, authentication: authentication)
+
+        XCTAssertEqual(
+            try String(contentsOf: cloneURL.appendingPathComponent(folderNotePath), encoding: .utf8),
+            "inside emoji folder\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: cloneURL.appendingPathComponent(rootNotePath), encoding: .utf8),
+            "emoji note name\n"
+        )
+    }
+
+    func testStageMigratesLegacyDecomposedFolderAndNotePathToNFC() async throws {
+        git_libgit2_init()
+        defer { git_libgit2_shutdown() }
+
+        let repositoryURL = temporaryDirectory.appendingPathComponent("legacy-unicode", isDirectory: true)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        let client = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await client.prepareRepository(at: repositoryURL, remoteURL: temporaryDirectory)
+
+        let composedPath = "🔮 Идеи/Сергей ✨.md"
+        let decomposedPath = composedPath.decomposedStringWithCanonicalMapping
+        XCTAssertFalse(decomposedPath.utf8.elementsEqual(composedPath.utf8))
+        try FileManager.default.createDirectory(
+            at: repositoryURL.appendingPathComponent("🔮 Идеи", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "legacy path\n".write(
+            to: repositoryURL.appendingPathComponent(composedPath),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        var repository: OpaquePointer?
+        XCTAssertEqual(git_repository_open(&repository, repositoryURL.path), 0)
+        defer { git_repository_free(repository) }
+        var index: OpaquePointer?
+        XCTAssertEqual(git_repository_index(&index, repository), 0)
+        XCTAssertEqual(git_index_add_bypath(index, decomposedPath), 0)
+        XCTAssertEqual(git_index_write(index), 0)
+        git_index_free(index)
+        XCTAssertTrue(rawIndexPaths(at: repositoryURL).contains { $0.utf8.elementsEqual(decomposedPath.utf8) })
+
+        try await client.stage(relativePaths: [composedPath], in: repositoryURL)
+
+        let migratedPaths = rawIndexPaths(at: repositoryURL)
+        XCTAssertTrue(migratedPaths.contains { $0.utf8.elementsEqual(composedPath.utf8) })
+        XCTAssertFalse(migratedPaths.contains { $0.utf8.elementsEqual(decomposedPath.utf8) })
+    }
+
+    func testRenamingTrackedFolderAndNoteToEmojiNamesRoundTripsThroughPush() async throws {
+        git_libgit2_init()
+        defer { git_libgit2_shutdown() }
+
+        let remoteURL = temporaryDirectory.appendingPathComponent("emoji-rename-remote.git", isDirectory: true)
+        var bareRepository: OpaquePointer?
+        XCTAssertEqual(git_repository_init(&bareRepository, remoteURL.path, 1), 0)
+        git_repository_free(bareRepository)
+
+        let sourceURL = temporaryDirectory.appendingPathComponent("emoji-rename-source", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: sourceURL.appendingPathComponent("Ideas", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let client = GitRepositoryClient(allowFileRemotesForTesting: true)
+        let authentication = GitHTTPAuthentication(username: "", token: "")
+        try await client.prepareRepository(at: sourceURL, remoteURL: remoteURL)
+        try "folder note\n".write(
+            to: sourceURL.appendingPathComponent("Ideas/Forecast.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "root note\n".write(
+            to: sourceURL.appendingPathComponent("Scratch.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try await client.stage(relativePaths: ["Ideas/Forecast.md", "Scratch.md"], in: sourceURL)
+        let initialCommitted = try await client.commitIndex(
+            in: sourceURL,
+            message: "Initial paths",
+            authorName: "MiaoYan Tests",
+            authorEmail: "tests@localhost"
+        )
+        XCTAssertTrue(initialCommitted)
+        try await client.pushMain(
+            in: sourceURL,
+            configuredRemoteURL: remoteURL,
+            authentication: authentication
+        )
+
+        try FileManager.default.moveItem(
+            at: sourceURL.appendingPathComponent("Ideas"),
+            to: sourceURL.appendingPathComponent("🔮 Ideas")
+        )
+        try FileManager.default.moveItem(
+            at: sourceURL.appendingPathComponent("Scratch.md"),
+            to: sourceURL.appendingPathComponent("✨ Scratch.md")
+        )
+        let newPaths = ["🔮 Ideas/Forecast.md", "✨ Scratch.md"]
+        let trackedPaths = try await client.trackedEntries(in: sourceURL).map(\.path)
+        let changedPaths = Set(try await client.worktreeChanges(in: sourceURL).flatMap(\.affectedPaths))
+        XCTAssertEqual(changedPaths, Set(trackedPaths + newPaths))
+
+        try await client.stage(relativePaths: trackedPaths + newPaths, in: sourceURL)
+        let renameCommitted = try await client.commitIndex(
+            in: sourceURL,
+            message: "Emoji rename",
+            authorName: "MiaoYan Tests",
+            authorEmail: "tests@localhost"
+        )
+        XCTAssertTrue(renameCommitted)
+        try await client.pushMain(
+            in: sourceURL,
+            configuredRemoteURL: remoteURL,
+            authentication: authentication
+        )
+
+        let cloneURL = temporaryDirectory.appendingPathComponent("emoji-rename-clone", isDirectory: true)
+        let cloneClient = GitRepositoryClient(allowFileRemotesForTesting: true)
+        try await cloneClient.clone(remoteURL: remoteURL, to: cloneURL, authentication: authentication)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cloneURL.appendingPathComponent("Ideas").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cloneURL.appendingPathComponent("Scratch.md").path))
+        XCTAssertEqual(
+            try String(contentsOf: cloneURL.appendingPathComponent(newPaths[0]), encoding: .utf8),
+            "folder note\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: cloneURL.appendingPathComponent(newPaths[1]), encoding: .utf8),
+            "root note\n"
+        )
+    }
+
+    private func rawIndexPaths(at repositoryURL: URL) -> [String] {
+        var repository: OpaquePointer?
+        guard git_repository_open(&repository, repositoryURL.path) == 0 else {
+            XCTFail("Could not open test repository")
+            return []
+        }
+        defer { git_repository_free(repository) }
+
+        var index: OpaquePointer?
+        guard git_repository_index(&index, repository) == 0 else {
+            XCTFail("Could not open test index")
+            return []
+        }
+        defer { git_index_free(index) }
+
+        return (0..<git_index_entrycount(index)).compactMap { position in
+            guard let entry = git_index_get_byindex(index, position), let path = entry.pointee.path else { return nil }
+            return String(cString: path)
+        }
+    }
+
     func testWorktreeChangesUseFilesystemSizeWithoutRequiringBlobOID() async throws {
         let repositoryURL = temporaryDirectory.appendingPathComponent("worktree", isDirectory: true)
         try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
