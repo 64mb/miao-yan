@@ -269,7 +269,7 @@ enum GitSyncFileCollector {
                     continue
                 }
                 managed.insert(relativePath)
-            case .rejected:
+            case .rejected, .ignored:
                 // Unsupported untracked files are outside the sync surface.
                 // The tracked-path pass below still blocks unsupported files
                 // that would otherwise be silently left in repository history.
@@ -307,7 +307,7 @@ enum GitSyncFileCollector {
                         continue
                     }
                     managed.insert(relativePath)
-                case .rejected:
+                case .rejected, .ignored:
                     continue
                 }
             }
@@ -411,6 +411,10 @@ final class GitSyncCoordinator {
             guard incomingViolations.isEmpty else {
                 return finish(.blocked(.disallowedIncomingChanges(incomingViolations)))
             }
+            try await removeUntrackedIgnoredFilesBeforeCheckout(
+                in: incomingSnapshot.changes,
+                rootURL: root.url
+            )
 
             let recoveryRevision = try await repository.createRecoveryReference(in: root.url)
             let previousRevision = try await repository.headRevision(in: root.url)
@@ -419,6 +423,7 @@ final class GitSyncCoordinator {
             failureStage = .apply
             viewController.fsManager?.beginGitMutation()
             let integration: GitHeadIntegration
+            var ignoredPathCleanupCommit = false
             var appliedRevision: String?
             var checkoutMayHaveMutated = false
             do {
@@ -458,6 +463,11 @@ final class GitSyncCoordinator {
                         )
                     )
                 }
+
+                ignoredPathCleanupCommit = try await commitIgnoredPathCleanup(
+                    rootURL: root.url,
+                    configuration: configuration
+                )
 
                 if integration != .upToDate {
                     appliedRevision = try await repository.headRevision(in: root.url)
@@ -526,7 +536,8 @@ final class GitSyncCoordinator {
                 authentication: auth
             )
             let revision = try await repository.headRevision(in: root.url) ?? previousRevision ?? ""
-            if firstCommit || secondCommit || integration == .mergeCommit {
+            let authoredCommit = hasAuthoredCommit(firstCommit, secondCommit, ignoredPathCleanupCommit)
+            if authoredCommit || integration == .mergeCommit {
                 return finish(.published(revision: revision, recoveryRevision: recoveryRevision))
             }
             if integration == .fastForward {
@@ -686,6 +697,10 @@ final class GitSyncCoordinator {
                     authorName: configuration.authorName,
                     authorEmail: configuration.authorEmail
                 )
+                _ = try await commitIgnoredPathCleanup(
+                    rootURL: root.url,
+                    configuration: configuration
+                )
                 appliedRevision = try await repository.headRevision(in: root.url)
                 let changes = try await repository.changesAppliedSince(context.localRevision, in: root.url)
                 setState(.reloading)
@@ -797,6 +812,52 @@ final class GitSyncCoordinator {
             authorName: configuration.authorName,
             authorEmail: configuration.authorEmail
         )
+    }
+
+    private func removeUntrackedIgnoredFilesBeforeCheckout(
+        in changes: [GitSyncChange],
+        rootURL: URL
+    ) async throws {
+        let trackedPaths = Set(try await repository.trackedEntries(in: rootURL).map(\.path))
+        let incomingPaths = changes.compactMap { change in
+            change.kind == .deleted ? nil : change.path
+        }
+        let paths = Set(incomingPaths).filter { path in
+            !trackedPaths.contains(path) && pathPolicy.classify(relativePath: path) == .ignored
+        }
+        guard !paths.isEmpty else { return }
+        try await Task.detached {
+            for path in paths {
+                let url = rootURL.appendingPathComponent(path)
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                    !isDirectory.boolValue
+                else { continue }
+                try FileManager.default.removeItem(at: url)
+            }
+        }.value
+    }
+
+    private func commitIgnoredPathCleanup(
+        rootURL: URL,
+        configuration: GitSyncConfiguration
+    ) async throws -> Bool {
+        let ignoredPaths = try await repository.trackedEntries(in: rootURL).compactMap { entry in
+            pathPolicy.classify(relativePath: entry.path, entryKind: entry.entryKind) == .ignored
+                ? entry.path : nil
+        }
+        guard !ignoredPaths.isEmpty else { return false }
+        try await repository.untrack(relativePaths: ignoredPaths, in: rootURL)
+        return try await repository.commitIndex(
+            in: rootURL,
+            message: "Exclude Finder metadata from sync",
+            authorName: configuration.authorName,
+            authorEmail: configuration.authorEmail
+        )
+    }
+
+    private func hasAuthoredCommit(_ commits: Bool...) -> Bool {
+        commits.contains(true)
     }
 
     private struct EditorSnapshot {

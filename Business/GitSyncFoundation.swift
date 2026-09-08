@@ -160,6 +160,7 @@ struct GitSyncPathViolation: Error, Equatable, Sendable {
 
 enum GitSyncPathDecision: Equatable, Sendable {
     case allowed(GitSyncManagedPathKind)
+    case ignored
     case rejected(GitSyncPathViolation)
 }
 
@@ -229,6 +230,9 @@ struct GitSyncPathPolicy: Sendable {
         }
         guard !components.contains("."), !components.contains("..") else {
             return reject(path, because: .pathTraversal)
+        }
+        if components.last == ".DS_Store" {
+            return .ignored
         }
         if components.first == ".Trash" {
             return classifyTrash(path: path, components: components)
@@ -334,7 +338,7 @@ struct GitSyncChangeSummary: Equatable, Sendable {
                 case .allowed(.note): notes.insert(path)
                 case .allowed(.attachment): attachments.insert(path)
                 case .allowed(.repositoryConfiguration), .allowed(.trashManifest),
-                    .allowed(.trashNote), .allowed(.trashAttachment), .rejected:
+                    .allowed(.trashNote), .allowed(.trashAttachment), .ignored, .rejected:
                     break
                 }
             }

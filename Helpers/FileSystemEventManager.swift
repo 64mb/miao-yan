@@ -167,7 +167,7 @@ class FileSystemEventManager {
                 switch gitPathPolicy.classify(relativePath: path, entryKind: change.entryKind) {
                 case .allowed(.trashManifest), .allowed(.trashNote), .allowed(.trashAttachment):
                     return true
-                case .allowed, .rejected:
+                case .allowed, .ignored, .rejected:
                     return false
                 }
             }
