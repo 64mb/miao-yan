@@ -1,11 +1,11 @@
-# V4.2.8 Tigrex 🐯
+# V4.2.9 Zinogre 🧩
 
-1. macOS 文件夹重命名现在会实际移动磁盘上的目录，因此重启应用后名称不会恢复
-2. 重命名会同步更新嵌套文件夹、笔记路径和侧栏状态，Git Sync 可正确提交目录删除与新增
-3. 新增端到端回归测试，覆盖 emoji 文件夹名、应用重启以及 Git push 后的全新 clone
+1. 修复 macOS 侧栏重命名控件丢失提交动作的问题，文件夹名称现在会可靠地写入磁盘并在重启后保留
+2. 缩短 macOS 文件夹重命名输入框并增加右侧间距，使侧栏编辑状态更清晰
+3. Android 回归测试现已覆盖带 emoji 的文件夹和笔记名称，包括 push、重启、fetch 与可恢复 checkout
 
 ---
 
-1. macOS folder renaming now moves the directory on disk, so the original name no longer returns after an app restart
-2. Renames update nested folders, note paths, and sidebar state so Git Sync commits the matching deletion and addition
-3. End-to-end regression coverage now verifies emoji folder names, app restart discovery, and a fresh clone after Git push
+1. Fixed a macOS sidebar rename control issue that dropped its commit action, so folder names now persist on disk and survive restart
+2. Shortened the macOS folder rename field and added trailing space for a cleaner sidebar editing state
+3. Android regression coverage now exercises emoji folder and note names across push, restart, fetch, and recoverable checkout
