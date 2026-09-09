@@ -5,6 +5,108 @@ import XCTest
 
 final class SidebarProjectViewTests: XCTestCase {
     @MainActor
+    func testProjectRenameActionMovesFolderUsingExplicitSidebarItem() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanProjectRenameActionTests-\(UUID().uuidString)", isDirectory: true)
+        let oldURL = rootURL.appendingPathComponent("Ideas", isDirectory: true)
+        let newURL = rootURL.appendingPathComponent("🔮 Ideas", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = Storage()
+        for existingProject in storage.getProjects() {
+            storage.removeBy(project: existingProject)
+        }
+        let root = Project(url: rootURL, isRoot: true, isDefault: true)
+        _ = storage.add(project: root)
+        let project = try XCTUnwrap(storage.getChildProjects(project: root).first)
+        let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 180, height: 32))
+        let label = NSTextField(frame: cell.bounds)
+        let sidebarItem = SidebarItem(name: "Ideas", project: project, type: .Category)
+        cell.storage = storage
+        cell.representedSidebarItem = sidebarItem
+        cell.objectValue = nil
+        label.stringValue = "🔮 Ideas"
+
+        cell.projectName(label)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newURL.path))
+        XCTAssertEqual(project.url, newURL)
+        XCTAssertEqual(sidebarItem.name, "🔮 Ideas")
+        XCTAssertEqual(label.stringValue, "🔮 Ideas")
+        XCTAssertFalse(label.isEditable)
+    }
+
+    @MainActor
+    func testStorageRenameMovesDirectoryAndUpdatesDescendantModels() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanProjectRenameTests-\(UUID().uuidString)", isDirectory: true)
+        let oldURL = rootURL.appendingPathComponent("Ideas", isDirectory: true)
+        let nestedURL = oldURL.appendingPathComponent("Drafts", isDirectory: true)
+        let noteURL = nestedURL.appendingPathComponent("Plan.md")
+        try FileManager.default.createDirectory(at: nestedURL, withIntermediateDirectories: true)
+        try "plan\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = Storage()
+        for existingProject in storage.getProjects() {
+            storage.removeBy(project: existingProject)
+        }
+        let root = Project(url: rootURL, isRoot: true, isDefault: true)
+        _ = storage.add(project: root)
+        let project = try XCTUnwrap(storage.getChildProjects(project: root).first)
+        let nested = Project(url: nestedURL, parent: project)
+        _ = storage.add(project: nested)
+        let note = Note(url: noteURL, with: nested)
+        storage.add(note)
+
+        let result = try storage.renameProject(project, to: "🔮 Ideas")
+
+        let renamedURL = rootURL.appendingPathComponent("🔮 Ideas", isDirectory: true)
+        let renamedNestedURL = renamedURL.appendingPathComponent("Drafts", isDirectory: true)
+        let renamedNoteURL = renamedNestedURL.appendingPathComponent("Plan.md")
+        XCTAssertEqual(result, ProjectRenameResult(oldURL: oldURL, newURL: renamedURL))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: renamedNoteURL.path))
+        XCTAssertEqual(project.url, renamedURL)
+        XCTAssertEqual(project.label, "🔮 Ideas")
+        XCTAssertEqual(nested.url, renamedNestedURL)
+        XCTAssertEqual(note.url, renamedNoteURL)
+        XCTAssertTrue(note.project === nested)
+    }
+
+    @MainActor
+    func testStorageRenameFailureLeavesDiskAndModelsAtOriginalPaths() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanProjectRenameFailureTests-\(UUID().uuidString)", isDirectory: true)
+        let oldURL = rootURL.appendingPathComponent("Ideas", isDirectory: true)
+        let occupiedURL = rootURL.appendingPathComponent("Archive", isDirectory: true)
+        let noteURL = oldURL.appendingPathComponent("Plan.md")
+        try FileManager.default.createDirectory(at: oldURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: occupiedURL, withIntermediateDirectories: true)
+        try "plan\n".write(to: noteURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = Storage()
+        for existingProject in storage.getProjects() {
+            storage.removeBy(project: existingProject)
+        }
+        let root = Project(url: rootURL, isRoot: true, isDefault: true)
+        _ = storage.add(project: root)
+        let project = try XCTUnwrap(storage.getChildProjects(project: root).first { $0.url == oldURL })
+        let note = Note(url: noteURL, with: project)
+        storage.add(note)
+
+        XCTAssertThrowsError(try storage.renameProject(project, to: "Archive"))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: noteURL.path))
+        XCTAssertEqual(project.url, oldURL)
+        XCTAssertEqual(project.label, "Ideas")
+        XCTAssertEqual(note.url, noteURL)
+    }
+
+    @MainActor
     func testCompletingProjectRenameReturnsLabelToDisplayMode() {
         let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 180, height: 32))
         let label = NSTextField(frame: cell.bounds)
