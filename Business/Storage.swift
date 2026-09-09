@@ -924,15 +924,21 @@ class Storage {
 
         for document in documents {
             let url = document.url
+            let resolvedURL = url.standardizedFileURL.resolvingSymlinksInPath()
 
             guard !Self.shouldHideRemovedTrashItem(at: url, in: project) else { continue }
 
-            // Check if note is already loaded to avoid duplicates
-            if noteList.contains(where: { $0.url == url }) {
+            // APFS may enumerate a composed Unicode filename while
+            // resolvingSymlinksInPath() returns its decomposed equivalent.
+            // Compare both sides in the same canonical URL form or a note such
+            // as "Сергей.md" is appended again on every project rescan.
+            if noteList.contains(where: {
+                $0.url.standardizedFileURL.resolvingSymlinksInPath() == resolvedURL
+            }) {
                 continue
             }
 
-            let note = Note(url: url.resolvingSymlinksInPath(), with: project)
+            let note = Note(url: resolvedURL, with: project)
 
             if url.pathComponents.isEmpty {
                 continue
