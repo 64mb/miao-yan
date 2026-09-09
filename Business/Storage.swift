@@ -74,8 +74,8 @@ class Storage {
     private var bookmarks = [URL]()
     private var scopedURLs = [URL]()
 
-    init() {
-        guard var url = UserDefaultsManagement.storageUrl else {
+    init(storageURL: URL? = UserDefaultsManagement.storageUrl) {
+        guard var url = storageURL else {
             return
         }
 
