@@ -4,9 +4,12 @@ import com.tw93.miaoyan.android.git.GitIndexDiff
 import java.io.File
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.diff.DiffEntry
+import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
 import org.eclipse.jgit.transport.RefSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -122,5 +125,65 @@ class GitIndexDiffTest {
 
             assertEquals(expected, local.repository.resolve("refs/remotes/origin/main"))
         }
+    }
+
+    @Test
+    fun emojiFolderRenameCanSyncAgainAfterRepositoryReopen() {
+        val remoteDirectory = temporaryFolder.newFolder("emoji-remote")
+        Git.init().setDirectory(remoteDirectory).setBare(true).call().close()
+        val directory = temporaryFolder.newFolder("emoji-local")
+        val remoteUrl = remoteDirectory.toURI().toString()
+
+        Git.init().setDirectory(directory).setInitialBranch("main").call().use { git ->
+            File(directory, "Ideas").mkdirs()
+            File(directory, "Ideas/Plan.md").writeText("# Plan")
+            git.add().addFilepattern("Ideas/Plan.md").call()
+            git.commit()
+                .setMessage("initial")
+                .setAuthor("MiaoYan", "android@example.com")
+                .setCommitter("MiaoYan", "android@example.com")
+                .call()
+            git.push()
+                .setRemote(remoteUrl)
+                .setRefSpecs(RefSpec("refs/heads/main:refs/heads/main"))
+                .call()
+
+            File(directory, "Ideas").renameTo(File(directory, "🔮 Ideas"))
+            git.add().addFilepattern("🔮 Ideas/Plan.md").call()
+            git.add().setUpdate(true).addFilepattern(".").call()
+            val changes = GitIndexDiff.stagedChanges(git, git.repository)
+            assertEquals(
+                setOf("Ideas/Plan.md", "🔮 Ideas/Plan.md"),
+                changes.flatMap { listOf(it.oldPath, it.newPath) }
+                    .filterNot { it == DiffEntry.DEV_NULL }
+                    .toSet(),
+            )
+            git.commit()
+                .setMessage("Sync from Android")
+                .setAuthor("MiaoYan", "android@example.com")
+                .setCommitter("MiaoYan", "android@example.com")
+                .call()
+            git.push()
+                .setRemote(remoteUrl)
+                .setRefSpecs(RefSpec("refs/heads/main:refs/heads/main"))
+                .call()
+        }
+
+        FileRepositoryBuilder()
+            .setGitDir(File(directory, ".git"))
+            .setWorkTree(directory)
+            .build()
+            .use { reopened ->
+                Git(reopened).use { git ->
+                    git.fetch()
+                        .setRemote(remoteUrl)
+                        .setRefSpecs(RefSpec("+refs/heads/main:refs/remotes/origin/main"))
+                        .call()
+
+                    assertEquals(reopened.resolve(Constants.HEAD), reopened.resolve("refs/remotes/origin/main"))
+                    assertTrue(git.status().call().isClean)
+                    assertTrue(File(directory, "🔮 Ideas/Plan.md").isFile)
+                }
+            }
     }
 }

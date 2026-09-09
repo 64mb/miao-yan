@@ -57,9 +57,9 @@ final class SidebarLabelCell: NSTextFieldCell {
 @MainActor
 class SidebarCellView: NSTableCellView {
     private enum LayoutConstants {
-        static let trailingPadding: CGFloat = 12
+        static let trailingPadding: CGFloat = 16
         static let minimumRenameWidth: CGFloat = 96
-        static let maximumRenameWidth: CGFloat = 220
+        static let maximumRenameWidth: CGFloat = 180
         static let renameHorizontalPadding: CGFloat = 16
     }
 
@@ -87,6 +87,9 @@ class SidebarCellView: NSTableCellView {
             label.cell?.usesSingleLineMode = true
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            label.target = self
+            label.action = #selector(projectName(_:))
+            label.cell?.sendsActionOnEndEditing = true
         }
     }
 

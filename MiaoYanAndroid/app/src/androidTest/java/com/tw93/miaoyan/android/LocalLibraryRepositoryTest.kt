@@ -6,12 +6,18 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tw93.miaoyan.android.data.LocalLibraryRepository
 import com.tw93.miaoyan.android.data.TrashManifestCodec
+import com.tw93.miaoyan.android.git.RecoverableCheckout
 import com.tw93.miaoyan.android.model.LibraryFolder
 import com.tw93.miaoyan.android.model.LibraryItemKind
 import com.tw93.miaoyan.android.model.TrashedNote
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
+import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.diff.DiffEntry
+import org.eclipse.jgit.lib.Constants
+import org.eclipse.jgit.storage.file.FileRepositoryBuilder
+import org.eclipse.jgit.transport.RefSpec
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -111,6 +117,112 @@ class LocalLibraryRepositoryTest {
         val rootFolder = repository.listDirectory("").currentFolder
         assertTrue(runCatching { repository.renameFolder(rootFolder, "Other") }.isFailure)
         assertTrue(runCatching { repository.moveFolderToTrash(rootFolder) }.isFailure)
+    }
+
+    @Test
+    fun emojiFolderRenameSurvivesRepositoryRecreation() = runBlocking {
+        val repository = LocalLibraryRepository(context)
+        val projects = repository.createFolder("", "Ideas")
+        repository.createNote(projects.relativePath, "Plan")
+
+        val mutation = repository.renameFolder(projects, "🔮 Ideas")
+
+        assertEquals("Ideas", mutation.oldRelativePath)
+        assertEquals("🔮 Ideas", mutation.newRelativePath)
+        val reopened = LocalLibraryRepository(context)
+        val listing = reopened.listDirectory("")
+        assertEquals(listOf("🔮 Ideas"), listing.folders.map { it.relativePath })
+        assertEquals(listOf("🔮 Ideas/Plan.md"), reopened.scan().map { it.relativePath })
+        assertTrue(File(root, "🔮 Ideas/Plan.md").isFile)
+        assertFalse(File(root, "Ideas").exists())
+    }
+
+    @Test
+    fun emojiFolderRenameRemainsCleanAfterJGitAndLibraryReopen() = runBlocking {
+        val library = LocalLibraryRepository(context)
+        val ideas = library.createFolder("", "Ideas")
+        library.createNote(ideas.relativePath, "Plan")
+        val remoteDirectory = File(sandbox, "remote.git")
+        Git.init().setDirectory(remoteDirectory).setBare(true).call().close()
+        val remoteUrl = remoteDirectory.toURI().toString()
+
+        Git.init().setDirectory(root).setInitialBranch("main").call().use { git ->
+            git.add().addFilepattern("Ideas/Plan.md").call()
+            git.commit()
+                .setMessage("initial")
+                .setAuthor("MiaoYan", "android@example.com")
+                .setCommitter("MiaoYan", "android@example.com")
+                .call()
+            git.push()
+                .setRemote(remoteUrl)
+                .setRefSpecs(RefSpec("refs/heads/main:refs/heads/main"))
+                .call()
+
+            library.renameFolder(ideas, "🔮 Ideas")
+            library.rename(library.scan().single(), "✨ Plan.md")
+            git.add().addFilepattern("🔮 Ideas/✨ Plan.md").call()
+            git.add().setUpdate(true).addFilepattern(".").call()
+            val changes = git.diff().setCached(true).call()
+            assertEquals(
+                setOf("Ideas/Plan.md", "🔮 Ideas/✨ Plan.md"),
+                changes.flatMap { listOf(it.oldPath, it.newPath) }
+                    .filterNot { it == DiffEntry.DEV_NULL }
+                    .toSet(),
+            )
+            git.commit()
+                .setMessage("Sync from Android")
+                .setAuthor("MiaoYan", "android@example.com")
+                .setCommitter("MiaoYan", "android@example.com")
+                .call()
+            git.push()
+                .setRemote(remoteUrl)
+                .setRefSpecs(RefSpec("refs/heads/main:refs/heads/main"))
+                .call()
+        }
+
+        val peerDirectory = File(sandbox, "peer")
+        Git.cloneRepository()
+            .setURI(remoteUrl)
+            .setBranch("main")
+            .setDirectory(peerDirectory)
+            .call()
+            .use { peer ->
+                File(peerDirectory, "🔮 Ideas/✨ Plan.md").writeText("# Remote update")
+                peer.add().addFilepattern("🔮 Ideas/✨ Plan.md").call()
+                peer.commit()
+                    .setMessage("remote update")
+                    .setAuthor("MiaoYan", "mac@example.com")
+                    .setCommitter("MiaoYan", "mac@example.com")
+                    .call()
+                peer.push()
+                    .setRemote("origin")
+                    .setRefSpecs(RefSpec("refs/heads/main:refs/heads/main"))
+                    .call()
+            }
+
+        val reopenedLibrary = LocalLibraryRepository(context)
+        assertEquals(listOf("🔮 Ideas/✨ Plan.md"), reopenedLibrary.scan().map { it.relativePath })
+        FileRepositoryBuilder()
+            .setGitDir(File(root, ".git"))
+            .setWorkTree(root)
+            .build()
+            .use { repository ->
+                Git(repository).use { git ->
+                    git.fetch()
+                        .setRemote(remoteUrl)
+                        .setRefSpecs(RefSpec("+refs/heads/main:refs/remotes/origin/main"))
+                        .call()
+                    val remoteHead = requireNotNull(repository.resolve("refs/remotes/origin/main"))
+                    assertTrue(repository.resolve(Constants.HEAD) != remoteHead)
+                    RecoverableCheckout().apply(git, remoteHead) {
+                        assertTrue(git.status().call().isClean)
+                        assertEquals("# Remote update", File(root, "🔮 Ideas/✨ Plan.md").readText())
+                    }
+                    assertEquals(repository.resolve(Constants.HEAD), remoteHead)
+                    assertTrue(File(root, "🔮 Ideas/✨ Plan.md").isFile)
+                    assertFalse(File(root, "Ideas").exists())
+                }
+            }
     }
 
     @Test

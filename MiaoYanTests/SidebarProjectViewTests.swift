@@ -13,10 +13,7 @@ final class SidebarProjectViewTests: XCTestCase {
         try FileManager.default.createDirectory(at: oldURL, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
-        let storage = Storage()
-        for existingProject in storage.getProjects() {
-            storage.removeBy(project: existingProject)
-        }
+        let storage = Storage(storageURL: nil)
         let root = Project(url: rootURL, isRoot: true, isDefault: true)
         _ = storage.add(project: root)
         let project = try XCTUnwrap(storage.getChildProjects(project: root).first)
@@ -49,10 +46,7 @@ final class SidebarProjectViewTests: XCTestCase {
         try "plan\n".write(to: noteURL, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
-        let storage = Storage()
-        for existingProject in storage.getProjects() {
-            storage.removeBy(project: existingProject)
-        }
+        let storage = Storage(storageURL: nil)
         let root = Project(url: rootURL, isRoot: true, isDefault: true)
         _ = storage.add(project: root)
         let project = try XCTUnwrap(storage.getChildProjects(project: root).first)
@@ -88,10 +82,7 @@ final class SidebarProjectViewTests: XCTestCase {
         try "plan\n".write(to: noteURL, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: rootURL) }
 
-        let storage = Storage()
-        for existingProject in storage.getProjects() {
-            storage.removeBy(project: existingProject)
-        }
+        let storage = Storage(storageURL: nil)
         let root = Project(url: rootURL, isRoot: true, isDefault: true)
         _ = storage.add(project: root)
         let project = try XCTUnwrap(storage.getChildProjects(project: root).first { $0.url == oldURL })
@@ -147,6 +138,73 @@ final class SidebarProjectViewTests: XCTestCase {
     }
 
     @MainActor
+    func testSidebarLabelCellReplacementPreservesRenameAction() {
+        let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 180, height: 32))
+        let label = NSTextField(frame: cell.bounds)
+        label.target = cell
+        label.action = #selector(SidebarCellView.projectName(_:))
+        label.cell?.sendsActionOnEndEditing = true
+        cell.label = label
+
+        cell.awakeFromNib()
+
+        XCTAssertTrue(label.target === cell)
+        XCTAssertEqual(label.action, #selector(SidebarCellView.projectName(_:)))
+        XCTAssertEqual(label.cell?.sendsActionOnEndEditing, true)
+    }
+
+    @MainActor
+    func testEndingProjectNameEditingMovesFolderAndRetiresFieldEditor() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanProjectRenameLifecycleTests-\(UUID().uuidString)", isDirectory: true)
+        let oldURL = rootURL.appendingPathComponent("Ideas", isDirectory: true)
+        let newURL = rootURL.appendingPathComponent("🔮 Ideas", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldURL, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = Storage(storageURL: nil)
+        let root = Project(url: rootURL, isRoot: true, isDefault: true)
+        _ = storage.add(project: root)
+        let project = try XCTUnwrap(storage.getChildProjects(project: root).first)
+        let sidebarItem = SidebarItem(name: "Ideas", project: project, type: .Category)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 180),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let outlineView = SidebarProjectView(frame: window.contentView?.bounds ?? .zero)
+        window.contentView = outlineView
+
+        let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 220, height: 40))
+        let label = NSTextField(labelWithString: sidebarItem.name)
+        label.frame = NSRect(x: 28, y: 10, width: 180, height: 20)
+        label.target = cell
+        label.action = #selector(SidebarCellView.projectName(_:))
+        label.cell?.sendsActionOnEndEditing = true
+        cell.storage = storage
+        cell.representedSidebarItem = sidebarItem
+        cell.label = label
+        cell.addSubview(label)
+        outlineView.addSubview(cell)
+        cell.awakeFromNib()
+
+        cell.beginProjectNameEditing()
+        let fieldEditor = try XCTUnwrap(label.currentEditor())
+        fieldEditor.string = "🔮 Ideas"
+
+        XCTAssertTrue(window.makeFirstResponder(outlineView))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newURL.path))
+        XCTAssertEqual(project.url, newURL)
+        XCTAssertNil(label.currentEditor())
+        XCTAssertFalse(label.isEditable)
+        XCTAssertFalse(label.isSelectable)
+    }
+
+    @MainActor
     func testProjectRenameFieldFitsItsContentAndKeepsTrailingPadding() {
         let cell = SidebarCellView(frame: NSRect(x: 0, y: 0, width: 360, height: 40))
         let label = NSTextField(labelWithString: "Ideas")
@@ -162,8 +220,8 @@ final class SidebarProjectViewTests: XCTestCase {
 
         cell.beginProjectNameEditing()
 
-        XCTAssertLessThanOrEqual(label.frame.width, 220.5)
-        XCTAssertGreaterThanOrEqual(cell.bounds.maxX - label.frame.maxX, 11.5)
+        XCTAssertLessThanOrEqual(label.frame.width, 180.5)
+        XCTAssertGreaterThanOrEqual(cell.bounds.maxX - label.frame.maxX, 15.5)
     }
 
     @MainActor
