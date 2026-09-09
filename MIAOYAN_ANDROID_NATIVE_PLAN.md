@@ -29,9 +29,9 @@ Android-версия доводится одним цельным этапом; 
 
 Этот реестр является источником истины для статуса. Наличие кода или unit-теста само по себе не означает, что device-flow принят.
 
-| Приоритет | Поверхность | Статус на 2026-09-08 | Следующий gate |
+| Приоритет | Поверхность | Статус на 2026-09-09 | Следующий gate |
 |---|---|---|---|
-| P0 | `Sync Now` / Reload с Git | Release-only `lb0` устранён; minified JGit path проверен на устройстве, пользовательские ошибки не содержат obfuscated internals и сохраняют локальные данные | закрыто для prototype; настоящий remote остаётся beta integration gate |
+| P0 | `Sync Now` / Reload с Git | Release-only `lb0` и stale `.git/*.lock` после process death устранены; minified JGit path и emoji rename/restart проверены на устройстве, recovery сохраняет заметки и Git history | закрыто для prototype; настоящий remote остаётся beta integration gate |
 | P0 | Inline Preview | Один reusable continuous WebView для inline/fullscreen, renderer recovery и font-before-first-frame; device smoke без crash/FOUT пройден | финальный regression suite |
 | P1 | Nested folder CRUD | Интегрирован и покрыт: create/rename/navigation, three-dot actions, recoverable Trash/restore/permanent delete, Room/pins/draft remap | финальный instrumentation suite |
 | P1 | Tablet | List-detail/two-pane включается от 840 dp; preview/presentation остаются полнооконными | landscape/840 dp smoke |
@@ -43,7 +43,7 @@ Android-версия доводится одним цельным этапом; 
 | P2 | Progress overlay | Delay 150 ms, после появления minimum 800 ms; state-machine tests есть | runtime Reload smoke |
 | P2 | Initial unrelated history | Whole-library выбор Keep Local или Replace with Remote без content merge реализован | minified Git regression suite |
 | P3 | Subtitle/toast punctuation | EN/RU subtitle/detail без декоративных финальных точек; snackbar удаляет финальную точку у status messages | resource/lint gate |
-| Release gate | APK | `test`, `lint`, Debug/test APK и minified `localRelease` собраны; 44/44 instrumentation tests и release JGit failure-path smoke прошли на `emulator-5554`, включая viewport длинного slide | checksum, fresh Debug reinstall и обновление fork PR |
+| Release gate | APK | `testDebugUnitTest`, `lintDebug`, полный `connectedDebugAndroidTest` и minified `localRelease` прошли на Android 16 emulator; device suite включает настоящий `GitWorkingTreeSync`, emoji rename/restart и stale-lock recovery | checksum, fresh Debug reinstall и обновление fork PR |
 
 ## 1. Scope и принятые ограничения
 
@@ -316,20 +316,23 @@ Git работает прямо с `filesDir/libraries/default`: это одно
 Sync-транзакция, общая для ручного и фонового запуска:
 
 1. Захватить library mutation lock.
-2. Отказаться от sync, если у активного editor есть несохранённый draft; фон не блокирует уход приложения и повторит работу только по правилам WorkManager.
-3. Снять hash snapshot канонической библиотеки и проверить path policy.
-4. Commit локальных изменений.
-5. Fetch только точного refspec `+refs/heads/main:refs/remotes/origin/main`, без tags.
-6. Классифицировать history как same tree, local ahead, remote ahead или diverged.
-7. Проверить все incoming paths, entry types и added/modified attachment sizes до изменения working tree.
-8. Перед hard checkout создать recoverable ref `refs/miaoyan/checkout-recovery` на прежний commit.
-9. Для fast-forward применить проверенное remote tree; для divergence отложить apply до полного набора whole-file Local/Remote choices.
-10. Проверить итоговый working tree и только после этого удалить recovery ref.
-11. Push только точного refspec `refs/heads/main:refs/heads/main` с lease.
-12. Освободить общий `LibraryMutationGate`.
-13. Пересканировать canonical filesystem, перестроить Room projection и безопасно переоткрыть либо закрыть текущую UI note.
+2. До открытия JGit удалить только stale `.git/*.lock`, оставшиеся после завершения процесса; не удалять и не пересоздавать `.git`, refs, commits или index.
+3. Отказаться от sync, если у активного editor есть несохранённый draft; фон не блокирует уход приложения и повторит работу только по правилам WorkManager.
+4. Снять hash snapshot канонической библиотеки и проверить path policy.
+5. Commit локальных изменений.
+6. Fetch только точного refspec `+refs/heads/main:refs/remotes/origin/main`, без tags.
+7. Классифицировать history как same tree, local ahead, remote ahead или diverged.
+8. Проверить все incoming paths, entry types и added/modified attachment sizes до изменения working tree.
+9. Перед hard checkout создать recoverable ref `refs/miaoyan/checkout-recovery` на прежний commit.
+10. Для fast-forward применить проверенное remote tree; для divergence отложить apply до полного набора whole-file Local/Remote choices.
+11. Проверить итоговый working tree и только после этого удалить recovery ref.
+12. Push только точного refspec `refs/heads/main:refs/heads/main` с lease.
+13. Освободить общий `LibraryMutationGate`.
+14. Пересканировать canonical filesystem, перестроить Room projection и безопасно переоткрыть либо закрыть текущую UI note.
 
 Ручной запуск доступен из UI. Автоматический запуск — отдельный opt-in toggle с периодом 15 минут через WorkManager, только при наличии сети и валидной конфигурации. Период Android является inexact: Doze и battery policy могут отложить фактический запуск. Повторный запуск не пересекается с активной sync/mutation operation.
+
+`filesDir/libraries/default/.git` доступен только приложению, а sync и CRUD сериализованы одним `LibraryMutationGate`. Поэтому `.lock`, найденный до открытия JGit под этим gate, считается следом прерванной записи. `GitRepositoryHousekeeping` удаляет только lock-файлы в Git metadata; заметки, index, refs, commits и checkout recovery остаются неизменными. Regression gate обязан воспроизводить emoji rename, закрытие/reopen репозитория, stale lock и следующий чистый sync path.
 
 Сетевые ограничения:
 
@@ -358,6 +361,8 @@ policy в узком Kotlin adapter. Цена выбора — больший JV
 будущей миграцией, если измеримые performance/pack-memory/transport требования оправдают отдельные
 reproducible NDK builds, TLS dependency audit, per-ABI packaging и новый JNI lifecycle. Он не
 является текущей реализацией.
+
+JGit загружает `org.eclipse.jgit.internal.JGitText` и его public fields через reflection. R8 keep-rules для этого класса являются runtime-инвариантом: их нельзя удалять на основании debug-тестов. Изменения Git adapter, diagnostics или shrinking правил проверяются не только unit/device debug suite, но и `assembleLocalRelease` с minification.
 
 ### Initial sync
 
@@ -431,9 +436,10 @@ Instrumented fake `DocumentsProvider` для Import/Export boundary должен
 Локальный verification gate до появления CI:
 
 ```bash
-./gradlew test lint
-./gradlew connectedCheck
-./gradlew :benchmark:connectedCheck
+cd MiaoYanAndroid
+./gradlew :app:testDebugUnitTest :app:lintDebug
+./gradlew :app:connectedDebugAndroidTest
+./gradlew :app:assembleLocalRelease
 ```
 
 Плюс native cmark tests, JGit policy/history/recovery JVM tests и ручная provider/IME matrix.
