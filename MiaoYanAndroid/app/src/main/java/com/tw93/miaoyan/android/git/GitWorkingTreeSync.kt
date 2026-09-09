@@ -280,6 +280,7 @@ class GitWorkingTreeSync(context: Context) {
 
     private fun openRepository(): Repository {
         val gitDirectory = File(libraryDirectory, ".git")
+        GitRepositoryHousekeeping.removeStaleLocks(gitDirectory)
         val repository = FileRepositoryBuilder()
             .setGitDir(gitDirectory)
             .setWorkTree(libraryDirectory)
