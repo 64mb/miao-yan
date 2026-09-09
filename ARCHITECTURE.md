@@ -1,7 +1,8 @@
 # MiaoYan Architecture
 
 > This document describes the current implementation. Target membership in
-> `MiaoYan.xcodeproj/project.pbxproj` is authoritative when the code changes.
+> `MiaoYan.xcodeproj/project.pbxproj` is authoritative for Apple targets;
+> Android source sets and variants are authoritative in `MiaoYanAndroid/app/build.gradle.kts`.
 
 ## Top-Level Map
 
@@ -14,6 +15,7 @@
 ├── Extensions/      # Swift extensions on Foundation / AppKit types
 ├── Resources/       # Bundled assets, including DownView.bundle (HTML/CSS/JS for preview)
 ├── MiaoYanMobile/   # iOS SwiftUI target (App/Services/Views/Resources)
+├── MiaoYanAndroid/  # Android 15+ Gradle app (Kotlin/Compose, Room, cmark-gfm, JGit)
 ├── MiaoYanTests/    # Unit tests for pure-logic surfaces
 └── scripts/         # Local build, App Store, release helpers, target wiring (Ruby + bash)
 ```
@@ -33,6 +35,11 @@ A single macOS application process owns:
 The iOS target (`MiaoYanMobile/`) is a separate executable with its own models,
 storage services, renderer, and SwiftUI entry point (`MiaoYanMobileApp.swift`).
 The apps share filesystem conventions, not the macOS `Business/` compile pool.
+
+The Android app (`MiaoYanAndroid/`) is another separate executable. It owns an
+app-private canonical library, a rebuildable Room search projection, a native
+cmark-gfm renderer, and a JGit working tree. It shares MiaoYan file conventions
+with macOS/iOS, but no UI or runtime code.
 
 ## Singleton & Facade Inventory
 
@@ -147,6 +154,26 @@ through `MiaoYanMobile/Services/FileReader.swift`, which is a parallel
 implementation to the macOS storage flow. `NoteSearchReader` reads complete
 local bodies in cancellable chunks and is also compiled into the macOS test
 bundle for platform-independent regression tests.
+
+## Android App Boundary
+
+`MiaoYanAndroid/` is a standalone Gradle project targeting Android 15 and newer.
+Its canonical notes live at `filesDir/libraries/default`; SAF is only the explicit
+Import/Export boundary. Room, pins, credentials, and mutation metadata are derived
+or private application state and never replace Markdown files as the source of truth.
+
+All canonical mutations and JGit operations pass through `LibraryMutationGate`.
+The canonical library is also the JGit working tree, so a checkout must validate
+incoming paths and sizes, create a recoverable ref, apply the tree, verify the result,
+and only then retire recovery state. Android process termination can leave Git lock
+files behind. `GitRepositoryHousekeeping` removes only stale `.lock` metadata before
+JGit opens the repository while the mutation gate is held; it must never delete or
+recreate `.git`, notes, refs, commits, or the index as a recovery shortcut.
+
+The search database is a rebuildable projection. Repository scans reconcile stale
+rows and can rebuild/compact the Room database without changing canonical notes.
+Android rendering and editing stay inside `MiaoYanAndroid/`; they do not reuse the
+AppKit or SwiftUI target implementations.
 
 ## Release & Update Path
 

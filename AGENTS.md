@@ -12,7 +12,7 @@
 
 ## Project
 
-MiaoYan is a lightweight Markdown editor built with Swift. The main app is macOS/AppKit, and the repository also contains an iOS target under `MiaoYanMobile/`.
+MiaoYan is a lightweight Markdown editor. The main app is macOS/AppKit; the repository also contains an iOS target under `MiaoYanMobile/` and a native Android 15+ app under `MiaoYanAndroid/`.
 
 ## Tech Stack
 
@@ -23,6 +23,7 @@ MiaoYan is a lightweight Markdown editor built with Swift. The main app is macOS
 - **Note storage**: filesystem-backed with folder nesting, file-system watch, auto-save, and version history.
 - **Editor**: live preview, syntax highlight, keyboard shortcuts, Prettier-integrated auto-format.
 - **iOS target**: SwiftUI under `MiaoYanMobile/`, using its own models and services; both apps share filesystem conventions.
+- **Android app**: Kotlin/Compose under `MiaoYanAndroid/`, with an app-private filesystem library, Room search projection, cmark-gfm JNI preview, and Eclipse JGit sync.
 
 ## Repository Map
 
@@ -33,6 +34,7 @@ MiaoYan is a lightweight Markdown editor built with Swift. The main app is macOS
 - `Extensions/` - Swift extensions.
 - `Resources/` - bundled resources.
 - `MiaoYanMobile/` - iOS app target, SwiftUI views, mobile services, and mobile resources.
+- `MiaoYanAndroid/` - native Android 15+ Gradle project, Kotlin/Compose UI, app-private storage, Room index, and JGit sync.
 - `MiaoYan.xcodeproj/` - Xcode project and version settings.
 - `Package.swift` - Swift package dependency declarations and supported platforms.
 - `scripts/` - local build, App Store, release, and project maintenance scripts.
@@ -48,6 +50,9 @@ xcodebuild -project MiaoYan.xcodeproj -scheme MiaoYan -configuration Debug build
 xcodebuild clean
 xcodebuild test -project MiaoYan.xcodeproj -scheme MiaoYan -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 xcodebuild -project MiaoYan.xcodeproj -scheme MiaoYanMobile -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+(cd MiaoYanAndroid && ./gradlew :app:testDebugUnitTest :app:lintDebug)
+(cd MiaoYanAndroid && ./gradlew :app:connectedDebugAndroidTest)
+(cd MiaoYanAndroid && ./gradlew :app:assembleLocalRelease)
 swiftlint lint --strict
 swift-format lint --recursive . --strict   # --strict is what CI runs; without it a local pass can still fail CI
 bash scripts/sync-agent-skills.sh --check  # compare the gitignored local Claude mirror; use --write first if absent
@@ -109,6 +114,9 @@ local-only workaround.
 
 CI does NOT run the App Store packaging or notarization scripts; those need
 maintainer-managed signing keys and run only on the maintainer's machine.
+The tracked CI workflow does not currently build `MiaoYanAndroid/`; Android
+unit, lint, emulator, and minified-R8 gates must therefore run locally before
+an Android PR or fork release is reported ready.
 
 ## Error Reporting
 
@@ -157,9 +165,10 @@ When scope is incomplete, start with:
 2. `Controllers/AppDelegate.swift`
 3. `Controllers/MainWindowController.swift`
 4. `Controllers/ViewController.swift`
-5. `MiaoYanMobile/` when the task touches iOS, sync, mobile reading, or mobile editing behavior
-6. Narrow related files under `Helpers/`, `Views/`, `Business/`, or `Extensions/`
-7. Relevant Xcode project settings only when build, signing, target membership, or version behavior is involved
+5. `MiaoYanMobile/` when the task touches iOS, iCloud sync, mobile reading, or mobile editing behavior
+6. `MiaoYanAndroid/` when the task touches Android storage, search, rendering, editing, or Git sync
+7. Narrow related files under `Helpers/`, `Views/`, `Business/`, or `Extensions/`
+8. Relevant project settings only when build, signing, target membership, or version behavior is involved
 
 Avoid broad scans of `build/`, `.build/`, `dist/`, and bundled web assets unless the task targets them.
 
@@ -169,6 +178,8 @@ Avoid broad scans of `build/`, `.build/`, `dist/`, and bundled web assets unless
 - Sidebar horizontal layout is owned by `SidebarProjectView.tile()`: after reloads and resizes, the outline frame and first column must match the clip-view width and the clip-view horizontal origin must stay at zero. Do not replace this invariant with event-specific width resets.
 - Wikilinks and backlinks depend on `Business/WikilinkIndex.swift`, note loading, search, and sidebar refresh behavior. Keep `[[note]]` parsing, recursive search, and Trash exclusions consistent.
 - iCloud sync spans macOS storage, `Business/CloudSyncManager.swift`, and `MiaoYanMobile/Services/CloudSyncManager.swift`. Verify fallback behavior when iCloud is unavailable.
+- Android Git Sync owns an app-private working tree at `filesDir/libraries/default`. Every JGit operation and filesystem mutation must remain serialized by `LibraryMutationGate`. Android process death can leave `.git/*.lock` files behind; only `GitRepositoryHousekeeping` may remove those stale lock files, before JGit opens the repository and while the gate is held. Never recover this condition by deleting/recreating `.git`, rewriting notes, or discarding refs/history/index. Keep the JVM and device regressions covering emoji rename, repository restart, stale lock cleanup, real `GitWorkingTreeSync` preparation, and clean follow-up status.
+- JGit uses reflection for runtime message metadata. Keep the `org.eclipse.jgit.internal.JGitText` R8 rules in `MiaoYanAndroid/app/proguard-rules.pro`; a debug-only pass does not prove the minified app works. Git changes require `assembleLocalRelease` plus an emulator/device path through the minified code when R8/reflection behavior is in scope.
 - `MiaoYanMobile/` is a real iOS target, not sample code. Keep SwiftUI, file reading, mobile rendering, and target membership aligned.
 - Trash handling spans `Business/Storage.swift`, `Business/Note.swift`, sidebar drag/drop, attachment cleanup, and system Trash fallback.
 - A successfully removed note must retire its `Note` instance before any watcher, editor, lifecycle flush, or upload callback can save it again. Existing-note writes must fail closed if the file disappears, and UI rows may be removed only for filesystem operations that succeeded.
@@ -217,6 +228,7 @@ MiaoYan ships through two independent channels. Publishing one never updates the
 - Lint or formatting changes: run SwiftLint and swift-format checks.
 - Project Skill changes: edit `.agents/skills/` only, then run `bash scripts/sync-agent-skills.sh --write` followed by `bash scripts/sync-agent-skills.sh --check`. The checker compares canonical files while allowing unrelated private Claude skills to remain local.
 - iOS changes: verification bar equals macOS. Inspect `MiaoYanMobile/` target membership, build, then run the affected flow in the Simulator (for example the new-note title flow or preview first frame) before reporting done; a green build alone is not done. Performance complaints need a measurable budget in the fix (for example: detail-page first frame past the budget shows a skeleton instead of blocking).
+- Android changes: run the narrow unit test first, then `:app:testDebugUnitTest`, `:app:lintDebug`, the affected flow through `:app:connectedDebugAndroidTest` on an Android 15+ emulator, and `:app:assembleLocalRelease`. A Git Sync change is not done until the real `GitWorkingTreeSync` path is exercised after repository/app restart; include emoji paths and stale-lock recovery when lifecycle or repository preparation changes.
 - Release or signing changes: verify version alignment and inspect the relevant repository script; do not assume a tracked `release.yml` exists.
 - Release note changes: inspect `.github/RELEASE_NOTES.md` and the affected `scripts/release-ci/` renderer.
 - Export changes: verify Mermaid, images, PDF pagination, and async readiness behavior together.
