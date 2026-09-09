@@ -20,6 +20,28 @@ struct TrashRestoreDestination: Equatable {
     let usesOriginalFolder: Bool
 }
 
+struct ProjectRenameResult: Equatable {
+    let oldURL: URL
+    let newURL: URL
+}
+
+enum ProjectRenameError: LocalizedError, Equatable {
+    case invalidName
+    case protectedProject
+    case syncInProgress
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidName:
+            return "Choose a valid folder name"
+        case .protectedProject:
+            return "This folder cannot be renamed"
+        case .syncInProgress:
+            return "Wait for Git sync to finish and try again"
+        }
+    }
+}
+
 @MainActor
 class Storage {
     static var instance: Storage?
@@ -213,6 +235,11 @@ class Storage {
         projects.contains(where: { $0.url == url })
     }
 
+    func project(at url: URL) -> Project? {
+        let resolvedURL = url.resolvingSymlinksInPath()
+        return projects.first(where: { $0.url == resolvedURL })
+    }
+
     public func removeBy(project: Project) {
         let list = noteList.filter {
             $0.project == project
@@ -228,6 +255,123 @@ class Storage {
             projects.remove(at: i)
         }
         loadedProjectInfo.removeValue(forKey: project.url.path)
+    }
+
+    /// Moves a project directory first, then updates every in-memory path that
+    /// belongs to that directory. The model is left untouched if the move
+    /// fails, so a sidebar edit can never masquerade as a persisted rename.
+    @discardableResult
+    func renameProject(_ project: Project, to rawName: String) throws -> ProjectRenameResult {
+        guard !project.isRoot, !project.isTrash else {
+            throw ProjectRenameError.protectedProject
+        }
+
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isValidProjectName(name) else {
+            throw ProjectRenameError.invalidName
+        }
+
+        let oldURL = project.url.standardizedFileURL
+        let newURL = oldURL.deletingLastPathComponent()
+            .appendingPathComponent(name, isDirectory: true)
+            .standardizedFileURL
+        guard newURL.deletingLastPathComponent() == oldURL.deletingLastPathComponent() else {
+            throw ProjectRenameError.invalidName
+        }
+        guard oldURL != newURL else {
+            project.label = name
+            return ProjectRenameResult(oldURL: oldURL, newURL: newURL)
+        }
+        guard GitSyncLibraryMutationGate.allowsMutation(at: oldURL),
+            GitSyncLibraryMutationGate.allowsMutation(at: newURL)
+        else {
+            throw ProjectRenameError.syncInProgress
+        }
+
+        let affectedProjects = projects.filter { Self.url($0.url, isInside: oldURL) }
+        let affectedNotes = noteList.filter { Self.url($0.url, isInside: oldURL) }
+        let projectSettings = Dictionary(
+            uniqueKeysWithValues: affectedProjects.compactMap { affectedProject in
+                UserDefaults.standard.object(forKey: affectedProject.url.path)
+                    .map { (affectedProject.url.path, $0) }
+            })
+
+        try FileManager.default.moveItem(at: oldURL, to: newURL)
+
+        for affectedProject in affectedProjects {
+            let previousURL = affectedProject.url
+            affectedProject.url = Self.replacingPrefix(of: previousURL, from: oldURL, to: newURL)
+            affectedProject.loadLabel()
+            if let settings = projectSettings[previousURL.path] {
+                UserDefaults.standard.set(settings, forKey: affectedProject.url.path)
+                UserDefaults.standard.removeObject(forKey: previousURL.path)
+            }
+            affectedProject.saveSettings()
+        }
+        for note in affectedNotes {
+            note.url = Self.replacingPrefix(of: note.url, from: oldURL, to: newURL)
+        }
+
+        loadedProjectInfo = Dictionary(
+            uniqueKeysWithValues: loadedProjectInfo.map { path, info in
+                let url = URL(fileURLWithPath: path)
+                let updatedPath =
+                    Self.url(url, isInside: oldURL)
+                    ? Self.replacingPrefix(of: url, from: oldURL, to: newURL).path
+                    : path
+                return (updatedPath, info)
+            })
+        migratePersistedPaths(from: oldURL, to: newURL)
+
+        return ProjectRenameResult(oldURL: oldURL, newURL: newURL)
+    }
+
+    private static func isValidProjectName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.contains("/")
+            && !name.contains("\0")
+    }
+
+    private static func url(_ candidate: URL, isInside root: URL) -> Bool {
+        let candidatePath = candidate.standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")
+    }
+
+    private static func replacingPrefix(of candidate: URL, from oldRoot: URL, to newRoot: URL) -> URL {
+        let candidatePath = candidate.standardizedFileURL.path
+        let oldPath = oldRoot.standardizedFileURL.path
+        let suffix = String(candidatePath.dropFirst(oldPath.count))
+        let relativePath = suffix.hasPrefix("/") ? String(suffix.dropFirst()) : suffix
+        guard !relativePath.isEmpty else { return newRoot }
+        return newRoot.appendingPathComponent(relativePath)
+    }
+
+    private func migratePersistedPaths(from oldURL: URL, to newURL: URL) {
+        if let selectedURL = UserDefaultsManagement.lastSelectedURL,
+            Self.url(selectedURL, isInside: oldURL)
+        {
+            UserDefaultsManagement.lastSelectedURL = Self.replacingPrefix(
+                of: selectedURL, from: oldURL, to: newURL)
+        }
+        if let selectedProject = UserDataService.instance.lastProject,
+            Self.url(selectedProject, isInside: oldURL)
+        {
+            UserDataService.instance.lastProject = Self.replacingPrefix(
+                of: selectedProject, from: oldURL, to: newURL)
+        }
+
+        guard let order = UserDefaults.standard.stringArray(forKey: "SidebarProjectOrder") else {
+            return
+        }
+        let migratedOrder = order.map { path -> String in
+            let url = URL(fileURLWithPath: path)
+            guard Self.url(url, isInside: oldURL) else { return path }
+            return Self.replacingPrefix(of: url, from: oldURL, to: newURL).path
+        }
+        UserDefaults.standard.set(migratedOrder, forKey: "SidebarProjectOrder")
     }
 
     public func add(project: Project) -> [Project] {

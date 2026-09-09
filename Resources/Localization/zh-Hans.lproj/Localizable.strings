@@ -81,6 +81,9 @@
 
 /* No comment provided by engineer. */
 "Rename Folder" = "重命名文件夹";
+"Choose a valid folder name" = "请选择有效的文件夹名称";
+"This folder cannot be renamed" = "无法重命名此文件夹";
+"Wait for Git sync to finish and try again" = "请等待 Git 同步完成后重试";
 
 /* No comment provided by engineer. */
 "Show in Finder" = "在Finder中显示";

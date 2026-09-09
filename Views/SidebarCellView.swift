@@ -66,7 +66,8 @@ class SidebarCellView: NSTableCellView {
     @IBOutlet var icon: NSImageView!
     @IBOutlet var label: NSTextField!
 
-    var storage: Storage { AppEnvironment.current.storage }
+    var storage = AppEnvironment.current.storage
+    var representedSidebarItem: SidebarItem?
 
     override func draw(_ dirtyRect: NSRect) {
         label?.font = UserDefaultsManagement.nameFont
@@ -180,36 +181,32 @@ class SidebarCellView: NSTableCellView {
             finishProjectNameEditing(sender)
         }
 
-        let cell = sender.superview as? SidebarCellView
-        guard let si = cell?.objectValue as? SidebarItem, let project = si.project else { return }
+        guard let sidebarItem = representedSidebarItem, let project = sidebarItem.project else {
+            sender.stringValue = representedSidebarItem?.name ?? sender.stringValue
+            return
+        }
 
-        let oldURL = project.url
-        let newURL = project.url.deletingLastPathComponent().appendingPathComponent(sender.stringValue)
+        let viewController = window?.contentViewController as? ViewController
+        viewController?.blockFSUpdates()
 
         do {
-            try FileManager.default.moveItem(at: project.url, to: newURL)
-            project.url = newURL
-            project.label = newURL.lastPathComponent
-
-            // Update all notes' URLs in this project to reflect the new folder path
-            for note in storage.noteList where note.project == project {
-                let relativePath = note.url.path.replacingOccurrences(of: oldURL.path, with: "")
-                let newNoteURL = URL(fileURLWithPath: newURL.path + relativePath)
-                note.url = newNoteURL
-            }
-
+            let result = try storage.renameProject(project, to: sender.stringValue)
+            sidebarItem.name = result.newURL.lastPathComponent
+            sender.stringValue = sidebarItem.name
         } catch {
+            AppDelegate.trackError(error, context: "SidebarCellView.projectName.renameProject")
             sender.stringValue = project.url.lastPathComponent
             MiaoYanAlert.show(
-                message: error.localizedDescription,
+                message: I18n.str(error.localizedDescription),
                 style: .warning,
                 for: window
             )
+            return
         }
 
-        guard let vc = window?.contentViewController as? ViewController else { return }
-        vc.storage.removeBy(project: project)
-        vc.storage.loadLabel(project)
+        guard let vc = viewController else { return }
+        vc.fsManager?.restart()
+        vc.storageOutlineView.reloadData()
         vc.updateTable()
     }
 

@@ -1,11 +1,11 @@
-# V4.2.7 Glavenus 🛠️
+# V4.2.8 Tigrex 🐯
 
-1. macOS 文件夹重命名完成后会可靠退出编辑状态，不再让残留输入框抢占后续点击焦点
-2. 重命名输入框宽度限制为 220 点，并保留 12 点右侧间距，长名称也不会贴到侧栏边缘
-3. 新增回归测试，覆盖字段编辑器生命周期以及不同侧栏宽度下的重命名布局
+1. macOS 文件夹重命名现在会实际移动磁盘上的目录，因此重启应用后名称不会恢复
+2. 重命名会同步更新嵌套文件夹、笔记路径和侧栏状态，Git Sync 可正确提交目录删除与新增
+3. 新增端到端回归测试，覆盖 emoji 文件夹名、应用重启以及 Git push 后的全新 clone
 
 ---
 
-1. macOS folder renaming now reliably exits editing mode so a stale text field cannot steal focus from later clicks
-2. The rename field is capped at 220 points with a 12-point trailing inset, keeping long names clear of the sidebar edge
-3. Regression tests now cover field-editor retirement and rename layout across sidebar widths
+1. macOS folder renaming now moves the directory on disk, so the original name no longer returns after an app restart
+2. Renames update nested folders, note paths, and sidebar state so Git Sync commits the matching deletion and addition
+3. End-to-end regression coverage now verifies emoji folder names, app restart discovery, and a fresh clone after Git push

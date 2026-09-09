@@ -140,6 +140,9 @@
 
 /* No comment provided by engineer. */
 "Rename Folder" = "Renombrar Carpeta";
+"Choose a valid folder name" = "Elige un nombre de carpeta válido";
+"This folder cannot be renamed" = "No se puede cambiar el nombre de esta carpeta";
+"Wait for Git sync to finish and try again" = "Espera a que termine la sincronización Git e inténtalo de nuevo";
 
 /* No comment provided by engineer. */
 "Show in Finder" = "Mostrar en Finder";

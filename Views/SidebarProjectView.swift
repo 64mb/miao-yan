@@ -685,9 +685,11 @@ class SidebarProjectView: NSOutlineView,
         let cell = outlineView.makeView(withIdentifier: NSUserInterfaceItemIdentifier(rawValue: "DataCell"), owner: self) as! SidebarCellView
 
         guard let sidebarItem = item as? SidebarItem else {
+            cell.representedSidebarItem = nil
             return cell
         }
 
+        cell.representedSidebarItem = sidebarItem
         cell.textField?.stringValue = sidebarItem.name
         cell.textField?.isEditable = false
         cell.textField?.isSelectable = false
@@ -1319,10 +1321,11 @@ class SidebarProjectView: NSOutlineView,
                     // videos, etc.) with no notes inside, regardless of their name.
                     if storage.isAttachmentOnlyFolder(url: fileURL) { continue }
 
-                    let subProject = Project(url: fileURL, parent: project)
-
-                    // Only add if not already in storage
-                    if !storage.projectExist(url: fileURL) {
+                    let subProject: Project
+                    if let existingProject = storage.project(at: fileURL) {
+                        subProject = existingProject
+                    } else {
+                        subProject = Project(url: fileURL, parent: project)
                         _ = storage.add(project: subProject)
                     }
 

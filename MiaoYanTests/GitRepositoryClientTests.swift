@@ -290,6 +290,7 @@ final class GitRepositoryClientTests: XCTestCase {
         XCTAssertFalse(migratedPaths.contains { $0.utf8.elementsEqual(decomposedPath.utf8) })
     }
 
+    @MainActor
     func testRenamingTrackedFolderAndNoteToEmojiNamesRoundTripsThroughPush() async throws {
         git_libgit2_init()
         defer { git_libgit2_shutdown() }
@@ -331,14 +332,38 @@ final class GitRepositoryClientTests: XCTestCase {
             authentication: authentication
         )
 
-        try FileManager.default.moveItem(
-            at: sourceURL.appendingPathComponent("Ideas"),
-            to: sourceURL.appendingPathComponent("🔮 Ideas")
+        let storage = Storage()
+        for existingProject in storage.getProjects() {
+            storage.removeBy(project: existingProject)
+        }
+        let rootProject = Project(url: sourceURL, isRoot: true, isDefault: true)
+        _ = storage.add(project: rootProject)
+        let ideasProject = try XCTUnwrap(storage.getChildProjects(project: rootProject).first)
+        let folderNote = Note(
+            url: sourceURL.appendingPathComponent("Ideas/Forecast.md"),
+            with: ideasProject
         )
+        storage.add(folderNote)
+
+        let folderRename = try storage.renameProject(ideasProject, to: "🔮 Ideas")
+        XCTAssertEqual(folderRename.newURL, sourceURL.appendingPathComponent("🔮 Ideas", isDirectory: true))
+        XCTAssertEqual(folderNote.url, sourceURL.appendingPathComponent("🔮 Ideas/Forecast.md"))
         try FileManager.default.moveItem(
             at: sourceURL.appendingPathComponent("Scratch.md"),
             to: sourceURL.appendingPathComponent("✨ Scratch.md")
         )
+
+        let restartedStorage = Storage()
+        for existingProject in restartedStorage.getProjects() {
+            restartedStorage.removeBy(project: existingProject)
+        }
+        let restartedRoot = Project(url: sourceURL, isRoot: true, isDefault: true)
+        _ = restartedStorage.add(project: restartedRoot)
+        restartedStorage.loadProjects()
+        XCTAssertTrue(restartedStorage.getProjects().contains { $0.url.lastPathComponent == "🔮 Ideas" })
+        XCTAssertFalse(restartedStorage.getProjects().contains { $0.url.lastPathComponent == "Ideas" })
+        XCTAssertTrue(restartedStorage.noteList.contains { $0.url.lastPathComponent == "Forecast.md" })
+
         let newPaths = ["🔮 Ideas/Forecast.md", "✨ Scratch.md"]
         let trackedPaths = try await client.trackedEntries(in: sourceURL).map(\.path)
         let changedPaths = Set(try await client.worktreeChanges(in: sourceURL).flatMap(\.affectedPaths))

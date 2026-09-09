@@ -140,6 +140,9 @@
 
 /* No comment provided by engineer. */
 "Rename Folder" = "フォルダの名前を変更";
+"Choose a valid folder name" = "有効なフォルダ名を選択してください";
+"This folder cannot be renamed" = "このフォルダの名前は変更できません";
+"Wait for Git sync to finish and try again" = "Git同期が完了してからもう一度お試しください";
 
 /* No comment provided by engineer. */
 "Show in Finder" = "Finderに表示";
