@@ -168,6 +168,40 @@ final class NoteSaveDebounceTests: XCTestCase {
     }
 
     @MainActor
+    func testProjectRescanDoesNotDuplicateCanonicallyEquivalentUnicodeFilename() throws {
+        let projectURL = tempDir.appendingPathComponent("Unicode", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: projectURL,
+            withIntermediateDirectories: true)
+
+        let composedName = "Сергей.md".precomposedStringWithCanonicalMapping
+        let fileURL = projectURL.appendingPathComponent(composedName)
+        try "body".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let enumeratedURL = try XCTUnwrap(
+            FileManager.default.contentsOfDirectory(
+                at: projectURL,
+                includingPropertiesForKeys: nil
+            ).first)
+        let resolvedURL = enumeratedURL.standardizedFileURL.resolvingSymlinksInPath()
+        XCTAssertFalse(
+            enumeratedURL.absoluteString.utf8.elementsEqual(resolvedURL.absoluteString.utf8),
+            "the fixture must exercise APFS composed/decomposed URL forms")
+
+        let storage = Storage(storageURL: nil)
+        let project = Project(url: projectURL, label: "Unicode", isRoot: true)
+        _ = storage.add(project: project)
+        let existingNote = Note(url: resolvedURL, with: project)
+        existingNote.sharedStorage = storage
+        storage.add(existingNote)
+
+        storage.loadMissingNotes(for: project)
+
+        XCTAssertEqual(storage.noteList.count, 1)
+        XCTAssertTrue(storage.noteList.first === existingNote)
+    }
+
+    @MainActor
     func testRemovedTrashMarkerIsHiddenOnlyWhileInsideTrash() throws {
         let url = tempDir.appendingPathComponent("recoverable-system-trash-note.md")
         try "recoverable content".write(to: url, atomically: true, encoding: .utf8)
