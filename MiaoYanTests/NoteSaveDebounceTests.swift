@@ -598,7 +598,10 @@ final class NoteSaveDebounceTests: XCTestCase {
 
         let sidebarItems = Sidebar(storage: storage).getList().compactMap { $0 as? SidebarItem }
         XCTAssertFalse(sidebarItems.contains { $0.type == .Category && $0.project?.url.lastPathComponent == "items" })
-        XCTAssertTrue(sidebarItems.contains(where: { $0.type == .Trash }))
+        let trashItem = try XCTUnwrap(sidebarItems.first(where: { $0.type == .Trash }))
+        let trashProject = try XCTUnwrap(trashItem.project)
+        XCTAssertTrue(Storage.isSyncedTrashProject(trashProject))
+        XCTAssertEqual(trashProject, storage.getAllTrash().first?.project)
     }
 
     @MainActor

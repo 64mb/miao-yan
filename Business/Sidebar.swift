@@ -41,7 +41,7 @@ class Sidebar {
         list.append(contentsOf: categoryItems)
 
         if !storage.getAllTrash().isEmpty {
-            let trashProject = storage.getDefaultTrash()
+            let trashProject = storage.getSidebarTrashProject()
             let trash = SidebarItem(name: I18n.str("Trash"), project: trashProject, type: .Trash, icon: getImage(named: "trash\(night)"))
             list.append(trash)
         }
