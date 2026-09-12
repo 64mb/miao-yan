@@ -490,6 +490,8 @@ extension ViewController {
                     originalRow: selectedRow)
             }
         ) { urls in
+            vc.storageOutlineView.reloadSidebar()
+
             if let appd = NSApplication.shared.delegate as? AppDelegate,
                 let md = appd.mainWindowController
             {
@@ -626,6 +628,8 @@ extension ViewController {
 
             do {
                 try persistGitSyncSettings(input, for: root)
+                storage.reLoadTrash()
+                reloadSideBar()
                 toast(message: I18n.str("Git sync configured~"), style: .success)
                 completion?()
             } catch {

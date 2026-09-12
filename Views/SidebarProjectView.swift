@@ -306,10 +306,10 @@ class SidebarProjectView: NSOutlineView,
                 return vc.notesTableView.noteList[index]
             }
 
-            if let project = sidebarItem.project {
-                vc.move(notes: notes, project: project)
-            } else if sidebarItem.isTrash() {
+            if sidebarItem.isTrash() {
                 moveNotesToTrash(notes: notes, vc: vc)
+            } else if let project = sidebarItem.project {
+                vc.move(notes: notes, project: project)
             }
 
             return true

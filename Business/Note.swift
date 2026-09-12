@@ -299,12 +299,7 @@ public class Note: NSObject {
         if isTrash(), Storage.isSyncedTrashProject(project) {
             let payloadURL = url
             do {
-                try FileManager.default.removeItem(at: payloadURL)
-                do {
-                    try sharedStorage.removeSyncedTrashMetadata(for: payloadURL)
-                } catch {
-                    AppDelegate.trackError(error, context: "Note.syncedTrashMetadata")
-                }
+                try sharedStorage.deleteSyncedTrashPayload(at: payloadURL)
                 NoteVersionManager.shared.removeVersions(for: self)
                 return .hiddenFromMiaoYanTrash
             } catch {
@@ -350,7 +345,7 @@ public class Note: NSObject {
 
         do {
             let root = project.getParent()
-            if GitSyncConfigurationStore().configuration(for: root.url) != nil {
+            if sharedStorage.usesGitSyncedTrash(for: root) {
                 let originalURL = url
                 let destination = try sharedStorage.moveToSyncedTrash(fileURL: url, root: root)
                 overwrite(url: destination)
