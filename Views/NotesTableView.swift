@@ -668,9 +668,9 @@ class NotesTableView: NSTableView {
                     storage.removeBy(note: note)
                 }
 
-                try FileManager.default.moveItem(at: src, to: dst)
+                try storage.restoreTrashMoveForUndo(from: src, to: dst)
             } catch {
-                AppDelegate.trackError(error, context: "NotesTableView.reloadRow")
+                AppDelegate.trackError(error, context: "NotesTableView.unDelete")
             }
         }
     }

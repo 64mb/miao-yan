@@ -5,10 +5,11 @@ typealias Image = NSImage
 @MainActor
 class Sidebar {
     var list = [Any]()
-    let storage = Storage.sharedInstance()
+    let storage: Storage
     public var items = [[SidebarItem]]()
 
-    init() {
+    init(storage: Storage = Storage.sharedInstance()) {
+        self.storage = storage
         let night = ""
         var system = [SidebarItem]()
 
@@ -28,7 +29,7 @@ class Sidebar {
 
             let childProjects = storage.getChildProjects(project: project)
 
-            for childProject in childProjects {
+            for childProject in childProjects where childProject.showInSidebar && !childProject.isTrash {
                 categoryItems.append(SidebarItem(name: childProject.label, project: childProject, type: .Category, icon: icon))
             }
         }
@@ -40,7 +41,7 @@ class Sidebar {
         list.append(contentsOf: categoryItems)
 
         if !storage.getAllTrash().isEmpty {
-            let trashProject = Storage.sharedInstance().getDefaultTrash()
+            let trashProject = storage.getDefaultTrash()
             let trash = SidebarItem(name: I18n.str("Trash"), project: trashProject, type: .Trash, icon: getImage(named: "trash\(night)"))
             list.append(trash)
         }
