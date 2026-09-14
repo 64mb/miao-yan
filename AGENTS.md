@@ -210,6 +210,13 @@ MiaoYan ships through two independent channels. Publishing one never updates the
 - App Store users never see the appcast. After a direct-download release, the App Store version stays old until a separate submission passes review; do not report a version as "released" without naming which channel it reached.
 - When an App Store build is prepared, deliver ready-to-paste submission copy with it: Promotional Text (170-char limit) and What's New, in en and zh-Hans, derived from `.github/RELEASE_NOTES.md`. Do not wait for the maintainer to ask from the Connect submission page.
 
+### Fork direct-download updates
+
+- Fork builds published in `64mb/miao-yan` use the fork release channel, never the upstream `miaoyan.app` appcast.
+- Attach `appcast.xml` to every fork GitHub Release; the macOS app reads the stable `releases/latest/download/appcast.xml` URL and verifies ZIPs with the fork-specific Sparkle key.
+- Attach the Android release APK both under its versioned name and as `MiaoYan-Android.apk`. The Settings updater reads the stable alias and delegates installation to Android's system package installer.
+- Keep the Android signing identity stable between releases or the package installer will reject the APK as an update.
+
 ## Release Notes
 
 - Tag format is uppercase `Vx.y.z`.

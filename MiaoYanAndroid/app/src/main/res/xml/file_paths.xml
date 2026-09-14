@@ -2,4 +2,5 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Runtime policy grants only a validated direct child of the selected note's files/ folder. -->
     <files-path name="private_library" path="libraries/default/" />
+    <external-files-path name="apk_updates" path="Download/" />
 </paths>

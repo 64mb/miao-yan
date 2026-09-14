@@ -40,6 +40,20 @@ class Sidebar {
 
         list.append(contentsOf: categoryItems)
 
+        let rootNoteItems = storage.noteList
+            .filter { $0.project.isRoot && !$0.isTrash() }
+            .sorted {
+                $0.getTitleWithoutLabel().localizedCaseInsensitiveCompare($1.getTitleWithoutLabel()) == .orderedAscending
+            }
+            .map {
+                SidebarItem(
+                    name: $0.getTitleWithoutLabel(),
+                    project: $0.project,
+                    note: $0,
+                    type: .Note)
+            }
+        list.append(contentsOf: rootNoteItems)
+
         if !storage.getAllTrash().isEmpty {
             let trashProject = storage.getSidebarTrashProject()
             let trash = SidebarItem(name: I18n.str("Trash"), project: trashProject, type: .Trash, icon: getImage(named: "trash\(night)"))

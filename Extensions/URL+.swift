@@ -2,6 +2,18 @@ import CoreServices
 import Foundation
 
 extension URL {
+    /// Stable identity for filesystem-backed models. APFS directory
+    /// enumeration and `resolvingSymlinksInPath()` can expose canonically
+    /// equivalent Unicode filenames using different scalar sequences.
+    var canonicalFileIdentityPath: String {
+        standardizedFileURL.resolvingSymlinksInPath().path
+            .precomposedStringWithCanonicalMapping
+    }
+
+    func identifiesSameFile(as other: URL) -> Bool {
+        canonicalFileIdentityPath == other.canonicalFileIdentityPath
+    }
+
     public func extendedAttribute(forName name: String) throws -> Data {
         try withUnsafeFileSystemRepresentation { fileSystemPath -> Data in
             let length = getxattr(fileSystemPath, name, nil, 0, 0, 0)

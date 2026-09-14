@@ -148,7 +148,10 @@ class NotesTableView: NSTableView {
     }
 
     private func beginSynchronizedSelectionRedraw() {
-        window?.disableScreenUpdatesUntilFlush()
+        // Keep the selection styling atomic without suspending display for the
+        // entire window. `disableScreenUpdatesUntilFlush()` could span several
+        // rapid row selections in one run-loop turn, leaving the editor with
+        // the new buffer but the previous note still painted on screen.
         NSAnimationContext.beginGrouping()
         NSAnimationContext.current.duration = 0
         NSAnimationContext.current.allowsImplicitAnimation = false

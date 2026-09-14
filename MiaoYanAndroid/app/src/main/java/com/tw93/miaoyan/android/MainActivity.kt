@@ -24,6 +24,17 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val viewModel: LibraryViewModel by viewModels()
     private val editorPreferences by lazy { EditorPreferences(applicationContext) }
+    private val updateInstaller by lazy { AndroidUpdateInstaller(this) }
+
+    override fun onStart() {
+        super.onStart()
+        updateInstaller.start()
+    }
+
+    override fun onStop() {
+        updateInstaller.stop()
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,6 +59,7 @@ class MainActivity : ComponentActivity() {
                     onFontChanged = { font -> scope.launch { editorPreferences.setFont(font) } },
                     onFontSizeChanged = { size -> scope.launch { editorPreferences.setFontSize(size) } },
                     onThemeModeChanged = { mode -> scope.launch { editorPreferences.setThemeMode(mode) } },
+                    onInstallUpdate = updateInstaller::downloadLatest,
                     onLanguageChanged = { language ->
                         val requested = LocaleList.forLanguageTags(language.languageTag)
                         if (localeManager.applicationLocales.toLanguageTags() != requested.toLanguageTags()) {

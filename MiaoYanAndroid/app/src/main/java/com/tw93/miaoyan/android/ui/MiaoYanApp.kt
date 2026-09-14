@@ -7,6 +7,7 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
@@ -14,7 +15,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputConnectionWrapper
 import android.widget.EditText
-import android.widget.ScrollView
+import android.widget.OverScroller
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -78,6 +80,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -121,6 +125,7 @@ import java.io.File
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.delay
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 private val JetBrainsMonoFamily = FontFamily(Font(R.font.jetbrains_mono_regular))
@@ -133,6 +138,7 @@ fun MiaoYanApp(
     onFontChanged: (EditorFont) -> Unit,
     onFontSizeChanged: (Int) -> Unit,
     onThemeModeChanged: (ThemeMode) -> Unit,
+    onInstallUpdate: () -> Unit,
     onLanguageChanged: (AppLanguage) -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -257,6 +263,7 @@ fun MiaoYanApp(
                     onGitSettings = { showGitSettings = true },
                     onGitSync = viewModel::syncNow,
                     onResolveConflict = { showGitConflict = true },
+                    onInstallUpdate = onInstallUpdate,
                     onBack = {
                         showTrashSettings = false
                         showSettings = false
@@ -1010,6 +1017,16 @@ private fun EditorScreen(
 ) {
     var showDiscardDialog by remember { mutableStateOf(false) }
     var showAttachmentMenu by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val dismissKeyboard = {
+        keyboardController?.hide()
+        focusManager.clearFocus(force = true)
+    }
+    val closeEditor = {
+        dismissKeyboard()
+        onBack()
+    }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         onAttachmentResult(AttachmentKind.Image, uri)
     }
@@ -1018,8 +1035,12 @@ private fun EditorScreen(
     }
     val canEditDraft = !state.preview && !state.loading && !state.saving && !state.mutating && !state.syncing &&
         !state.formatting && !state.attaching && !state.attachmentPickerOpen
-    val requestBack = { if (state.dirty) showDiscardDialog = true else onBack() }
+    val requestBack = { if (state.dirty) showDiscardDialog = true else closeEditor() }
     BackHandler(enabled = !fullscreenPreview, onBack = requestBack)
+
+    LaunchedEffect(state.preview) {
+        if (state.preview) dismissKeyboard()
+    }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         val columnModifier = if (fullscreenPreview) {
@@ -1047,13 +1068,13 @@ private fun EditorScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    IconButton(onClick = onFullscreenPreview) {
+                    IconButton(onClick = { dismissKeyboard(); onFullscreenPreview() }) {
                         Icon(
                             painterResource(R.drawable.ic_videocam),
                             contentDescription = stringResource(R.string.fullscreen_preview),
                         )
                     }
-                    IconButton(onClick = onSlidePresentation) {
+                    IconButton(onClick = { dismissKeyboard(); onSlidePresentation() }) {
                         Icon(
                             painterResource(R.drawable.ic_slideshow),
                             contentDescription = stringResource(R.string.slide_presentation),
@@ -1114,9 +1135,15 @@ private fun EditorScreen(
                         Icon(painterResource(R.drawable.ic_save), contentDescription = stringResource(R.string.save))
                     }
                 }
-                ModeSwitcher(preview = state.preview, onPreviewChanged = onPreviewChanged)
+                ModeSwitcher(
+                    preview = state.preview,
+                    onPreviewChanged = { preview ->
+                        if (preview) dismissKeyboard()
+                        onPreviewChanged(preview)
+                    },
+                )
             }
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().imePadding()) {
                 ContinuousPreview(
                     preparation = continuousPreparation,
                     controller = previewController,
@@ -1147,7 +1174,7 @@ private fun EditorScreen(
             title = { Text(stringResource(R.string.unsaved_title)) },
             text = { Text(stringResource(R.string.unsaved_message)) },
             confirmButton = {
-                TextButton(onClick = { showDiscardDialog = false; onBack() }) {
+                TextButton(onClick = { showDiscardDialog = false; closeEditor() }) {
                     Text(stringResource(R.string.discard))
                 }
             },
@@ -1223,46 +1250,47 @@ private fun PlatformMarkdownEditor(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            MarkdownEditorScrollView(context).apply {
-                editor.apply {
-                    gravity = Gravity.TOP or Gravity.START
-                    val padding = editorPaddingPixels(resources.displayMetrics.density)
-                    setPadding(padding.horizontal, padding.top, padding.horizontal, padding.bottom)
-                    setBackgroundColor(AndroidColor.TRANSPARENT)
-                    includeFontPadding = false
-                    setHorizontallyScrolling(false)
-                    inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                        android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
-                        android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                    setText(text)
-                    setSelection(selectionStart.coerceIn(0, text.length), selectionEnd.coerceIn(0, text.length))
-                    selectionListener = onSelectionChanged
-                    updateSyntaxPalette(syntaxPalette)
-                    addTextChangedListener(object : TextWatcher {
-                        override fun beforeTextChanged(
-                            value: CharSequence?,
-                            start: Int,
-                            count: Int,
-                            after: Int,
-                        ) = Unit
+            SelectionAwareEditText(context).apply {
+                gravity = Gravity.TOP or Gravity.START
+                val padding = editorPaddingPixels(resources.displayMetrics.density)
+                setPadding(padding.horizontal, padding.top, padding.horizontal, padding.bottom)
+                setBackgroundColor(AndroidColor.TRANSPARENT)
+                includeFontPadding = false
+                setHorizontallyScrolling(false)
+                isVerticalScrollBarEnabled = true
+                isScrollbarFadingEnabled = false
+                verticalScrollbarThumbDrawable = context.getDrawable(R.drawable.editor_scrollbar_thumb)
+                scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                setText(text)
+                setSelection(selectionStart.coerceIn(0, text.length), selectionEnd.coerceIn(0, text.length))
+                selectionListener = onSelectionChanged
+                updateSyntaxPalette(syntaxPalette)
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(
+                        value: CharSequence?,
+                        start: Int,
+                        count: Int,
+                        after: Int,
+                    ) = Unit
 
-                        override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) {
-                            noteSyntaxChange(start, count)
-                        }
+                    override fun onTextChanged(value: CharSequence?, start: Int, before: Int, count: Int) {
+                        noteSyntaxChange(start, count)
+                    }
 
-                        override fun afterTextChanged(value: Editable?) {
-                            onTextChanged(value?.toString().orEmpty())
-                            scheduleSyntaxHighlight()
-                        }
-                    })
-                    scheduleSyntaxHighlight()
-                }
+                    override fun afterTextChanged(value: Editable?) {
+                        onTextChanged(value?.toString().orEmpty())
+                        scheduleSyntaxHighlight()
+                    }
+                })
+                scheduleSyntaxHighlight()
             }
         },
-        update = { scrollView ->
-            val editor = scrollView.editor
+        update = { editor ->
             editor.setTextColor(contentColor)
-            scrollView.setBackgroundColor(backgroundColor)
             editor.setBackgroundColor(backgroundColor)
             editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, editorSettings.fontSizeSp.toFloat())
             editor.typeface = editorTypeface(editorSettings.font, editor)
@@ -1285,41 +1313,6 @@ private fun PlatformMarkdownEditor(
     )
 }
 
-/**
- * Gives the editor Android's native drag and fling physics. TextView's own internal scrolling
- * follows the finger but does not continue with inertial scrolling after the gesture ends.
- */
-internal class MarkdownEditorScrollView(context: Context) : ScrollView(context) {
-    internal val editor = SelectionAwareEditText(context)
-
-    init {
-        isFillViewport = true
-        isSmoothScrollingEnabled = true
-        verticalScrollbarThumbDrawable = context.getDrawable(R.drawable.editor_scrollbar_thumb)
-        isVerticalScrollBarEnabled = true
-        isScrollbarFadingEnabled = false
-        scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
-        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-
-        editor.isVerticalScrollBarEnabled = false
-        editor.overScrollMode = View.OVER_SCROLL_NEVER
-        addView(
-            editor,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
-        )
-    }
-
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        editor.deferSyntaxHighlightForScroll()
-        return super.onTouchEvent(event)
-    }
-
-    override fun onScrollChanged(left: Int, top: Int, oldLeft: Int, oldTop: Int) {
-        super.onScrollChanged(left, top, oldLeft, oldTop)
-        if (top != oldTop) editor.deferSyntaxHighlightForScroll()
-    }
-}
-
 internal class SelectionAwareEditText(context: Context) : EditText(context) {
     var selectionListener: ((Int, Int) -> Unit)? = null
     private var syntaxPalette: MarkdownSyntaxPalette = MarkdownEditorPalettes.Light
@@ -1328,6 +1321,41 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     private var paletteNeedsRefresh = true
     private var pendingHighlightStart: Int? = null
     private var pendingHighlightEnd: Int? = null
+    private val flingScroller = OverScroller(context)
+    private val flingDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(event: MotionEvent): Boolean {
+                if (!flingScroller.isFinished) flingScroller.abortAnimation()
+                return true
+            }
+
+            override fun onFling(
+                downEvent: MotionEvent?,
+                upEvent: MotionEvent,
+                velocityX: Float,
+                velocityY: Float,
+            ): Boolean {
+                val maxScrollY = editorMaxScrollY()
+                if (maxScrollY == 0) return false
+                flingScroller.fling(
+                    0,
+                    scrollY,
+                    0,
+                    -velocityY.toInt(),
+                    0,
+                    0,
+                    0,
+                    maxScrollY,
+                    0,
+                    height / 3,
+                )
+                postInvalidateOnAnimation()
+                deferSyntaxHighlightForScroll()
+                return true
+            }
+        },
+    )
     private val syntaxHighlightRunnable = Runnable {
         val editable = text ?: return@Runnable
         if (BaseInputConnection.getComposingSpanStart(editable) >= 0) return@Runnable
@@ -1349,6 +1377,24 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
             pendingHighlightEnd = null
         }
     }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        flingDetector.onTouchEvent(event)
+        deferSyntaxHighlightForScroll()
+        return super.onTouchEvent(event)
+    }
+
+    override fun computeScroll() {
+        if (!flingScroller.computeScrollOffset()) return
+        scrollTo(0, flingScroller.currY)
+        deferSyntaxHighlightForScroll()
+        postInvalidateOnAnimation()
+    }
+
+    private fun editorMaxScrollY(): Int = max(
+        0,
+        (layout?.height ?: 0) + totalPaddingTop + totalPaddingBottom - height,
+    )
 
     fun updateSyntaxPalette(value: MarkdownSyntaxPalette) {
         if (syntaxPalette == value) return
@@ -1521,6 +1567,7 @@ private fun SettingsScreen(
     onGitSettings: () -> Unit,
     onGitSync: () -> Unit,
     onResolveConflict: () -> Unit,
+    onInstallUpdate: () -> Unit,
     onBack: () -> Unit,
 ) {
     var showLicense by remember { mutableStateOf(false) }
@@ -1550,6 +1597,19 @@ private fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            item {
+                SettingsSection(
+                    title = stringResource(R.string.application),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 680.dp),
+                ) {
+                    SettingsActionRow(
+                        icon = R.drawable.ic_system_update,
+                        title = stringResource(R.string.app_update),
+                        detail = stringResource(R.string.app_update_detail),
+                        onClick = onInstallUpdate,
+                    )
+                }
+            }
             item {
                 SettingsSection(
                     title = stringResource(R.string.storage),

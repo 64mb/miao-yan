@@ -7,6 +7,7 @@ private struct SearchParameters: Sendable {
     let projects: [Project]?
     let type: SidebarItemType?
     let sidebarName: String?
+    let sidebarNoteURL: URL?
 }
 
 private struct NoteSearchResult {
@@ -172,7 +173,8 @@ extension ViewController {
             originalFilter: originalFilter,
             projects: finalProjects,
             type: type,
-            sidebarName: sidebarName
+            sidebarName: sidebarName,
+            sidebarNoteURL: finalSidebarItem?.note?.url
         )
     }
 
@@ -289,7 +291,8 @@ extension ViewController {
                 terms: terms,
                 projects: searchParams.projects,
                 type: searchParams.type,
-                sidebarName: searchParams.sidebarName
+                sidebarName: searchParams.sidebarName,
+                sidebarNoteURL: searchParams.sidebarNoteURL
             ) {
                 let matchResult = isMatched(note: note, terms: terms)
                 if matchResult.matched {
@@ -534,7 +537,7 @@ extension ViewController {
         return (true, priority)
     }
 
-    public func isFit(note: Note, filter: String = "", terms: [Substring]? = nil, shouldLoadMain: Bool = false, projects: [Project]? = nil, type: SidebarItemType? = nil, sidebarName: String? = nil) -> Bool {
+    public func isFit(note: Note, filter: String = "", terms: [Substring]? = nil, shouldLoadMain: Bool = false, projects: [Project]? = nil, type: SidebarItemType? = nil, sidebarName: String? = nil, sidebarNoteURL: URL? = nil) -> Bool {
         var filter = filter
         var terms = terms
         var projects = projects
@@ -549,7 +552,9 @@ extension ViewController {
         let matchesScopedProjects = projects?.contains(where: { note.project.isDescendant(of: $0) }) ?? false
         let matchesSidebar: Bool
 
-        if type == .Trash {
+        if type == .Note, let sidebarNoteURL {
+            matchesSidebar = note.isEqualURL(url: sidebarNoteURL)
+        } else if type == .Trash {
             matchesSidebar = true
         } else if matchesScopedProjects {
             matchesSidebar = true

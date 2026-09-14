@@ -17,6 +17,8 @@ NC='\033[0m'
 VERSION=$(grep "MARKETING_VERSION" MiaoYan.xcodeproj/project.pbxproj | head -1 | sed 's/.*= \(.*\);/\1/' | tr -d ' ')
 [ -n "$1" ] && VERSION="$1"
 KEY_PATH="${SPARKLE_PRIVATE_KEY:-}"
+KEYCHAIN_ACCOUNT="${SPARKLE_KEYCHAIN_ACCOUNT:-miaoyan-64mb-fork}"
+RELEASE_REPOSITORY="${MIAOYAN_RELEASE_REPOSITORY:-64mb/miao-yan}"
 
 if [ -z "$VERSION" ]; then
 	echo -e "${RED}ERROR: Could not detect version${NC}"
@@ -226,8 +228,8 @@ if [ -n "$SIGN_UPDATE" ] && [ -x "$SIGN_UPDATE" ]; then
 	if [ -n "$KEY_PATH" ] && [ -f "$KEY_PATH" ]; then
 		SPARKLE_OUTPUT=$("$SIGN_UPDATE" -f "$KEY_PATH" "./build/$ZIP_NAME" 2>&1)
 	else
-		# Use key from Keychain (default for Sparkle 2)
-		SPARKLE_OUTPUT=$("$SIGN_UPDATE" "./build/$ZIP_NAME" 2>&1)
+		# Use the fork-specific named key so another app's default Sparkle key is never selected.
+		SPARKLE_OUTPUT=$("$SIGN_UPDATE" --account "$KEYCHAIN_ACCOUNT" "./build/$ZIP_NAME" 2>&1)
 	fi
 	SIGNATURE=$(echo "$SPARKLE_OUTPUT" | grep "sparkle:edSignature" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
 	ZIP_SIZE=$(stat -f%z "./build/$ZIP_NAME")
@@ -249,6 +251,6 @@ echo "  ZIP: $DOWNLOADS/$ZIP_NAME"
 if [ -n "$SIGNATURE" ]; then
 	echo ""
 	echo "appcast.xml:"
-	echo "<enclosure url=\"https://miaoyan.app/Release/$ZIP_NAME\" sparkle:shortVersionString=\"$VERSION\" sparkle:version=\"$VERSION\" sparkle:edSignature=\"$SIGNATURE\" length=\"$ZIP_SIZE\" type=\"application/octet-stream\"/>"
+	echo "<enclosure url=\"https://github.com/$RELEASE_REPOSITORY/releases/download/V$VERSION/MiaoYan-macOS-V$VERSION.zip\" sparkle:shortVersionString=\"$VERSION\" sparkle:version=\"$VERSION\" sparkle:edSignature=\"$SIGNATURE\" length=\"$ZIP_SIZE\" type=\"application/octet-stream\"/>"
 fi
 echo ""
