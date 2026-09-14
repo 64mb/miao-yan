@@ -681,6 +681,7 @@ class EditTextView: NSTextView, @preconcurrency NSTextFinderClient {
             storage.applyEditorLetterSpacing()
         }
         restoreCursorPosition(needScrollToCursor: options.needScrollToCursor)
+        refreshPublishedStorageDisplay()
     }
 
     private func renderPreviewContent(
@@ -986,8 +987,25 @@ class EditTextView: NSTextView, @preconcurrency NSTextFinderClient {
         storageNote = owner
     }
 
-    func saveTextStorageContent(to note: Note) {
-        guard let storage = textStorage else { return }
+    private func refreshPublishedStorageDisplay() {
+        let visibleBounds = visibleRect
+        if let manager = layoutManager,
+            let container = textContainer
+        {
+            let origin = textContainerOrigin
+            let containerBounds = visibleBounds.offsetBy(dx: -origin.x, dy: -origin.y)
+            let glyphRange = manager.glyphRange(forBoundingRect: containerBounds, in: container)
+            let characterRange = manager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
+            manager.invalidateDisplay(forCharacterRange: characterRange)
+        }
+        setNeedsDisplay(visibleBounds)
+        enclosingScrollView?.contentView.needsDisplay = true
+        displayIfNeeded()
+    }
+
+    @discardableResult
+    func saveTextStorageContent(to note: Note) -> Bool {
+        guard let storage = textStorage else { return false }
         // Refuse cross-note writes: when the buffer belongs to a different
         // note than the requested target (preview-family modes after a list
         // switch, see `storageNote` doc), copying it over would replace the
@@ -1001,13 +1019,16 @@ class EditTextView: NSTextView, @preconcurrency NSTextFinderClient {
                         "textStorage owner (\(storageNote?.url.lastPathComponent ?? "nil")) != save target (\(note.url.lastPathComponent))"
                 ])
             AppDelegate.trackError(mismatch, context: "EditTextView.saveTextStorageContent.ownerGuard")
-            return
+            return false
         }
         let string = storage.attributedSubstring(from: NSRange(0..<storage.length))
-        note.content =
+        let newContent =
             NSMutableAttributedString(attributedString: string)
             .unLoadImages()
             .unLoadCheckboxes()
+        guard note.content.string != newContent.string else { return false }
+        note.content = newContent
+        return true
     }
 
     func setEditorTextColor(_ color: NSColor) {
