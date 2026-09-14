@@ -90,7 +90,7 @@ class SidebarProjectView: NSOutlineView,
 
         switch menuItem.action {
         case #selector(revealInFinder(_:)):
-            return sidebarItem.project != nil || sidebarItem.isTrash()
+            return sidebarItem.note != nil || sidebarItem.project != nil || sidebarItem.isTrash()
 
         case #selector(renameMenu(_:)):
             return validateRenameMenuItem(sidebarItem: sidebarItem, menuItem: menuItem)
@@ -114,7 +114,7 @@ class SidebarProjectView: NSOutlineView,
     }
 
     private func validateRenameMenuItem(sidebarItem: SidebarItem, menuItem: NSMenuItem) -> Bool {
-        guard !sidebarItem.isTrash() else { return false }
+        guard sidebarItem.type == .Category else { return false }
 
         if let project = sidebarItem.project {
             menuItem.isHidden = project.isRoot
@@ -124,7 +124,7 @@ class SidebarProjectView: NSOutlineView,
     }
 
     private func validateDeleteMenuItem(sidebarItem: SidebarItem, menuItem: NSMenuItem) -> Bool {
-        guard !sidebarItem.isTrash() else { return false }
+        guard sidebarItem.type == .Category else { return false }
 
         if sidebarItem.project != nil {
             menuItem.title = MenuTitles.deleteFolder
@@ -588,6 +588,11 @@ class SidebarProjectView: NSOutlineView,
             cell.icon.image = NSImage(imageLiteralResourceName: "project")
             cell.icon.image?.isTemplate = true
             cell.icon.contentTintColor = Theme.sidebarActionColor
+
+        case .Note:
+            cell.icon.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+            cell.icon.image?.isTemplate = true
+            cell.icon.contentTintColor = Theme.sidebarActionColor
         }
     }
 
@@ -920,11 +925,15 @@ class SidebarProjectView: NSOutlineView,
     }
 
     @IBAction func revealInFinder(_ sender: Any) {
-        guard let si = getSidebarItem(), let p = si.project else {
+        guard let sidebarItem = getSidebarItem() else {
             return
         }
 
-        NSWorkspace.shared.activateFileViewerSelecting([p.url])
+        if let note = sidebarItem.note {
+            NSWorkspace.shared.activateFileViewerSelecting([note.url])
+        } else if let project = sidebarItem.project {
+            NSWorkspace.shared.activateFileViewerSelecting([project.url])
+        }
     }
 
     @IBAction func renameMenu(_ sender: Any) {
@@ -1201,6 +1210,14 @@ class SidebarProjectView: NSOutlineView,
                 if item.project?.url == projectURL {
                     return row
                 }
+            case .Note:
+                if let itemProjectURL = item.project?.url,
+                    let projectURL,
+                    itemProjectURL.identifiesSameFile(as: projectURL),
+                    item.name == name
+                {
+                    return row
+                }
             }
         }
 
@@ -1236,6 +1253,7 @@ class SidebarProjectView: NSOutlineView,
                         // Reuse existing object and clear its children cache
                         existingItem.name = newSidebarItem.name
                         existingItem.project = newSidebarItem.project
+                        existingItem.note = newSidebarItem.note
                         existingItem.type = newSidebarItem.type
                         existingItem.icon = newSidebarItem.icon
                         existingItem.children = nil

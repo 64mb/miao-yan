@@ -220,6 +220,8 @@ final class NoteSaveDebounceTests: XCTestCase {
 
         XCTAssertEqual(storage.noteList.count, 1)
         XCTAssertTrue(storage.noteList.first === existingNote)
+        XCTAssertTrue(existingNote.isEqualURL(url: enumeratedURL))
+        XCTAssertTrue(storage.getBy(url: enumeratedURL) === existingNote)
     }
 
     @MainActor

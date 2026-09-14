@@ -70,6 +70,15 @@
     <string name="imported_files">Импортировано файлов: %1$d.</string>
     <string name="exported_files">Экспортировано без перезаписи существующих данных: %1$d.</string>
     <string name="settings">Настройки</string>
+    <string name="application">Приложение</string>
+    <string name="app_update">Обновить MiaoYan</string>
+    <string name="app_update_detail">Скачать последнюю APK-версию из форка</string>
+    <string name="app_update_download_title">Обновление MiaoYan</string>
+    <string name="app_update_download_detail">Загрузка последней Android-версии</string>
+    <string name="app_update_download_started">Загрузка обновления началась</string>
+    <string name="app_update_already_downloading">Обновление уже загружается</string>
+    <string name="app_update_download_failed">Не удалось загрузить обновление</string>
+    <string name="app_update_installer_unavailable">Системный установщик пакетов недоступен</string>
     <string name="storage">Хранилище</string>
     <string name="local_storage_warning_title">Сохраните копию для восстановления</string>
     <string name="local_storage_warning_detail">Настройте Git или экспортируйте библиотеку до удаления приложения или очистки данных</string>

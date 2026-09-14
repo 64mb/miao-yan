@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="https://sparkle-project.org/xml-namespaces/sparkle">
+  <channel>
+    <title>MiaoYan updates</title>
+    <link>https://github.com/64mb/miao-yan/releases</link>
+    <description>Direct-download updates published by the 64mb/miao-yan fork</description>
+    <language>en</language>
+  </channel>
+</rss>

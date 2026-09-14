@@ -70,6 +70,15 @@
     <string name="imported_files">Imported files: %1$d.</string>
     <string name="exported_files">Exported files without overwriting existing data: %1$d.</string>
     <string name="settings">Settings</string>
+    <string name="application">Application</string>
+    <string name="app_update">Update MiaoYan</string>
+    <string name="app_update_detail">Download the latest APK from the fork</string>
+    <string name="app_update_download_title">MiaoYan update</string>
+    <string name="app_update_download_detail">Downloading the latest Android release</string>
+    <string name="app_update_download_started">Update download started</string>
+    <string name="app_update_already_downloading">The update is already downloading</string>
+    <string name="app_update_download_failed">Could not download the update</string>
+    <string name="app_update_installer_unavailable">The system package installer is unavailable</string>
     <string name="storage">Storage</string>
     <string name="local_storage_warning_title">Keep a restorable copy</string>
     <string name="local_storage_warning_detail">Set up Git or export the library before uninstalling or clearing app data</string>

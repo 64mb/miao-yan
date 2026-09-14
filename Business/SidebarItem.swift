@@ -3,13 +3,15 @@ import Cocoa
 class SidebarItem {
     var name: String
     var project: Project?
+    var note: Note?
     var type: SidebarItemType
     public var icon: Image?
     public var children: [SidebarItem]?
 
-    init(name: String, project: Project? = nil, type: SidebarItemType, icon: Image? = nil) {
+    init(name: String, project: Project? = nil, note: Note? = nil, type: SidebarItemType, icon: Image? = nil) {
         self.name = name
         self.project = project
+        self.note = note
         self.type = type
         self.icon = icon
     }
@@ -39,10 +41,14 @@ class SidebarItem {
         }
     }
 
-    public func isSame(as other: SidebarItem) -> Bool {
+    @MainActor public func isSame(as other: SidebarItem) -> Bool {
         if type != other.type { return false }
         if type == .Category || type == .Trash {
             return project?.url == other.project?.url
+        }
+        if type == .Note {
+            guard let noteURL = note?.url, let otherNoteURL = other.note?.url else { return false }
+            return noteURL.identifiesSameFile(as: otherNoteURL)
         }
         if type == .All {
             return true

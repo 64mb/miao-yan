@@ -15,25 +15,25 @@ class EditorScrollInstrumentedTest {
     fun fastSwipeContinuesWithNativeFlingAfterFingerIsReleased() {
         var offsetAtRelease = 0
         activityRule.scenario.onActivity { activity ->
-            val scrollView = activity.editorScrollView
-            assertTrue("Test document must exceed the viewport", scrollView.canScrollVertically(1))
+            val editor = activity.editor
+            assertTrue("Test document must exceed the viewport", editor.canScrollVertically(1))
 
-            val x = scrollView.width / 2f
-            val top = scrollView.height * .82f
-            val bottom = scrollView.height * .18f
+            val x = editor.width / 2f
+            val top = editor.height * .82f
+            val bottom = editor.height * .18f
             val startedAt = SystemClock.uptimeMillis()
             val events = listOf(
                 motionEvent(startedAt, startedAt, MotionEvent.ACTION_DOWN, x, top),
-                motionEvent(startedAt, startedAt + 12, MotionEvent.ACTION_MOVE, x, scrollView.height * .65f),
-                motionEvent(startedAt, startedAt + 24, MotionEvent.ACTION_MOVE, x, scrollView.height * .42f),
+                motionEvent(startedAt, startedAt + 12, MotionEvent.ACTION_MOVE, x, editor.height * .65f),
+                motionEvent(startedAt, startedAt + 24, MotionEvent.ACTION_MOVE, x, editor.height * .42f),
                 motionEvent(startedAt, startedAt + 36, MotionEvent.ACTION_MOVE, x, bottom),
                 motionEvent(startedAt, startedAt + 44, MotionEvent.ACTION_UP, x, bottom),
             )
             events.forEach { event ->
-                scrollView.dispatchTouchEvent(event)
+                editor.dispatchTouchEvent(event)
                 event.recycle()
             }
-            offsetAtRelease = scrollView.scrollY
+            offsetAtRelease = editor.scrollY
         }
 
         assertTrue("Swipe must move the editor before release", offsetAtRelease > 0)
@@ -42,7 +42,7 @@ class EditorScrollInstrumentedTest {
         activityRule.scenario.onActivity { activity ->
             assertTrue(
                 "Editor must keep moving with fling velocity after ACTION_UP",
-                activity.editorScrollView.scrollY > offsetAtRelease + 24,
+                activity.editor.scrollY > offsetAtRelease + 24,
             )
         }
     }

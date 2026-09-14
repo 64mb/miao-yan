@@ -5,6 +5,48 @@ import XCTest
 
 final class SidebarProjectViewTests: XCTestCase {
     @MainActor
+    func testSidebarIncludesRootNotesButNotNestedNotes() throws {
+        let rootURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MiaoYanSidebarRootNotesTests-\(UUID().uuidString)", isDirectory: true)
+        let folderURL = rootURL.appendingPathComponent("Ideas", isDirectory: true)
+        let rootNoteURL = rootURL.appendingPathComponent("Inbox.md")
+        let nestedNoteURL = folderURL.appendingPathComponent("Draft.md")
+        try FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        try "root".write(to: rootNoteURL, atomically: true, encoding: .utf8)
+        try "nested".write(to: nestedNoteURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        let storage = Storage(storageURL: nil)
+        let root = Project(url: rootURL, label: "Library", isRoot: true, isDefault: true)
+        _ = storage.add(project: root)
+        let folder = try XCTUnwrap(storage.getChildProjects(project: root).first)
+        let rootNote = Note(url: rootNoteURL, with: root)
+        let nestedNote = Note(url: nestedNoteURL, with: folder)
+        storage.add(rootNote)
+        storage.add(nestedNote)
+
+        let items = Sidebar(storage: storage).getList().compactMap { $0 as? SidebarItem }
+        let rootItem = try XCTUnwrap(items.first(where: { $0.type == .Note }))
+
+        XCTAssertEqual(rootItem.name, "Inbox")
+        XCTAssertTrue(rootItem.note === rootNote)
+        XCTAssertTrue(rootItem.project === root)
+        XCTAssertFalse(items.contains { $0.note === nestedNote })
+    }
+
+    @MainActor
+    func testRootNoteSidebarIdentityUsesFileURL() {
+        let root = Project(url: FileManager.default.temporaryDirectory, label: "Library", isRoot: true)
+        let first = Note(url: root.url.appendingPathComponent("First.md"), with: root)
+        let second = Note(url: root.url.appendingPathComponent("Second.md"), with: root)
+        let firstItem = SidebarItem(name: "Same title", project: root, note: first, type: .Note)
+        let secondItem = SidebarItem(name: "Same title", project: root, note: second, type: .Note)
+
+        XCTAssertFalse(firstItem.isSame(as: secondItem))
+        XCTAssertTrue(firstItem.isSame(as: SidebarItem(name: "Renamed", project: root, note: first, type: .Note)))
+    }
+
+    @MainActor
     func testProjectRenameActionMovesFolderUsingExplicitSidebarItem() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MiaoYanProjectRenameActionTests-\(UUID().uuidString)", isDirectory: true)

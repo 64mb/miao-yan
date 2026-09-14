@@ -88,14 +88,14 @@ description_body=""
 if [[ -n "$DESCRIPTION_HTML_FILE" && -f "$DESCRIPTION_HTML_FILE" ]]; then
   description_body="$(cat "$DESCRIPTION_HTML_FILE")"
 else
-  description_body="$(printf '      <p>妙言 4.0 新增 iPhone 和 iPad 版本,同时继续提供 GitHub 下载和 Sparkle 更新。你可以选择 App Store 自动更新,也可以继续使用 direct-download 版本。</p>\n      <p>MiaoYan 4.0 adds iPhone and iPad support while keeping GitHub downloads and Sparkle updates available. You can use App Store automatic updates or stay on the direct-download build.</p>\n      <p><a href=\"https://apps.apple.com/app/id6759252269\">Mac App Store</a> · <a href=\"https://github.com/tw93/MiaoYan/releases\">GitHub Releases</a></p>')"
+  description_body="$(printf '      <p>妙言 4.0 新增 iPhone 和 iPad 版本,同时继续提供 GitHub 下载和 Sparkle 更新。你可以选择 App Store 自动更新,也可以继续使用 direct-download 版本。</p>\n      <p>MiaoYan 4.0 adds iPhone and iPad support while keeping GitHub downloads and Sparkle updates available. You can use App Store automatic updates or stay on the direct-download build.</p>\n      <p><a href=\"https://apps.apple.com/app/id6759252269\">Mac App Store</a> · <a href=\"https://github.com/64mb/miao-yan/releases\">GitHub Releases</a></p>')"
 fi
 
 item_file="$(mktemp)"
 {
   echo "    <item>"
   echo "      <title>${VERSION}</title>"
-  echo "      <link>https://github.com/tw93/MiaoYan/releases</link>"
+  echo "      <link>https://github.com/64mb/miao-yan/releases</link>"
   echo "      <description><![CDATA["
   printf '%s\n' "$description_body"
   echo "          ]]>      </description>"
@@ -112,7 +112,9 @@ export ITEM_CONTENT
 perl -0777 -i -pe '
   BEGIN { $item = $ENV{"ITEM_CONTENT"}; }
   if (!s{(<channel>\s*<title>.*?</title>\n)(\s*)(<item>)}{$1 . $item . "\n" . $2 . $3}se) {
-    die "Failed to locate appcast insertion point\n";
+    if (!s{(\s*</channel>)}{"\n" . $item . $1}se) {
+      die "Failed to locate appcast insertion point\n";
+    }
   }
 ' "$APPCAST"
 

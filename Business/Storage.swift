@@ -848,7 +848,7 @@ class Storage {
             guard !Self.shouldHideRemovedTrashItem(at: url, in: item) else { continue }
 
             if let currentNoteURL = EditTextView.note?.url,
-                currentNoteURL.resolvingSymlinksInPath().path == url.resolvingSymlinksInPath().path
+                currentNoteURL.identifiesSameFile(as: url)
             {
                 // Re-use the existing Note object so the currently open file
                 // stays visible in the list after a single-mode reload.
@@ -945,7 +945,7 @@ class Storage {
             // Compare both sides in the same canonical URL form or a note such
             // as "Сергей.md" is appended again on every project rescan.
             if noteList.contains(where: {
-                $0.url.standardizedFileURL.resolvingSymlinksInPath() == resolvedURL
+                $0.url.identifiesSameFile(as: resolvedURL)
             }) {
                 continue
             }
@@ -1401,11 +1401,11 @@ class Storage {
             return nil
         }
 
-        let resolvedPath = url.resolvingSymlinksInPath().path.lowercased()
+        let resolvedPath = url.canonicalFileIdentityPath
 
         return
             noteList.first(where: {
-                $0.url.resolvingSymlinksInPath().path.lowercased() == resolvedPath
+                $0.url.canonicalFileIdentityPath == resolvedPath
             })
     }
 

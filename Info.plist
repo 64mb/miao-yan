@@ -122,9 +122,9 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://miaoyan.app/appcast.xml</string>
+	<string>https://github.com/64mb/miao-yan/releases/latest/download/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>seQrPHFOWomxlN8ufdI3/ba1/HL1t86TkzRb53FSGys=</string>
+	<string>sYiRww9ABBX4emqPX7Qt0/T8RnlMVMANw0Yaqwxj5Tg=</string>
 	<key>SUScheduledCheckInterval</key>
 	<real>3666</real>
 	<key>UILaunchStoryboardName</key>

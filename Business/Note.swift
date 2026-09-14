@@ -1093,7 +1093,7 @@ public class Note: NSObject {
     }
 
     public func isEqualURL(url: URL) -> Bool {
-        url.path == self.url.path
+        self.url.identifiesSameFile(as: url)
     }
 
     public func append(string: NSMutableAttributedString) {
