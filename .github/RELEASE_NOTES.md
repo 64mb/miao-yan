@@ -1,15 +1,11 @@
-# V4.2.14 Malzeno 🦇
+# V4.2.15 Rathalos 🛡️
 
-1. macOS 左侧边栏现在会在文件夹旁显示资料库根目录中的笔记
-2. 修复 macOS 在快速切换西里尔字母或 Unicode 文件名笔记时显示旧内容的问题
-3. Android 编辑器现在保留固定工具栏、原生惯性滚动、可见滚动条以及键盘上方的光标空间
-4. Android 在关闭编辑器或进入预览时会自动收起键盘
-5. macOS Sparkle 和 Android APK 更新现在都从 64mb/miao-yan fork 获取
+1. 修复 macOS 在相邻笔记之间切换时继续显示上一条笔记内容的问题，包括带组合 Unicode 字符的文件名
+2. 防止仅导航时重复写入未更改的笔记，避免触发无意义的文件监听刷新与列表重排
+3. 替换编辑器缓冲区后立即刷新可见的 TextKit 区域，并新增针对首两条 Unicode 笔记切换的回归测试
 
 ---
 
-1. Added root-library notes beside folders in the macOS sidebar
-2. Fixed stale macOS content when rapidly switching notes with Cyrillic or Unicode filenames
-3. Added a fixed Android editor toolbar, native inertial scrolling, a visible scrollbar, and caret space above the keyboard
-4. Made Android dismiss the keyboard when closing the editor or entering Preview
-5. Routed macOS Sparkle and Android APK updates through the 64mb/miao-yan fork
+1. Fixed macOS continuing to show the previous note when switching between adjacent notes, including filenames with combining Unicode characters
+2. Prevented unchanged notes from being rewritten during navigation, avoiding unnecessary file-watcher refreshes and list reordering
+3. Refreshed the visible TextKit region immediately after replacing the editor buffer and added a regression test for switching the first two Unicode notes

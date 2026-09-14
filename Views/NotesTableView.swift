@@ -399,8 +399,9 @@ class NotesTableView: NSTableView {
                 // the outgoing note. The pre-#543 version compared
                 // EditTextView.note against itself and could never fire.
                 if vc.editArea.storageNote === currentNote {
-                    vc.editArea.saveTextStorageContent(to: currentNote)
-                    currentNote.save(content: currentNote.content)
+                    if vc.editArea.saveTextStorageContent(to: currentNote) {
+                        currentNote.save(content: currentNote.content)
+                    }
                 } else {
                     let mismatch = NSError(
                         domain: "com.tw93.miaoyan.race",

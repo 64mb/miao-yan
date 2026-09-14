@@ -43,7 +43,7 @@ final class EditorStorageOwnershipTests: XCTestCase {
         // Simulate the preview-mode desync: buffer holds B while a save
         // targets A (Cmd+S / window-close / duplicate after a list switch).
         editor.publishStorage(NSAttributedString(string: "BBB original"), owner: noteB)
-        editor.saveTextStorageContent(to: noteA)
+        XCTAssertFalse(editor.saveTextStorageContent(to: noteA))
 
         XCTAssertEqual(noteA.content.string, "AAA original", "cross-note save must be refused, not overwrite the target")
         XCTAssertEqual(noteB.content.string, "BBB original", "the buffer owner must stay untouched")
@@ -55,9 +55,39 @@ final class EditorStorageOwnershipTests: XCTestCase {
         let editor = EditTextView(frame: .zero)
 
         editor.publishStorage(NSAttributedString(string: "BBB edited"), owner: noteB)
-        editor.saveTextStorageContent(to: noteB)
+        XCTAssertTrue(editor.saveTextStorageContent(to: noteB))
 
         XCTAssertEqual(noteB.content.string, "BBB edited")
+    }
+
+    @MainActor
+    func testUnchangedBufferDoesNotDirtyNoteDuringNavigation() {
+        let note = makeNote("unchanged.md", body: "Same content")
+        let editor = EditTextView(frame: .zero)
+
+        editor.publishStorage(NSAttributedString(string: "Same content"), owner: note)
+
+        XCTAssertFalse(editor.saveTextStorageContent(to: note))
+        XCTAssertFalse(note.hasPendingSave)
+        XCTAssertFalse(note.needsSave)
+    }
+
+    @MainActor
+    func testSwitchingFirstTwoUnicodeNotesPublishesDistinctContentWithoutDirtyingEitherNote() {
+        let sergey = makeNote("Сергей 14.09.2026.md", body: "Sergey content")
+        let dima = makeNote("Дима 14.09.2026.md", body: "Dima content")
+        let editor = EditTextView(frame: .zero)
+
+        editor.publishStorage(sergey.content, owner: sergey)
+        XCTAssertEqual(editor.string, "Sergey content")
+        XCTAssertFalse(editor.saveTextStorageContent(to: sergey))
+
+        editor.publishStorage(dima.content, owner: dima)
+        XCTAssertEqual(editor.string, "Dima content")
+        XCTAssertFalse(editor.saveTextStorageContent(to: dima))
+
+        XCTAssertFalse(sergey.hasPendingSave)
+        XCTAssertFalse(dima.hasPendingSave)
     }
 
     @MainActor
@@ -69,7 +99,7 @@ final class EditorStorageOwnershipTests: XCTestCase {
         let editor = EditTextView(frame: .zero)
 
         editor.publishStorage(NSAttributedString(string: "BBB edited"), owner: noteB1)
-        editor.saveTextStorageContent(to: noteB2)
+        XCTAssertTrue(editor.saveTextStorageContent(to: noteB2))
 
         XCTAssertEqual(noteB2.content.string, "BBB edited")
     }
@@ -80,7 +110,7 @@ final class EditorStorageOwnershipTests: XCTestCase {
         let editor = EditTextView(frame: .zero)
 
         editor.publishStorage(NSAttributedString(), owner: nil)
-        editor.saveTextStorageContent(to: noteA)
+        XCTAssertFalse(editor.saveTextStorageContent(to: noteA))
 
         XCTAssertEqual(noteA.content.string, "AAA original", "an ownerless (cleared) buffer must never be persisted")
     }
