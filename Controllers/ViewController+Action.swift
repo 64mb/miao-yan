@@ -338,7 +338,7 @@ extension ViewController {
     private func updateTitleAndFinishImport(note: Note, title: String) {
         note.title = title
         titleLabel.setStringValueSafely(title)
-        titleLabel.updateNotesTableView()
+        titleLabel.updateNotesTableView(for: note)
         UserDataService.instance.focusOnImport = nil
     }
 

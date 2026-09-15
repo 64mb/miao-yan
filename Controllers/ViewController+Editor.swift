@@ -1550,7 +1550,7 @@ extension ViewController {
         let result = attemptSave(note: note, title: newTitle, current: currentName)
         if case .success = result {
             note.title = newTitle
-            notesTableView.reloadRow(note: note)
+            titleLabel.updateNotesTableView(for: note)
         }
     }
 
@@ -1583,8 +1583,7 @@ extension ViewController {
         switch result {
         case .success:
             updateTitle(newTitle: title)
-            notesTableView.reloadRow(note: note)
-            titleLabel.isEditable = true
+            titleLabel.updateNotesTableView(for: note)
         case .exists:
             updateTitle(newTitle: title)
             titleLabel.resignFirstResponder()

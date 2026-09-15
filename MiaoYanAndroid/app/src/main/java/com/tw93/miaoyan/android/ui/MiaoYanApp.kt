@@ -1453,7 +1453,7 @@ internal data class EditorPaddingPixels(
 internal fun editorPaddingPixels(density: Float): EditorPaddingPixels = EditorPaddingPixels(
     horizontal = (20f * density).roundToInt(),
     top = (18f * density).roundToInt(),
-    bottom = (48f * density).roundToInt(),
+    bottom = (18f * density).roundToInt(),
 )
 
 @Composable
