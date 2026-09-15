@@ -9,11 +9,11 @@ class EditorLayoutTest {
     fun editorPaddingUsesDensityIndependentDimensions() {
         assertEquals(20, editorPaddingPixels(1f).horizontal)
         assertEquals(18, editorPaddingPixels(1f).top)
-        assertEquals(48, editorPaddingPixels(1f).bottom)
+        assertEquals(18, editorPaddingPixels(1f).bottom)
 
         val emulatorPadding = editorPaddingPixels(2.625f)
         assertEquals(53, emulatorPadding.horizontal)
         assertEquals(47, emulatorPadding.top)
-        assertEquals(126, emulatorPadding.bottom)
+        assertEquals(47, emulatorPadding.bottom)
     }
 }

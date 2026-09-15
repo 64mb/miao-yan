@@ -47,6 +47,45 @@ final class SidebarProjectViewTests: XCTestCase {
     }
 
     @MainActor
+    func testRenamingRootNoteRefreshesItsSidebarItem() {
+        let root = Project(url: FileManager.default.temporaryDirectory, label: "Library", isRoot: true)
+        let note = Note(url: root.url.appendingPathComponent("Before.md"), with: root)
+        let item = SidebarItem(name: "Before", project: root, note: note, type: .Note)
+        let outlineView = SidebarProjectView(frame: .zero)
+        outlineView.sidebarItems = [item]
+
+        note.overwrite(url: root.url.appendingPathComponent("After.md"))
+        note.title = "After"
+
+        XCTAssertTrue(outlineView.refreshRootNoteItem(for: note))
+        XCTAssertEqual(item.name, "After")
+    }
+
+    @MainActor
+    func testReloadFallsBackToAllWhenSelectedRootNoteDisappears() {
+        XCTAssertEqual(
+            SidebarProjectView.restoredRowAfterReload(
+                matchingRow: nil,
+                previousRow: 3,
+                rowCount: 4,
+                hadSelectedItem: true,
+                allRow: 0),
+            0)
+    }
+
+    @MainActor
+    func testReloadKeepsPositionOnlyWhenThereWasNoSemanticSelection() {
+        XCTAssertEqual(
+            SidebarProjectView.restoredRowAfterReload(
+                matchingRow: nil,
+                previousRow: 2,
+                rowCount: 4,
+                hadSelectedItem: false,
+                allRow: 0),
+            2)
+    }
+
+    @MainActor
     func testProjectRenameActionMovesFolderUsingExplicitSidebarItem() throws {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MiaoYanProjectRenameActionTests-\(UUID().uuidString)", isDirectory: true)

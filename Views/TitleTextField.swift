@@ -59,12 +59,13 @@ class TitleTextField: NSTextField, NSTextFieldDelegate {
         stringValue = value
     }
 
-    public func updateNotesTableView() {
+    public func updateNotesTableView(for explicitNote: Note? = nil) {
         guard let vc = AppContext.shared.viewController,
-            let note = vc.notesTableView.getSelectedNote()
+            let note = explicitNote ?? vc.notesTableView.getSelectedNote()
         else { return }
 
         vc.notesTableView.reloadRow(note: note)
+        vc.storageOutlineView.refreshRootNoteItem(for: note)
         vc.titleLabel.isEditable = true
     }
 

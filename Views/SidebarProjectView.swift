@@ -1224,6 +1224,38 @@ class SidebarProjectView: NSOutlineView,
         return nil
     }
 
+    @discardableResult
+    func refreshRootNoteItem(for note: Note) -> Bool {
+        guard note.project.isRoot,
+            let item = sidebarItems?
+                .compactMap({ $0 as? SidebarItem })
+                .first(where: { $0.type == .Note && $0.note === note })
+        else { return false }
+
+        item.name = note.getTitleWithoutLabel()
+        let row = row(forItem: item)
+        if row >= 0 {
+            reloadData(
+                forRowIndexes: IndexSet(integer: row),
+                columnIndexes: IndexSet(integersIn: 0..<tableColumns.count))
+        }
+        return true
+    }
+
+    static func restoredRowAfterReload(
+        matchingRow: Int?,
+        previousRow: Int,
+        rowCount: Int,
+        hadSelectedItem: Bool,
+        allRow: Int?
+    ) -> Int? {
+        if let matchingRow { return matchingRow }
+        if !hadSelectedItem, previousRow >= 0, previousRow < rowCount {
+            return previousRow
+        }
+        return allRow
+    }
+
     @objc public func reloadSidebar() {
         guard let vc = AppContext.shared.viewController else {
             return
@@ -1275,14 +1307,19 @@ class SidebarProjectView: NSOutlineView,
         // Restore expanded state after reload
         vc.storageOutlineView.restoreExpandedState(expandedState)
 
-        let restoredRow =
+        let matchingRow = selectedItem.flatMap {
             vc.storageOutlineView.rowForSidebarSelection(
-                type: selectedItem?.type ?? .All,
-                projectURL: selectedItem?.project?.url,
-                name: selectedItem?.name
-            )
-            ?? (vc.storageOutlineView.numberOfRows > selectedRow && selectedRow >= 0 ? selectedRow : nil)
-            ?? vc.storageOutlineView.rowForSidebarSelection(type: .All, projectURL: nil, name: nil)
+                type: $0.type,
+                projectURL: $0.project?.url,
+                name: $0.name)
+        }
+        let allRow = vc.storageOutlineView.rowForSidebarSelection(type: .All, projectURL: nil, name: nil)
+        let restoredRow = Self.restoredRowAfterReload(
+            matchingRow: matchingRow,
+            previousRow: selectedRow,
+            rowCount: vc.storageOutlineView.numberOfRows,
+            hadSelectedItem: selectedItem != nil,
+            allRow: allRow)
 
         if let restoredRow {
             vc.storageOutlineView.selectRowIndexes([restoredRow], byExtendingSelection: false)
