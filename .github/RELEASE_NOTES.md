@@ -1,11 +1,11 @@
-# V4.2.15 Rathalos 🛡️
+# V4.2.16 Velkhana ❄️
 
-1. 修复 macOS 在相邻笔记之间切换时继续显示上一条笔记内容的问题，包括带组合 Unicode 字符的文件名
-2. 防止仅导航时重复写入未更改的笔记，避免触发无意义的文件监听刷新与列表重排
-3. 替换编辑器缓冲区后立即刷新可见的 TextKit 区域，并新增针对首两条 Unicode 笔记切换的回归测试
+1. 移除 Android 编辑器在软键盘上方多余的底部留白，同时保留正确的 IME 避让
+2. 修复 macOS 删除根目录笔记后 Trash 虽出现但内容列表未立即加载的问题
+3. 修复 macOS 重命名根目录笔记后侧边栏标题未立即更新的问题
 
 ---
 
-1. Fixed macOS continuing to show the previous note when switching between adjacent notes, including filenames with combining Unicode characters
-2. Prevented unchanged notes from being rewritten during navigation, avoiding unnecessary file-watcher refreshes and list reordering
-3. Refreshed the visible TextKit region immediately after replacing the editor buffer and added a regression test for switching the first two Unicode notes
+1. Removed the extra bottom gap above the Android software keyboard while preserving correct IME avoidance
+2. Fixed macOS showing Trash after deleting a root note without immediately loading its contents
+3. Fixed macOS not immediately updating the sidebar title after renaming a root note
