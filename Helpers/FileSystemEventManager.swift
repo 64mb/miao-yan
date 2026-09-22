@@ -324,13 +324,15 @@ class FileSystemEventManager {
         }
     }
 
-    private func checkFile(url: URL, pathList: [String]) -> Bool {
+    func checkFile(url: URL, pathList: [String]) -> Bool {
         let parentPath = url.deletingLastPathComponent().resolvingSymlinksInPath().path
         let resolvedPathList = pathList.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+        let isObservedDirectly = resolvedPathList.contains(parentPath)
+        let isGitTrashPayload = !isObservedDirectly && storage.syncedTrashContext(for: url) != nil
         return FileManager.default.fileExists(atPath: url.path)
             && storage.allowedExtensions.contains(url.pathExtension)
             && storage.isValidUTI(url: url)
-            && resolvedPathList.contains(parentPath)
+            && (isObservedDirectly || isGitTrashPayload)
     }
 
     private func importNote(_ url: URL) {

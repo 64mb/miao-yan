@@ -54,7 +54,7 @@ xcodebuild -project MiaoYan.xcodeproj -scheme MiaoYanMobile -configuration Debug
 (cd MiaoYanAndroid && ./gradlew :app:connectedDebugAndroidTest)
 (cd MiaoYanAndroid && ./gradlew :app:assembleLocalRelease)
 swiftlint lint --strict --baseline .swiftlint-baseline.json
-swift-format lint --recursive . --strict   # --strict is what CI runs; without it a local pass can still fail CI
+xcrun swift-format lint --recursive . --strict   # --strict is what CI runs; without it a local pass can still fail CI
 bash scripts/sync-agent-skills.sh --check  # compare the gitignored local Claude mirror; use --write first if absent
 bash scripts/build.sh
 bash scripts/build-appstore.sh
@@ -109,14 +109,20 @@ local-only workaround.
   `render_release_body.sh`) so a broken `.github/RELEASE_NOTES.md` is caught
   before release time, not during it
 - On tag pushes (`V*`): version-triplet consistency check
-  (`MARKETING_VERSION == CURRENT_PROJECT_VERSION == tag`) to prevent the
+  (`MARKETING_VERSION == CURRENT_PROJECT_VERSION == Android versionName == tag`) to prevent the
   V3.5.1 / #524 incident recurrence
+
+- Android JVM tests, lint, and minified `assembleLocalRelease` build on PRs,
+  `main`, and release tags
+- Android 36 emulator suite plus launch of the minified APK on PRs, `main`,
+  and release tags
+- Aggregate `Verify` job fails if any applicable check fails or is skipped
 
 CI does NOT run the App Store packaging or notarization scripts; those need
 maintainer-managed signing keys and run only on the maintainer's machine.
-The tracked CI workflow does not currently build `MiaoYanAndroid/`; Android
-unit, lint, emulator, and minified-R8 gates must therefore run locally before
-an Android PR or fork release is reported ready.
+Before publishing a fork release, wait for the tag's `Verify` job to pass and
+confirm that the tag, merged `main` commit, and built artifact source commit
+are the same SHA. A green PR run for an older SHA is insufficient.
 
 ## Error Reporting
 
@@ -152,7 +158,7 @@ string is the only breadcrumb the maintainer has when triaging.
 - Avoid force unwraps unless the invariant is obvious and local.
 - Prefer `AppEnvironment.current.<service>` over direct singleton access in
   new code. The SwiftLint `no_direct_singleton_in_new_code` rule is `severity: warning`
-  in `.swiftlint.yml`, but CI runs `swiftlint lint --strict`, which promotes it
+  in `.swiftlint.yml`, but CI runs `swiftlint lint --strict --baseline .swiftlint-baseline.json`, which promotes it
   to a merge gate. Existing call sites are grandfathered.
 - Keep file writes scoped to user documents or app-controlled locations.
 - Do not add network calls, shell execution, or broad file access without clear user need.
@@ -218,7 +224,7 @@ MiaoYan ships through two independent channels. Publishing one never updates the
 
 - Fork builds published in `64mb/miao-yan` use the fork release channel, never the upstream `miaoyan.app` appcast.
 - Attach `appcast.xml` to every fork GitHub Release; the macOS app reads the stable `releases/latest/download/appcast.xml` URL and verifies ZIPs with the fork-specific Sparkle key.
-- Attach the Android release APK both under its versioned name and as `MiaoYan-Android.apk`. The Settings updater reads the stable alias and delegates installation to Android's system package installer.
+- Attach the Android release APK only under its versioned `MiaoYan-Android-Vx.y.z.apk` name. The Settings updater reads the latest GitHub Release metadata, selects the APK matching its tag, and delegates installation to Android's system package installer.
 - Set the Android `versionName` to the same `x.y.z` as the macOS release tag, and increase `versionCode` for every published APK so existing installs can update.
 - Keep the Android signing identity stable between releases or the package installer will reject the APK as an update.
 

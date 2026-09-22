@@ -711,6 +711,10 @@ final class NoteSaveDebounceTests: XCTestCase {
         let trashNote = try XCTUnwrap(storage.getAllTrash().first)
         XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: trashNote.url.path))
+        let watcher = FileSystemEventManager(
+            storage: storage,
+            delegate: try XCTUnwrap(AppContext.shared.viewController))
+        XCTAssertTrue(watcher.checkFile(url: trashNote.url, pathList: storage.getProjectPaths()))
         let manifestURL = rootURL.appendingPathComponent(GitSyncedTrashManifestCodec.relativePath)
         XCTAssertEqual(
             GitSyncedTrashManifestCodec.decode(try String(contentsOf: manifestURL, encoding: .utf8)).count,
@@ -723,6 +727,80 @@ final class NoteSaveDebounceTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
         XCTAssertTrue(
             GitSyncedTrashManifestCodec.decode(try String(contentsOf: manifestURL, encoding: .utf8)).isEmpty)
+    }
+
+    @MainActor
+    func testConfiguredRootDeleteAppearsInTrashTable() async throws {
+        let controller = try XCTUnwrap(AppContext.shared.viewController)
+        let storage = controller.storage
+        let rootURL = tempDir.appendingPathComponent("Git Library", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("Root note.md")
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try "recoverable".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let configurationStore = GitSyncConfigurationStore()
+        try configurationStore.save(
+            GitSyncConfiguration(
+                remoteURL: try XCTUnwrap(URL(string: "https://example.com/notes.git")),
+                authorName: "MiaoYan Tests",
+                authorEmail: "tests@example.com"
+            ),
+            for: rootURL)
+        let previousSidebarRow = UserDefaultsManagement.lastProject
+        let previousSelectedURL = UserDefaultsManagement.lastSelectedURL
+        let root = Project(url: rootURL, label: "Git Library", isRoot: true)
+        let note = Note(url: sourceURL, with: root)
+        note.sharedStorage = storage
+        _ = storage.add(project: root)
+        storage.add(note)
+        defer {
+            configurationStore.removeConfiguration(for: rootURL)
+            for project in storage.getProjects() where project.url.path.hasPrefix(rootURL.path) {
+                storage.removeBy(project: project)
+            }
+            UserDefaultsManagement.lastProject = previousSidebarRow
+            UserDefaultsManagement.lastSelectedURL = previousSelectedURL
+            controller.storageOutlineView.reloadSidebar()
+        }
+
+        controller.storageOutlineView.reloadSidebar()
+        let noteRow = try XCTUnwrap(
+            (0..<controller.storageOutlineView.numberOfRows).first { row in
+                (controller.storageOutlineView.item(atRow: row) as? SidebarItem)?.note === note
+            })
+        controller.storageOutlineView.selectRowIndexes(IndexSet(integer: noteRow), byExtendingSelection: false)
+        for _ in 0..<40 {
+            if controller.notesTableView.noteList.contains(where: { $0 === note }) { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let tableRow = try XCTUnwrap(controller.notesTableView.noteList.firstIndex(where: { $0 === note }))
+        controller.notesTableView.selectRowIndexes(IndexSet(integer: tableRow), byExtendingSelection: false)
+        controller.view.window?.makeFirstResponder(controller.notesTableView)
+
+        controller.deleteNote(controller)
+
+        let trashedNote = try XCTUnwrap(
+            storage.getAllTrash().first(where: {
+                $0.url.path.hasPrefix(rootURL.path)
+            }))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedNote.url.path))
+        let trashRow = try XCTUnwrap(
+            (0..<controller.storageOutlineView.numberOfRows).first { row in
+                (controller.storageOutlineView.item(atRow: row) as? SidebarItem)?.type == .Trash
+            })
+        controller.storageOutlineView.selectRowIndexes(IndexSet(integer: trashRow), byExtendingSelection: false)
+        for _ in 0..<40 {
+            if controller.notesTableView.noteList.contains(where: { $0.url == trashedNote.url }),
+                controller.notesTableView.numberOfRows > 0
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(storage.getAllTrash().contains(where: { $0.url == trashedNote.url }))
+        XCTAssertTrue(controller.notesTableView.noteList.contains(where: { $0.url == trashedNote.url }))
+        XCTAssertGreaterThan(controller.notesTableView.numberOfRows, 0)
     }
 
     @MainActor

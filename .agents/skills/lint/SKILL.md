@@ -1,6 +1,6 @@
 ---
 name: lint
-description: Run SwiftLint and swift-format checks on MiaoYan. There is no auto-fix hook; run `swiftlint --fix` or `swift-format format --in-place` manually when fixes are needed.
+description: Run the same SwiftLint baseline and strict swift-format checks as MiaoYan CI.
 version: 1.1.0
 allowed-tools:
   - Bash
@@ -13,17 +13,14 @@ Use this skill to check or fix code style in MiaoYan.
 ## SwiftLint
 
 ```bash
-# Check (report only)
-swiftlint lint
-
-# Strict mode (treat warnings as errors)
-swiftlint lint --strict
+# Match the CI gate and suppress only checked-in legacy violations
+swiftlint lint --strict --baseline .swiftlint-baseline.json
 
 # Auto-fix safe violations
 swiftlint --fix
 
 # Check specific file
-swiftlint lint --path Controllers/ViewController.swift
+swiftlint lint --strict --baseline .swiftlint-baseline.json --path Controllers/ViewController.swift
 ```
 
 Config: `.swiftlint.yml` at project root.
@@ -32,10 +29,10 @@ Config: `.swiftlint.yml` at project root.
 
 ```bash
 # Check formatting (no changes)
-swift-format lint --recursive . --strict
+xcrun swift-format lint --recursive . --strict
 
 # Apply formatting
-swift-format format --recursive --in-place .
+xcrun swift-format format --recursive --in-place .
 ```
 
 Config: `.swift-format` at project root (line length: 240).
@@ -43,10 +40,10 @@ Config: `.swift-format` at project root (line length: 240).
 ## Run Both
 
 ```bash
-swiftlint lint --strict && swift-format lint --recursive . --strict
+swiftlint lint --strict --baseline .swiftlint-baseline.json && xcrun swift-format lint --recursive . --strict
 ```
 
 ## Safety Rules
 
 1. **ALWAYS** run lint check before proposing a commit
-2. **NEVER** auto-apply `--fix` or `--in-place` without user confirmation
+2. Apply fixes only to files in the task scope and inspect the diff before committing
