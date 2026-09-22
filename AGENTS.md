@@ -53,7 +53,7 @@ xcodebuild -project MiaoYan.xcodeproj -scheme MiaoYanMobile -configuration Debug
 (cd MiaoYanAndroid && ./gradlew :app:testDebugUnitTest :app:lintDebug)
 (cd MiaoYanAndroid && ./gradlew :app:connectedDebugAndroidTest)
 (cd MiaoYanAndroid && ./gradlew :app:assembleLocalRelease)
-swiftlint lint --strict
+swiftlint lint --strict --baseline .swiftlint-baseline.json
 swift-format lint --recursive . --strict   # --strict is what CI runs; without it a local pass can still fail CI
 bash scripts/sync-agent-skills.sh --check  # compare the gitignored local Claude mirror; use --write first if absent
 bash scripts/build.sh
@@ -104,7 +104,7 @@ local-only workaround.
 - iOS Debug build for `MiaoYanMobile`. This job pins `runs-on: macos-26` while
   every other job is `macos-15`; if that runner is unavailable, wait for it
   rather than downgrading the iOS code
-- SwiftLint and swift-format, both `--strict`, so any warning is a merge gate
+- SwiftLint and swift-format, both `--strict`, so new warnings are a merge gate. SwiftLint's checked-in baseline records existing violations; remove entries as those files are fixed
 - Release-notes rendering smoke (`scripts/release-ci/notes_to_html.sh` and
   `render_release_body.sh`) so a broken `.github/RELEASE_NOTES.md` is caught
   before release time, not during it
@@ -144,6 +144,10 @@ string is the only breadcrumb the maintainer has when triaging.
 
 ## Working Rules
 
+- Work only in the current checkout. Before editing, inspect `git status` and keep unrelated local files out of commits and release artifacts. If work is split across agents or worktrees, exchange findings and patches rather than absolute paths into another checkout.
+- Search for an existing implementation before adding a new helper, state holder, or code path. Extend the current owner of the behavior when it fits.
+- Reproduce behavior bugs with the actual lifecycle that fails. For Trash, cover a selected note, the filesystem move, the reloaded `Note` instance, and sidebar visibility; a test that only checks the destination file misses editor and watcher races.
+- For PRs, state the user-visible before and after, the cause and fix, and which checks ran. Treat builds as compile evidence; attach manual interaction results for UI changes and distinguish unrun checks from passed ones.
 - Keep UI updates on the main thread.
 - Avoid force unwraps unless the invariant is obvious and local.
 - Prefer `AppEnvironment.current.<service>` over direct singleton access in
@@ -215,6 +219,7 @@ MiaoYan ships through two independent channels. Publishing one never updates the
 - Fork builds published in `64mb/miao-yan` use the fork release channel, never the upstream `miaoyan.app` appcast.
 - Attach `appcast.xml` to every fork GitHub Release; the macOS app reads the stable `releases/latest/download/appcast.xml` URL and verifies ZIPs with the fork-specific Sparkle key.
 - Attach the Android release APK both under its versioned name and as `MiaoYan-Android.apk`. The Settings updater reads the stable alias and delegates installation to Android's system package installer.
+- Set the Android `versionName` to the same `x.y.z` as the macOS release tag, and increase `versionCode` for every published APK so existing installs can update.
 - Keep the Android signing identity stable between releases or the package installer will reject the APK as an update.
 
 ## Release Notes

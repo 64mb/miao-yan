@@ -1,6 +1,6 @@
-# MiaoYan Android prototype
+# MiaoYan Android
 
-Native Android 15+ prototype for validating the first local-library flow. The canonical library
+Native Android 15+ app. The canonical library
 contract is `context.filesDir/libraries/default`; SAF is reserved for explicit Import/Export:
 
 1. On the first scan of a genuinely new/empty private library, seed the same five demo notes and
@@ -117,7 +117,7 @@ cd MiaoYanAndroid
 The project pins AGP 9.4.0, Gradle 9.6.0, Kotlin/Compose compiler 2.4.10, Compose BOM
 2026.06.00, Room 2.8.4, WorkManager 2.11.2, JGit `7.7.1.202607240634-r`, NDK
 29.0.14206865, CMake 3.22.1, `compileSdk 36`, `targetSdk
-36`, and `minSdk 35`. The prototype deliberately stays on the newest SDK platform currently
+36`, and `minSdk 35`. The app stays on the newest SDK platform currently
 available from the installed stable Android SDK channel.
 
 cmark-gfm 0.29.0.gfm.13 is vendored from GitHub at commit `587a12bb54d95ac37241377e6ddc93ea0e45439b`; its source archive checksum and update procedure are recorded in `app/src/main/cpp/third_party/cmark-gfm/README.miaoyan.md`. Builds do not fetch native source from the network.
@@ -135,7 +135,7 @@ Presentation uses the same native cmark-gfm content-policy pipeline for every sl
 
 See `PRESENTATION.md` for the subsystem boundaries and narrow integration points.
 
-## Deliberate prototype limits
+## Current limits
 
 - Import/Export can leave already copied, non-conflicting files when a provider fails partway
   through. Existing canonical files are never overwritten.

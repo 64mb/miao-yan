@@ -1,11 +1,13 @@
-# V4.2.16 Velkhana ❄️
+# V4.2.17 Rajang ⚡️
 
-1. 移除 Android 编辑器在软键盘上方多余的底部留白，同时保留正确的 IME 避让
-2. 修复 macOS 删除根目录笔记后 Trash 虽出现但内容列表未立即加载的问题
-3. 修复 macOS 重命名根目录笔记后侧边栏标题未立即更新的问题
+1. 修复删除当前选中的根目录笔记后，笔记未显示在废纸篓中的问题
+2. 废纸篓重新从磁盘加载笔记，避免继续使用已删除的编辑器对象
+3. 新增根目录笔记删除回归测试，覆盖文件移动、废纸篓侧栏和笔记状态
+4. Android 版本号与 macOS 统一为 4.2.17，不再显示 prototype 标记
 
 ---
 
-1. Removed the extra bottom gap above the Android software keyboard while preserving correct IME avoidance
-2. Fixed macOS showing Trash after deleting a root note without immediately loading its contents
-3. Fixed macOS not immediately updating the sidebar title after renaming a root note
+1. Fixed deleted root notes missing from Trash when they were selected in the editor
+2. Reloaded Trash notes from disk instead of reusing a retired editor object
+3. Added regression coverage for the file move, Trash sidebar, and note lifecycle
+4. Aligned the Android version with macOS at 4.2.17 and removed the prototype label

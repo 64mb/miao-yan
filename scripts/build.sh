@@ -70,7 +70,8 @@ codesign -v "./build/Release/MiaoYan.app" || {
 
 ZIP_NAME="MiaoYan_V${VERSION}.zip"
 DMG_NAME="MiaoYan.dmg"
-DOWNLOADS=~/Downloads
+DOWNLOADS="${MIAOYAN_BUILD_OUTPUT_DIR:-$HOME/Downloads}"
+mkdir -p "$DOWNLOADS"
 APP_NAME="MiaoYan"
 BACKGROUND_IMAGE_SOURCE="./Resources/dmg-background.png"
 BACKGROUND_IMAGE_NAME="$(basename "$BACKGROUND_IMAGE_SOURCE")"

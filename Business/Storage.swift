@@ -847,7 +847,8 @@ class Storage {
 
             guard !Self.shouldHideRemovedTrashItem(at: url, in: item) else { continue }
 
-            if let currentNoteURL = EditTextView.note?.url,
+            if !item.isTrash,
+                let currentNoteURL = EditTextView.note?.url,
                 currentNoteURL.identifiesSameFile(as: url)
             {
                 // Re-use the existing Note object so the currently open file
