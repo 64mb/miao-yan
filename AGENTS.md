@@ -144,7 +144,7 @@ string is the only breadcrumb the maintainer has when triaging.
 
 ## Working Rules
 
-- Work only in the current checkout. Before editing, inspect `git status` and keep unrelated local files out of commits and release artifacts. If work is split across agents or worktrees, exchange findings and patches rather than absolute paths into another checkout.
+- Before editing, inspect `git status` in the assigned checkout and keep unrelated local files out of commits and release artifacts. If work is split across agents or worktrees, exchange findings and patches rather than absolute paths into another checkout.
 - Search for an existing implementation before adding a new helper, state holder, or code path. Extend the current owner of the behavior when it fits.
 - Reproduce behavior bugs with the actual lifecycle that fails. For Trash, cover a selected note, the filesystem move, the reloaded `Note` instance, and sidebar visibility; a test that only checks the destination file misses editor and watcher races.
 - For PRs, state the user-visible before and after, the cause and fix, and which checks ran. Treat builds as compile evidence; attach manual interaction results for UI changes and distinguish unrun checks from passed ones.
