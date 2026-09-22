@@ -308,6 +308,47 @@ final class NoteSaveDebounceTests: XCTestCase {
     }
 
     @MainActor
+    func testDeletingRootNoteImmediatelyLoadsLocalTrashAndSidebar() throws {
+        let rootURL = tempDir.appendingPathComponent("Library", isDirectory: true)
+        let trashURL = tempDir.appendingPathComponent("Trash", isDirectory: true)
+        let sourceURL = rootURL.appendingPathComponent("Root note.md")
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: trashURL, withIntermediateDirectories: true)
+        try "recoverable".write(to: sourceURL, atomically: true, encoding: .utf8)
+
+        let storage = Storage(storageURL: nil)
+        let root = Project(url: rootURL, label: "Library", isRoot: true, isDefault: true)
+        let trash = Project(url: trashURL, label: "Trash", isTrash: true)
+        _ = storage.add(project: root)
+        _ = storage.add(project: trash)
+        let previousStorage = Storage.instance
+        Storage.instance = storage
+        defer { Storage.instance = previousStorage }
+
+        let note = Note(url: sourceURL, with: root)
+        note.sharedStorage = storage
+        storage.add(note)
+        let previousEditorNote = EditTextView.note
+        EditTextView.note = note
+        defer { EditTextView.note = previousEditorNote }
+        var undoURLs: [URL: URL]?
+        storage.removeNotes(notes: [note]) { undoURLs = $0 }
+
+        let trashedURL = try XCTUnwrap(undoURLs?.keys.first)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertEqual(try String(contentsOf: trashedURL, encoding: .utf8), "recoverable")
+        XCTAssertEqual(storage.getAllTrash().map(\.url), [trashedURL])
+        let trashNote = try XCTUnwrap(storage.getAllTrash().first)
+        XCTAssertFalse(trashNote === note)
+        XCTAssertTrue(trashNote.flushPendingSave(globalStorage: false))
+        let trashItem = try XCTUnwrap(
+            Sidebar(storage: storage).getList()
+                .compactMap { $0 as? SidebarItem }
+                .first(where: { $0.type == .Trash }))
+        XCTAssertEqual(trashItem.project, trash)
+    }
+
+    @MainActor
     func testFailedRemovalKeepsTheNoteWritable() throws {
         let sourceURL = tempDir.appendingPathComponent("failed-delete.md")
         try "original".write(to: sourceURL, atomically: true, encoding: .utf8)
