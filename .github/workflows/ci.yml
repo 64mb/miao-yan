@@ -150,6 +150,16 @@ jobs:
           profile: pixel_7
           script: bash scripts/ci-android-device.sh
 
+      - name: Upload Android device test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-device-test-results
+          path: |
+            MiaoYanAndroid/app/build/outputs/androidTest-results/connected/
+            MiaoYanAndroid/app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+
   lint:
     name: Lint
     runs-on: macos-15
