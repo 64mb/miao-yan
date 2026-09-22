@@ -57,7 +57,7 @@ Folder mutations are blocked during save, typesetting, attachment picking/import
 dirty draft follows an atomic folder rename, while moving its owning folder to Trash requires the
 draft to be saved or discarded first.
 
-The only network permission is `INTERNET` for configured Git HTTPS sync. There is no camera or
+The only network permission is `INTERNET` for configured Git HTTPS sync and GitHub Release updates. There is no camera or
 broad storage/media permission.
 
 ## Git sync

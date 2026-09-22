@@ -51,6 +51,10 @@ Stop if:
 
 Use the repository's release scripts for the actual build, packaging, signing, notarization, and appcast update. The only tracked workflow is `ci.yml`; do not assume a `release.yml` workflow exists.
 
+Build from the exact merged `main` commit that will be tagged. After pushing the tag, wait for the `Verify` job on that tag SHA to pass, including macOS tests, Android JVM/device tests, lint, minified APK launch, and version consistency. Do not treat an older PR run as a substitute. Upload release assets into a draft, verify all required asset names, uploaded states, nonzero sizes, SHA256 checksums, and the appcast ZIP URL/length/signature, then publish the draft.
+
+Fork releases attach only the versioned `MiaoYan-Android-Vx.y.z.apk`, macOS ZIP/DMG, `appcast.xml`, and `SHA256SUMS.txt`.
+
 When a local release script is required, confirm these before running it:
 
 - Required signing identities are available on the maintainer machine.
