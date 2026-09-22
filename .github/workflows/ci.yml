@@ -148,15 +148,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_7
-          script: |
-            cd MiaoYanAndroid
-            ./gradlew :app:connectedDebugAndroidTest :app:assembleLocalRelease
-            adb install -r app/build/outputs/apk/localRelease/app-localRelease.apk
-            adb logcat -c
-            adb shell am start -W -n com.tw93.miaoyan.android/.MainActivity
-            sleep 5
-            adb shell pidof com.tw93.miaoyan.android
-            if adb logcat -d -s AndroidRuntime:E | grep -q 'FATAL EXCEPTION'; then exit 1; fi
+          script: bash scripts/ci-android-device.sh
 
   lint:
     name: Lint
